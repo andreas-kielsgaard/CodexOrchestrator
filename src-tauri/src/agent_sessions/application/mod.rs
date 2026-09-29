@@ -8,17 +8,17 @@ mod addressed;
 mod commands;
 pub(crate) mod configuration;
 mod creation;
+mod delivery;
 mod dependencies;
 mod diagnostics;
 mod direct_user;
-pub(crate) mod history_handoff;
 mod interactions;
 mod invocation;
 mod lifecycle;
 pub(crate) mod observation;
 pub(crate) mod preparation;
+pub(crate) mod queue;
 mod quick_features;
-pub(crate) mod target_transition;
 mod targets;
 mod update_sink;
 mod workspaces;
@@ -38,6 +38,7 @@ pub(crate) use configuration::{reasoning_launch_extension, runtime_options};
 pub(crate) use configuration::{
     LoadPinnedSessionProfileQuery, SendDirectUserAgentSessionMessageCommand,
 };
+pub(crate) use delivery::InvocationDeliveryIntent;
 pub(crate) use dependencies::{
     AgentSessionClock, AgentSessionIdProvider, AgentSessionNotification, AgentSessionNotifier,
     ProviderLaunchPreparation, SessionHarnessLaunchAuthority, SessionHarnessVersionResolver,
@@ -64,6 +65,8 @@ pub(crate) struct AgentSessionApplication {
     endpoints: Option<Arc<crate::execution_targets::endpoints::ExecutionEndpoints>>,
     execution_target_service: Option<Arc<crate::execution_targets::ExecutionTargetService>>,
     preparation_workers: Arc<preparation::PreparationWorkers>,
+    queue_dispatch_lanes: Arc<queue::QueueDispatchLanes>,
+    target_operation_workers: Arc<queue::TargetOperationWorkers>,
 }
 
 impl AgentSessionApplication {
@@ -92,6 +95,8 @@ impl AgentSessionApplication {
             endpoints: None,
             execution_target_service: None,
             preparation_workers: Arc::new(preparation::PreparationWorkers::default()),
+            queue_dispatch_lanes: Arc::new(queue::QueueDispatchLanes::default()),
+            target_operation_workers: Arc::new(queue::TargetOperationWorkers::default()),
         }
     }
 

@@ -80,8 +80,8 @@ it('preserves the prompt while choosing a remote worktree and uses the shared ta
   expect(send).toHaveBeenCalledWith({
     sessionId: 'session-1',
     submittedText: 'Continue there',
-    model: null,
-    reasoningMode: null,
+    model: 'model-a',
+    reasoningMode: 'high',
   });
   expect(generic).not.toHaveBeenCalled();
 });

@@ -10,8 +10,8 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-use crate::persistence::{ActiveDatabase, ManagedOperationError};
 use crate::execution_targets::domain::ExecutionRouteRef;
+use crate::persistence::{ActiveDatabase, ManagedOperationError};
 
 pub(crate) const CAPABILITY_PROFILE_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS execution_capability_profiles (
@@ -42,7 +42,6 @@ pub(crate) struct InMemoryCapabilityProfileRepository {
     default_profile: Mutex<Option<String>>,
     model_catalogues: Mutex<BTreeMap<String, super::StoredModelCatalogue>>,
 }
-
 
 impl CapabilityProfileRepository for InMemoryCapabilityProfileRepository {
     fn model_catalogue(
@@ -171,7 +170,10 @@ impl CapabilityProfileRepository for InMemoryCapabilityProfileRepository {
 
 impl InMemoryCapabilityProfileRepository {
     fn route_key(route: &ExecutionRouteRef) -> String {
-        format!("{}\0{}\0{}", route.device_id, route.provider, route.configuration_ref)
+        format!(
+            "{}\0{}\0{}",
+            route.device_id, route.provider, route.configuration_ref
+        )
     }
 
     fn lock(

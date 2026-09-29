@@ -3,7 +3,7 @@ import type {
   OtpPackageDto,
   WorkflowAuthoringConnectionDto,
 } from '../../application/workflowAuthoring';
-import { OtpElementPicker } from '../../components/otp/OtpElementPicker';
+import { GroupedElementPicker } from '../../components/otp/GroupedElementPicker';
 import { OtpElementDetails } from '../otp/otpElements';
 import { offeredOutputs, outputKey } from './otpPresentation';
 
@@ -28,18 +28,18 @@ export function WorkflowTriggerPicker({
         </button>
       </div>
       {open && (
-        <OtpElementPicker
+        <GroupedElementPicker
           title="Set trigger"
           selected={[outputKey(connection.trigger)]}
-          groups={packages
-            .map((pkg) => ({
-              id: pkg.id,
-              label: pkg.id,
-              items: outputs
-                .filter((o) => o.packageId === pkg.id)
-                .map((o) => ({ id: outputKey(o.ref), label: o.label })),
-            }))
-            .filter((g) => g.items.length)}
+          selectionMode="single"
+          groups={packages.map((pkg) => ({
+            id: pkg.id,
+            label: pkg.name,
+            emptyLabel: 'No triggers',
+            items: outputs
+              .filter((o) => o.packageId === pkg.id)
+              .map((o) => ({ value: outputKey(o.ref), label: o.label })),
+          }))}
           renderDetails={(id) => {
             const item = outputs.find((o) => outputKey(o.ref) === id)!;
             const removed = connection.promptInputs.filter(
@@ -61,7 +61,8 @@ export function WorkflowTriggerPicker({
           }}
           onClose={() => setOpen(false)}
           onConfirm={([id]) => {
-            const item = outputs.find((o) => outputKey(o.ref) === id)!;
+            const item = outputs.find((o) => outputKey(o.ref) === id);
+            if (!item) return;
             onChange({
               ...connection,
               trigger: item.ref,

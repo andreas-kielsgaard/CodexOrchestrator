@@ -280,11 +280,9 @@ fn invocation_id() -> AgentInvocationId {
     AgentInvocationId::new("invocation").unwrap()
 }
 
-fn request(extension: Option<RuntimeLaunchExtension>) -> RuntimeInvocationRequest {
-    RuntimeInvocationRequest { attachments: vec![],
-        session_id: AgentSessionId::new("session").unwrap(),
+fn request(extension: Option<RuntimeLaunchExtension>) -> RuntimeInvocationRequest { RuntimeInvocationRequest { attachments: vec![], session_id: AgentSessionId::new("session").unwrap(),
         invocation_id: invocation_id(),
-        submitted_text: "Reply with exactly the word: ok".into(),
+        content: InvocationContent::query("Reply with exactly the word: ok"),
         working_directory: Some("/work".into()),
         options: AgentRuntimeOptions {
             model: Some("haiku".into()),
@@ -340,15 +338,12 @@ fn a_reply_establishes_the_conversation_and_completes_with_usage() {
         "Reply with exactly the word: ok"
     );
     assert_eq!(written[1]["session_id"].as_str(), Some(session.as_str()));
-    let target = harness
+    let turn_active = harness
         .sink
         .controls()
         .into_iter()
-        .find_map(|record| match record {
-            RuntimeControlRecord::TurnActive { target } => Some(target),
-            _ => None,
-        });
-    assert_eq!(target.unwrap().thread_id, *session);
+        .any(|record| matches!(record, RuntimeControlRecord::TurnActive));
+    assert!(turn_active);
 }
 
 #[test]
@@ -506,7 +501,6 @@ fn steering_joins_the_running_turn_and_completes_once() {
         message["message"]["content"][0]["type"] == "tool_use"
     }));
     harness.start(None);
-    let target = harness.runtime.active_turn(&invocation_id()).unwrap();
     harness.sink.wait_for(|updates| {
         updates.iter().any(|update| matches!(update, RuntimeUpdate::Event(e) if e.normalized.as_ref().is_some_and(|n| n.tool_activity.is_some())))
     });
@@ -514,7 +508,6 @@ fn steering_joins_the_running_turn_and_completes_once() {
         .runtime
         .steer(
             &invocation_id(),
-            &target,
             "input",
             "Also: end your final reply with the word banana.",
             &[],
@@ -550,11 +543,10 @@ fn a_result_before_a_steering_message_is_taken_in_does_not_finish() {
         vec![result.clone(), steered, answer, result],
     ]));
     harness.start(None);
-    let target = harness.runtime.active_turn(&invocation_id()).unwrap();
     harness.sink.wait_for(|updates| updates.iter().any(|update| matches!(update, RuntimeUpdate::Event(e) if e.raw_payload["type"] == "assistant")));
     harness
         .runtime
-        .steer(&invocation_id(), &target, "input", "more", &[])
+        .steer(&invocation_id(), "input", "more", &[])
         .unwrap();
     assert_eq!(
         harness.sink.outcome().status,
@@ -615,9 +607,8 @@ fn live_claude_code() {
     assert!(!models.is_empty());
     let work = tempfile::tempdir().unwrap();
     let runtime = ClaudeRuntime::system("claude");
-    let live_request = |id: &str, text: &str| RuntimeInvocationRequest {
-        invocation_id: AgentInvocationId::new(id).unwrap(),
-        submitted_text: text.into(),
+    let live_request = |id: &str, text: &str| RuntimeInvocationRequest { attachments: vec![], invocation_id: AgentInvocationId::new(id).unwrap(),
+        content: InvocationContent::query(text),
         working_directory: Some(work.path().to_string_lossy().into_owned()),
         ..request(None)
     };

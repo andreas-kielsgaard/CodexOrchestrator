@@ -14,7 +14,7 @@ use crate::{
         ports::{
             AgentAccessCapabilities, AgentAccessCapabilityDiscovery, AgentAccessCapabilitySnapshot,
             AgentRuntime, AgentRuntimeUpdateSink, CapabilityDiscoveryState, CapabilityProvenance,
-            CapabilitySupport, InvocationCapabilities, RuntimeInvocationMode,
+            CapabilitySupport, InvocationCapabilities, InvocationContent, RuntimeInvocationMode,
             RuntimeInvocationRequest, RuntimeLaunchExtension, RuntimePortError,
             RuntimePortErrorKind, RuntimeUpdate, RuntimeUpdateDeliveryFailure,
         },
@@ -1018,11 +1018,10 @@ fn launch_observer_sees_resume_external_context_not_local_ids() {
 
     runtime
         .resume_invocation(
-            RuntimeInvocationRequest {
-                attachments: vec![],
+            RuntimeInvocationRequest { attachments: vec![],
                 session_id: local_session,
                 invocation_id: local_invocation,
-                submitted_text: "continue".to_string(),
+                content: InvocationContent::query("continue"),
                 working_directory: None,
                 options: AgentRuntimeOptions::default(),
                 launch_extension: None,
@@ -1083,12 +1082,10 @@ fn terminal_reconciliation_requires_both_protocol_and_process_success() {
     );
 }
 
-fn request(invocation: &str, prompt: &str) -> RuntimeInvocationRequest {
-    RuntimeInvocationRequest {
-        attachments: vec![],
+fn request(invocation: &str, prompt: &str) -> RuntimeInvocationRequest { RuntimeInvocationRequest { attachments: vec![],
         session_id: AgentSessionId::new("local-session-id").expect("session"),
         invocation_id: AgentInvocationId::new(invocation).expect("invocation"),
-        submitted_text: prompt.to_string(),
+        content: InvocationContent::query(prompt),
         working_directory: Some("C:/work/project".to_string()),
         options: AgentRuntimeOptions::default(),
         launch_extension: None,

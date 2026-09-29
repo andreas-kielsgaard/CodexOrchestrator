@@ -107,8 +107,8 @@ fn upgrade_resolution(
         json!({"provider": CODEX, "configurationId": configuration_id}),
     );
     move_personality(profile);
-    let session_profile: SessionProfile =
-        serde_json::from_value(Value::Object(profile.clone())).map_err(|error| error.to_string())?;
+    let session_profile: SessionProfile = serde_json::from_value(Value::Object(profile.clone()))
+        .map_err(|error| error.to_string())?;
     let resealed =
         SessionCreationResolution::reseal(session_profile).map_err(|error| error.to_string())?;
     if let Some(previous) = resolution.get("digest").and_then(Value::as_str) {
@@ -175,7 +175,9 @@ fn rewrite_json_column(
             ))
             .map_err(|error| error.to_string())?;
         let rows = statement
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
             .map_err(|error| error.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| error.to_string())?;

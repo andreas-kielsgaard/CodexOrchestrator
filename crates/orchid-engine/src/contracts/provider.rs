@@ -49,12 +49,3 @@ pub struct ProviderNativeOptions {
     pub provider: String,
     pub settings: Value,
 }
-
-/// Provider-scoped native conversation state. Device transport treats the payload as opaque.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderContinuationPayload {
-    pub provider: String,
-    pub format: String,
-    pub payload: Value,
-}

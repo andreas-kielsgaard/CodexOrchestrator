@@ -37,6 +37,7 @@ export interface AgentSessionComposerProps {
   onDraftChange(value: string): void;
   onWorkingDirectoryChange(value: string): void;
   onSend(attachments: readonly NewAgentImageAttachmentDto[]): void;
+  onSteer?(attachments: readonly NewAgentImageAttachmentDto[]): void;
   onCancel(): void;
 }
 
@@ -63,7 +64,6 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
     if (
       (props.draft.trim() || attachments.length) &&
       !props.sending &&
-      (!props.active || props.steeringAvailable) &&
       !props.sendUnavailableReason
     ) {
       props.onSend(attachments);
@@ -165,6 +165,18 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
     if (menu.keyDown(event)) return;
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
+      if (
+        event.ctrlKey &&
+        props.active &&
+        props.steeringAvailable &&
+        props.onSteer &&
+        (props.draft.trim() || attachments.length) &&
+        !props.sending
+      ) {
+        props.onSteer(attachments);
+        setAttachments([]);
+        return;
+      }
       submit();
     }
   };
@@ -271,6 +283,19 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
               {props.canceling ? 'Canceling…' : 'Cancel'}
             </button>
           )}
+          {props.active && props.steeringAvailable && props.onSteer && (
+            <button
+              className="steer-agent-button"
+              type="button"
+              disabled={(!props.draft.trim() && !attachments.length) || props.sending}
+              onClick={() => {
+                props.onSteer?.(attachments);
+                setAttachments([]);
+              }}
+            >
+              Steer current turn
+            </button>
+          )}
           {
             <span className="composer-send-action">
               <button
@@ -279,7 +304,6 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
                 disabled={
                   (!props.draft.trim() && !attachments.length) ||
                   props.sending ||
-                  (props.active && !props.steeringAvailable) ||
                   Boolean(props.sendUnavailableReason)
                 }
                 aria-describedby={
@@ -287,11 +311,7 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
                 }
               >
                 <Send size={16} aria-hidden="true" />
-                {props.sending
-                  ? 'Sending…'
-                  : props.active && props.steeringAvailable
-                    ? 'Steer'
-                    : 'Send'}
+                {props.sending ? 'Sending…' : props.active ? 'Queue' : 'Send'}
               </button>
               {props.keyboardHint === 'tooltip' && (
                 <span
@@ -300,7 +320,11 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
                   role="tooltip"
                 >
                   {props.quickFeatures || props.targetSource ? '/ for quick features. ' : ''}Enter
-                  to send. Shift+Enter adds a new line.
+                  to {props.active ? 'queue' : 'send'}.{' '}
+                  {props.active && props.steeringAvailable && props.onSteer
+                    ? 'Ctrl+Enter steers the current turn. '
+                    : ''}
+                  Shift+Enter adds a new line.
                 </span>
               )}
             </span>

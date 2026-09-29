@@ -167,7 +167,7 @@ it('agent commands navigate the mounted UI and share its folders, disclosure and
     'true',
   );
   await waitFor(() => expect(loadSession).toHaveBeenCalledWith({ sessionId: 'session-7' }));
-  fireEvent.click(screen.getByRole('button', { name: /^Feature build Review workflow/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Feature build v1' }));
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Back to node' })).toBeNull());
   fireEvent.click(screen.getByRole('button', { name: 'Back' }));
   expect(await screen.findByRole('button', { name: 'Back to node' })).toBeVisible();

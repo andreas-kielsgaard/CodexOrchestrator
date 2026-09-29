@@ -42,17 +42,34 @@ mod tests {
     fn launches_use_the_setup_folder_and_cli() {
         let folder = tempfile::tempdir().unwrap();
         let setups = Arc::new(test_setups(None));
-        let setup = setups.add(folder.path(), Some("/opt/claude".into())).unwrap();
+        let setup = setups
+            .add(folder.path(), Some("/opt/claude".into()))
+            .unwrap();
         let preparation = ClaudeLaunchPreparation(setups);
         let session = AgentSessionId::new("session").unwrap();
         let invocation = AgentInvocationId::new("invocation").unwrap();
         let extension = preparation
-            .prepare_launch(&ProviderConfigurationRef::new("claude", &setup.id), &session, &invocation, false, None)
+            .prepare_launch(
+                &ProviderConfigurationRef::new("claude", &setup.id),
+                &session,
+                &invocation,
+                false,
+                None,
+            )
             .unwrap();
         assert_eq!(extension.executable.as_deref(), Some("/opt/claude"));
-        assert_eq!(extension.environment, [("CLAUDE_CONFIG_DIR".to_string(), setup.folder)]);
+        assert_eq!(
+            extension.environment,
+            [("CLAUDE_CONFIG_DIR".to_string(), setup.folder)]
+        );
         assert!(preparation
-            .prepare_launch(&ProviderConfigurationRef::new("codex", &setup.id), &session, &invocation, false, None)
+            .prepare_launch(
+                &ProviderConfigurationRef::new("codex", &setup.id),
+                &session,
+                &invocation,
+                false,
+                None
+            )
             .is_err());
     }
 }

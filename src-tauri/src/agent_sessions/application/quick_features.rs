@@ -141,7 +141,9 @@ impl AgentSessionApplication {
             .map_err(|e| e.to_string())?
             .quick_features_for_configuration(&reference.configuration_id, cwd)
             .map_err(|e| e.to_string())?;
-        if expected_profile.is_some_and(|expected| features.configuration.as_ref() != Some(expected)) {
+        if expected_profile
+            .is_some_and(|expected| features.configuration.as_ref() != Some(expected))
+        {
             return Err("The selected runtime profile no longer matches this Session.".into());
         }
         self.product_skills.append_quick_skills(&mut features);

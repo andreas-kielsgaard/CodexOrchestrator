@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 60;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 63;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 #[cfg(test)]
@@ -65,6 +65,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .execute_batch(crate::harness_engine::repository::HARNESS_BINDING_SCHEMA)
             .map_err(|error| format!("Unable to evolve Harness binding schema: {error}"))?;
         initialize_replacement_workflow_schema(&transaction)?;
+        transaction
+            .execute_batch(crate::agent_sessions::repository::AGENT_SESSION_SCHEMA)
+            .map_err(|error| format!("Unable to evolve Agent Session schema: {error}"))?;
         initialize_session_navigation_schema(&transaction)?;
         crate::harness_engine::migrations::migrate_bindings(&transaction)?;
         if current_version < 59 {
@@ -194,21 +197,27 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .map_err(|error| format!("Unable to migrate repository catalog schema: {error}"))?;
         if current_version <= 21 {
             transaction
-                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V22_MIGRATION)
+                .execute_batch(
+                    crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V22_MIGRATION,
+                )
                 .map_err(|error| {
                     format!("Unable to migrate native profile readiness schema: {error}")
                 })?;
         }
         if current_version <= 22 {
             transaction
-                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V23_MIGRATION)
+                .execute_batch(
+                    crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V23_MIGRATION,
+                )
                 .map_err(|error| {
                     format!("Unable to migrate native profile attention schema: {error}")
                 })?;
         }
         if current_version <= 23 {
             transaction
-                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V24_MIGRATION)
+                .execute_batch(
+                    crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V24_MIGRATION,
+                )
                 .map_err(|error| {
                     format!("Unable to migrate native profile producer-attempt schema: {error}")
                 })?;
@@ -227,21 +236,27 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                     .map_err(|error| format!("Unable to migrate native full-access canary state: {error}"))?;
             }
             transaction
-                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V25_MIGRATION)
+                .execute_batch(
+                    crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V25_MIGRATION,
+                )
                 .map_err(|error| {
                     format!("Unable to migrate native execution-mode authority schema: {error}")
                 })?;
         }
         if current_version <= 25 {
             transaction
-                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V26_MIGRATION)
+                .execute_batch(
+                    crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V26_MIGRATION,
+                )
                 .map_err(|error| {
                     format!("Unable to migrate native full-access canary schema: {error}")
                 })?;
         }
         if current_version <= 26 {
             transaction
-                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V27_MIGRATION)
+                .execute_batch(
+                    crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V27_MIGRATION,
+                )
                 .map_err(|error| {
                     format!("Unable to migrate native login-attempt schema: {error}")
                 })?;
@@ -257,7 +272,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 != 0;
             if legacy_setup_attempts {
                 transaction
-                    .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V28_MIGRATION)
+                    .execute_batch(
+                        crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V28_MIGRATION,
+                    )
                     .map_err(|error| {
                         format!("Unable to migrate native setup-attempt evidence schema: {error}")
                     })?;
@@ -265,35 +282,45 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
         }
         if current_version <= 28 {
             transaction
-                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V29_MIGRATION)
+                .execute_batch(
+                    crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V29_MIGRATION,
+                )
                 .map_err(|error| {
                     format!("Unable to migrate native setup-attempt policy schema: {error}")
                 })?;
         }
         if current_version <= 29 {
             transaction
-                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V30_MIGRATION)
+                .execute_batch(
+                    crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V30_MIGRATION,
+                )
                 .map_err(|error| {
                     format!("Unable to migrate native setup-attempt policy invariants: {error}")
                 })?;
         }
         if current_version <= 30 {
             transaction
-                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V31_MIGRATION)
+                .execute_batch(
+                    crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V31_MIGRATION,
+                )
                 .map_err(|error| {
                     format!("Unable to migrate native sandbox adoption evidence: {error}")
                 })?;
         }
         if current_version <= 31 {
             transaction
-                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V32_MIGRATION)
+                .execute_batch(
+                    crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V32_MIGRATION,
+                )
                 .map_err(|error| {
                     format!("Unable to migrate native sandbox adoption confirmations: {error}")
                 })?;
         }
         if current_version <= 32 {
             transaction
-                .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V33_MIGRATION)
+                .execute_batch(
+                    crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V33_MIGRATION,
+                )
                 .map_err(|error| {
                     format!("Unable to migrate native canary receipt classification: {error}")
                 })?;
@@ -309,7 +336,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
                 != 0;
             if !versioned_danger_authorization {
                 transaction
-                    .execute_batch(crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V34_MIGRATION)
+                    .execute_batch(
+                        crate::runtime::providers::codex::profiles::NATIVE_PROFILE_V34_MIGRATION,
+                    )
                     .map_err(|error| {
                         format!("Unable to migrate native danger authorization evidence: {error}")
                     })?;
@@ -358,6 +387,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
             .execute_batch(crate::identities::repository::IDENTITY_CATALOG_SCHEMA)
             .map_err(|error| format!("Unable to migrate Identity catalog schema: {error}"))?;
         initialize_replacement_workflow_schema(&transaction)?;
+        transaction
+            .execute_batch(crate::agent_sessions::repository::AGENT_SESSION_SCHEMA)
+            .map_err(|error| format!("Unable to migrate Agent Session schema: {error}"))?;
         initialize_session_navigation_schema(&transaction)?;
         crate::harness_engine::migrations::migrate_bindings(&transaction)?;
         if current_version == 14 {
@@ -484,15 +516,42 @@ fn initialize_session_navigation_schema(connection: &Connection) -> Result<(), S
     connection
         .execute_batch(crate::agent_sessions::repository::NATIVE_CONVERSATION_SCHEMA)
         .map_err(|e| e.to_string())?;
+    migrate_provider_session_bindings(connection)?;
     connection
-        .execute_batch(crate::agent_sessions::repository::TARGET_TRANSITION_SCHEMA)
+        .execute_batch(crate::agent_sessions::repository::QUEUE_SCHEMA)
         .map_err(|e| e.to_string())?;
+    crate::agent_sessions::repository::migrate_legacy_target_transitions(connection)?;
     connection
         .execute_batch(crate::agent_sessions::repository::SESSION_ORGANIZATION_SCHEMA)
         .map_err(|e| e.to_string())?;
     connection
         .execute_batch(crate::session_navigation::order_repository::SCHEMA)
         .map_err(|e| e.to_string())
+}
+
+fn migrate_provider_session_bindings(connection: &Connection) -> Result<(), String> {
+    let legacy_exists = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_session_parked_conversations')",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| format!("Unable to inspect legacy provider sessions: {error}"))?
+        != 0;
+    if legacy_exists {
+        connection
+            .execute(
+                "INSERT OR IGNORE INTO agent_session_provider_bindings(session_id,execution_key,binding_json,updated_at)
+                 SELECT session_id,json_extract(conversation_json,'$.location'),conversation_json,parked_at
+                 FROM agent_session_parked_conversations",
+                [],
+            )
+            .map_err(|error| format!("Unable to migrate provider session bindings: {error}"))?;
+        connection
+            .execute("DROP TABLE agent_session_parked_conversations", [])
+            .map_err(|error| format!("Unable to retire legacy provider sessions: {error}"))?;
+    }
+    Ok(())
 }
 
 fn initialize_replacement_workflow_schema(connection: &Connection) -> Result<(), String> {
@@ -573,11 +632,11 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         .map_err(|error| format!("Unable to inspect active Product Decision schema: {error}"))?;
     let replacement_workflow_schema_is_present = connection
         .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('execution_capability_profiles','execution_default_capability_profile','execution_route_model_catalogues','agent_session_address_clock','agent_session_addresses','agent_session_parked_conversations','agent_session_initial_prompt_prefixes','session_event_groups','session_event_deliveries','workflow_recipe_authoring','workflow_recipe_instances','workflow_recipe_attempts','claude_setups')",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('execution_capability_profiles','execution_default_capability_profile','execution_route_model_catalogues','agent_session_address_clock','agent_session_addresses','agent_session_provider_bindings','agent_session_initial_prompt_prefixes','agent_session_invocation_execution_snapshots','session_event_groups','session_event_deliveries','workflow_recipe_authoring','workflow_recipe_instances','workflow_recipe_attempts','claude_setups')",
             [],
             |row| row.get::<_, i64>(0),
         )
-        .map(|table_count| table_count == 13)
+        .map(|table_count| table_count == 14)
         .map_err(|error| format!("Unable to inspect replacement Workflow schema: {error}"))?;
     let otp_schema_is_present = connection
         .query_row(
@@ -648,10 +707,14 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         "SELECT COUNT(*)=2 FROM sqlite_master WHERE type='table' AND name IN ('agent_session_imports','agent_session_imported_turns')",
         [], |row| row.get(0)).map_err(|e| e.to_string())?;
     let preparation_schema_is_present: bool = connection.query_row("SELECT COUNT(*)=2 FROM sqlite_master WHERE type='table' AND name IN ('agent_session_preparations','agent_session_current_execution')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
-    let target_transition_schema_is_present: bool = connection.query_row("SELECT COUNT(*)=3 FROM sqlite_master WHERE type='table' AND name IN ('agent_session_target_transitions','sister_worktree_groups','sister_worktree_instances')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
+    let sister_worktree_schema_is_present: bool = connection.query_row("SELECT COUNT(*)=2 FROM sqlite_master WHERE type='table' AND name IN ('sister_worktree_groups','sister_worktree_instances')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
+    let legacy_target_transition_schema_is_absent: bool = connection.query_row("SELECT NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_session_target_transitions')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
+    let session_queue_schema_is_present: bool = connection.query_row("SELECT COUNT(*)=3 FROM sqlite_master WHERE type='table' AND name IN ('agent_session_queue_state','agent_session_target_operations','agent_session_queue_entries')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
     Ok(execution_device_schema_is_present
         && preparation_schema_is_present
-        && target_transition_schema_is_present
+        && sister_worktree_schema_is_present
+        && legacy_target_transition_schema_is_absent
+        && session_queue_schema_is_present
         && import_schema_is_present
         && native_profile_schema_is_present
         && epic_settlement_schema_is_present
@@ -688,6 +751,27 @@ mod tests {
     }
 
     #[test]
+    fn active_schema_reopens_to_retire_legacy_target_transition_storage() {
+        let connection = Connection::open_in_memory().expect("memory database");
+        initialize_active_database(&connection).expect("initialize database");
+        connection
+            .execute_batch(
+                "CREATE TABLE agent_session_target_transitions (
+                   session_id TEXT PRIMARY KEY REFERENCES agent_sessions(id) ON DELETE CASCADE,
+                   payload_json TEXT NOT NULL CHECK(json_valid(payload_json))
+                 );",
+            )
+            .expect("restore legacy transition table");
+
+        initialize_active_database(&connection).expect("reopen current database");
+
+        assert!(!table_exists(
+            &connection,
+            "agent_session_target_transitions"
+        ));
+    }
+
+    #[test]
     fn upgrades_existing_profile_storage_with_model_catalogue() {
         let connection = Connection::open_in_memory().expect("memory database");
         initialize_active_database(&connection).expect("initialize database");
@@ -697,7 +781,10 @@ mod tests {
 
         initialize_active_database(&connection).expect("upgrade database");
 
-        assert!(table_exists(&connection, "execution_route_model_catalogues"));
+        assert!(table_exists(
+            &connection,
+            "execution_route_model_catalogues"
+        ));
         assert_eq!(
             pragma_i64(&connection, "user_version"),
             ACTIVE_SCHEMA_VERSION
@@ -726,7 +813,10 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .expect("migrated catalogue");
-        assert_eq!(migrated, ("local".into(), "codex".into(), "profile-one".into()));
+        assert_eq!(
+            migrated,
+            ("local".into(), "codex".into(), "profile-one".into())
+        );
     }
 
     fn seed_file_review_predecessor(
@@ -795,15 +885,18 @@ mod tests {
                 "agent_session_imports",
                 "agent_session_initial_prompt_prefixes",
                 "agent_session_invocation_diagnostics",
+                "agent_session_invocation_execution_snapshots",
                 "agent_session_invocation_launch_acceptances",
                 "agent_session_invocations",
                 "agent_session_native_profile_bindings",
                 "agent_session_native_profile_launch_provenance",
                 "agent_session_organization",
-                "agent_session_parked_conversations",
                 "agent_session_preparations",
+                "agent_session_provider_bindings",
+                "agent_session_queue_entries",
+                "agent_session_queue_state",
                 "agent_session_runtime_events",
-                "agent_session_target_transitions",
+                "agent_session_target_operations",
                 "agent_sessions",
                 "capability_profiles",
                 "claude_setups",

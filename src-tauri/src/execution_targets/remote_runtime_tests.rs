@@ -75,12 +75,10 @@ impl AgentRuntimeUpdateSink for Sink {
     fn report_delivery_failure(&self, _: &AgentInvocationId, _: RuntimeUpdateDeliveryFailure) {}
 }
 
-fn invocation(id: &str) -> RuntimeInvocationRequest {
-    RuntimeInvocationRequest {
-        attachments: vec![],
+fn invocation(id: &str) -> RuntimeInvocationRequest { RuntimeInvocationRequest { attachments: vec![],
         session_id: AgentSessionId::new("remote-session").unwrap(),
         invocation_id: AgentInvocationId::new(id).unwrap(),
-        submitted_text: "Create the requested file".into(),
+        content: InvocationContent::query("Create the requested file"),
         working_directory: Some("/srv/project/worktrees/demo".into()),
         options: Default::default(),
         launch_extension: None,

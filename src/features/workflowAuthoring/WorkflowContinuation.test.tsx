@@ -41,17 +41,15 @@ it('discovers continuation fields and saves ordered file selections for multiple
   await user.click(screen.getByRole('button', { name: 'Workflow continuation · Continuation' }));
   await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Set trigger' }));
   await user.click(screen.getByRole('button', { name: 'Add prompt source' }));
-  await user.selectOptions(screen.getByLabelText('Output field'), 'outputFiles');
-  expect(screen.getByLabelText('Output field')).toHaveValue('outputFiles');
-  await user.selectOptions(screen.getByLabelText('Output field'), 'sourceNode');
+  await user.selectOptions(screen.getByLabelText('Field'), 'outputFiles');
+  expect(screen.getByLabelText('Field')).toHaveValue('outputFiles');
+  await user.selectOptions(screen.getByLabelText('Field'), 'sourceNode');
   await user.click(screen.getByRole('button', { name: 'Add prompt source' }));
-  await user.selectOptions(screen.getAllByLabelText('Source type')[1], 'node_files');
+  await user.selectOptions(screen.getAllByLabelText('Source type')[1], 'node_files_created');
   await user.selectOptions(screen.getByLabelText('Include files from node'), 'author');
-  await user.selectOptions(screen.getByLabelText('File association'), 'created');
   await user.click(screen.getByRole('button', { name: 'Add prompt source' }));
-  await user.selectOptions(screen.getAllByLabelText('Source type')[2], 'node_files');
+  await user.selectOptions(screen.getAllByLabelText('Source type')[2], 'node_files_edited');
   await user.selectOptions(screen.getAllByLabelText('Include files from node')[1], 'reviewer');
-  await user.selectOptions(screen.getAllByLabelText('File association')[1], 'edited');
   await user.click(screen.getByRole('button', { name: 'Move prompt source 3 up' }));
   await user.selectOptions(
     within(screen.getByRole('region', { name: 'Selected flow element' })).getByLabelText(
@@ -61,7 +59,7 @@ it('discovers continuation fields and saves ordered file selections for multiple
   );
   expect(
     within(screen.getByRole('region', { name: 'Selected flow element' })).queryByLabelText(
-      'Sessions to select',
+      'Sessions to prompt',
     ),
   ).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Close editor' }));
@@ -89,5 +87,5 @@ it('discovers continuation fields and saves ordered file selections for multiple
     ),
   ).toHaveValue('new');
   expect(screen.getAllByLabelText('Include files from node')[0]).toHaveValue('reviewer');
-  expect(screen.getAllByLabelText('File association')[1]).toHaveValue('created');
+  expect(screen.getAllByLabelText('Source type')[2]).toHaveValue('node_files_created');
 });

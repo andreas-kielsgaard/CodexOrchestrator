@@ -18,6 +18,7 @@ import { AgentIdentityBadge } from '../identities';
 import { EventGroupInspector } from '../sessionEvents';
 import {
   WorkflowGraphConnections,
+  WorkflowConnectionGroupDialog,
   WorkflowGraphEmpty,
   WorkflowGraphNodeCard,
   WorkflowGraphSurface,
@@ -66,6 +67,7 @@ export function WorkflowInstanceView({
   );
   const [requestText, setRequestText] = useState('');
   const [eventResult, setEventResult] = useState<SessionEventResultDto | null>(null);
+  const [connectionGroupIds, setConnectionGroupIds] = useState<readonly string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(true);
@@ -130,6 +132,7 @@ export function WorkflowInstanceView({
     ? attemptsForConnection(details.attempts, selectedConnection.connectionId)
     : [];
   const unassignedAttempts = attemptsWithoutElement(details.attempts);
+  const canLoadEvents = true;
   const loadAttempt = (eventGroup: SessionEventResultDto) => {
     setEventResult(eventGroup);
   };
@@ -178,9 +181,10 @@ export function WorkflowInstanceView({
               return count ? `${connection.name} · ${count}` : connection.name;
             }}
             ariaLabelForConnection={(connection) => `Open ${connection.name} activity`}
-            onActivate={(connection) => {
+            onActivate={(ids) => {
               setEventResult(null);
-              setSelection({ kind: 'connection', id: connection.id });
+              if (ids.length === 1) setSelection({ kind: 'connection', id: ids[0] });
+              else setConnectionGroupIds(ids);
             }}
           />
           {graphNodes.map((graphNode) => {
@@ -205,7 +209,7 @@ export function WorkflowInstanceView({
                 }}
               >
                 <span className="workflow-node__badges">
-                  {graphNode.starting ? <small>Start</small> : null}
+                  {graphNode.entry ? <small>Entry</small> : null}
                   {identity ? <AgentIdentityBadge identity={identity} compact /> : null}
                   {nodeSessions.some((entry) => entry.running) ? (
                     <small className="is-running">Running</small>
@@ -264,6 +268,7 @@ export function WorkflowInstanceView({
             ) : selectedNode ? (
               <NodeInspector
                 node={selectedNode}
+                entry={details.instance.recipe.entryNodeIds.includes(selectedNode.nodeId)}
                 details={details}
                 capabilityProfile={capabilityProfiles.get(selectedNode.capabilityProfileId)}
                 identity={identities.find(
@@ -271,7 +276,7 @@ export function WorkflowInstanceView({
                 )}
                 attempts={attemptsForNode(details.attempts, selectedNode.nodeId)}
                 eventResult={eventResult}
-                canLoadEvents={true}
+                canLoadEvents={canLoadEvents}
                 requestText={requestText}
                 busy={busy}
                 onRequestText={setRequestText}
@@ -312,11 +317,28 @@ export function WorkflowInstanceView({
                 destinationName={nodeById(details, selectedConnection.destinationNodeId)?.name}
                 attempts={selectedConnectionAttempts}
                 eventResult={eventResult}
-                canLoadEvents={true}
+                canLoadEvents={canLoadEvents}
                 onLoadAttempt={loadAttempt}
               />
             ) : null}
           </aside>
+        ) : null}
+        {connectionGroupIds ? (
+          <WorkflowConnectionGroupDialog
+            connections={graphConnections.filter((connection) =>
+              connectionGroupIds.includes(connection.id),
+            )}
+            nodes={graphNodes}
+            summary={(connection) => {
+              const count = attemptsForConnection(details.attempts, connection.id).length;
+              return `${count} activit${count === 1 ? 'y' : 'ies'}`;
+            }}
+            onClose={() => setConnectionGroupIds(null)}
+            onSelect={(id) => {
+              setConnectionGroupIds(null);
+              setSelection({ kind: 'connection', id });
+            }}
+          />
         ) : null}
       </div>
       {unassignedAttempts.length ? (
@@ -339,6 +361,7 @@ export function WorkflowInstanceView({
 
 function NodeInspector({
   node,
+  entry,
   details,
   capabilityProfile,
   identity,
@@ -353,6 +376,7 @@ function NodeInspector({
   onSend,
 }: {
   readonly node: WorkflowInstanceDetails['instance']['recipe']['nodes'][number];
+  readonly entry: boolean;
   readonly details: WorkflowInstanceDetails;
   readonly capabilityProfile?: CapabilityProfileDto;
   readonly identity?: AgentIdentityOption;
@@ -378,26 +402,32 @@ function NodeInspector({
           <AgentIdentityBadge identity={identity} secondaryLabel="Agent identity" />
         ) : null}
       </header>
-      <form
-        className="workflow-instance-view__request"
-        onSubmit={(event) => {
-          event.preventDefault();
-          onSend();
-        }}
-      >
-        <label>
-          Message this node
-          <textarea
-            rows={4}
-            value={requestText}
-            onChange={(event) => onRequestText(event.currentTarget.value)}
-          />
-        </label>
-        <button type="submit" disabled={busy || !requestText.trim()}>
-          {busy ? 'Sending…' : 'Send request'}
-        </button>
-        <small>A Session is created here if no target Session is available.</small>
-      </form>
+      {entry ? (
+        <form
+          className="workflow-instance-view__request"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSend();
+          }}
+        >
+          <label>
+            Message this entry node
+            <textarea
+              rows={4}
+              value={requestText}
+              onChange={(event) => onRequestText(event.currentTarget.value)}
+            />
+          </label>
+          <button type="submit" disabled={busy || !requestText.trim()}>
+            {busy ? 'Sending…' : 'Send request'}
+          </button>
+          <small>A Session is created here if no target Session is available.</small>
+        </form>
+      ) : (
+        <p className="workflow-instance-view__request-note">
+          New requests can only start at nodes marked as entry nodes in this design.
+        </p>
+      )}
       <CollapsibleSection
         title={`Sessions (${sessions.length})`}
         className="workflow-instance-view__section"

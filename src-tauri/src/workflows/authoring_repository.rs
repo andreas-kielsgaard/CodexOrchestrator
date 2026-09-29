@@ -273,12 +273,7 @@ mod tests {
             recipe_id: id.into(),
             name: "Review".into(),
             revision,
-            starting_node_id: None,
-            entry_action: crate::otp_api::CapabilityRef {
-                package: "workflow".into(),
-                tool: "prompt_agent".into(),
-            },
-            entry_configuration: serde_json::json!({}),
+            entry_node_ids: Vec::new(),
             nodes: vec![super::super::authoring::WorkflowAuthoringNode {
                 node_id: "reviewer".into(),
                 name: "Reviewer".into(),
@@ -292,7 +287,6 @@ mod tests {
                 },
                 initial_prompt: None,
                 agent_identity_id: None,
-                agent_mcp_configuration: Default::default(),
             }],
             connections: Vec::new(),
         }

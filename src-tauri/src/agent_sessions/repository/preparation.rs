@@ -12,8 +12,13 @@ CREATE TABLE IF NOT EXISTS agent_session_current_execution (
  session_id TEXT PRIMARY KEY REFERENCES agent_sessions(id) ON DELETE CASCADE,
  resolution_json TEXT NOT NULL CHECK(json_valid(resolution_json))
 );
+CREATE TABLE IF NOT EXISTS agent_session_invocation_execution_snapshots (
+ invocation_id TEXT PRIMARY KEY REFERENCES agent_session_invocations(id) ON DELETE CASCADE,
+ snapshot_json TEXT NOT NULL CHECK(json_valid(snapshot_json)),
+ recorded_at TEXT NOT NULL
+);
 "#;
-fn read_record(
+pub(super) fn read_record(
     conn: &Connection,
     id: &AgentInvocationId,
 ) -> Result<Option<SessionPreparation>, RepositoryError> {
@@ -100,6 +105,31 @@ impl SqliteAgentSessionRepository {
         })
     }
 
+    pub(super) fn read_invocation_execution_snapshot(
+        &self,
+        id: &AgentInvocationId,
+    ) -> Result<
+        Option<crate::agent_sessions::preparation::InvocationExecutionSnapshot>,
+        RepositoryError,
+    > {
+        self.read("read invocation execution snapshot", |connection| {
+            let json: Option<String> = connection
+                .query_row(
+                    "SELECT snapshot_json FROM agent_session_invocation_execution_snapshots WHERE invocation_id=?1",
+                    [id.as_str()],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(sql_unavailable("read invocation execution snapshot"))?;
+            json.map(|value| {
+                serde_json::from_str(&value).map_err(|error| {
+                    RepositoryError::new(RepositoryErrorKind::InvalidState, error.to_string())
+                })
+            })
+            .transpose()
+        })
+    }
+
     pub(super) fn save_preparation_record(
         &self,
         p: &SessionPreparation,
@@ -154,15 +184,12 @@ impl SqliteAgentSessionRepository {
                 ],
             )
             .map_err(sql_write("commit ready target"))?;
-            if let Some(target) = &p.resolved_target {
-                super::native_conversations::swap_parked_conversations(
-                    tx,
-                    &p.session_id,
-                    p.parked_source.as_ref(),
-                    &target.execution.provider,
-                    at,
-                )?;
-            }
+            super::native_conversations::retain_source_provider_binding(
+                tx,
+                &p.session_id,
+                p.source_provider_binding.as_ref(),
+                at,
+            )?;
             tx.execute(
                 "INSERT INTO agent_session_current_execution(session_id,resolution_json)
                  VALUES(?1,?2) ON CONFLICT(session_id)
@@ -180,6 +207,16 @@ impl SqliteAgentSessionRepository {
                 ],
             )
             .map_err(sql_write("resolve accepted invocation options"))?;
+            let snapshot = p
+                .execution_snapshot
+                .as_ref()
+                .ok_or_else(|| not_found("Invocation execution snapshot unavailable"))?;
+            tx.execute(
+                "INSERT INTO agent_session_invocation_execution_snapshots(invocation_id,snapshot_json,recorded_at)
+                 VALUES(?1,?2,?3) ON CONFLICT(invocation_id) DO NOTHING",
+                params![p.invocation_id.as_str(), to_json(snapshot)?, timestamp(at)],
+            )
+            .map_err(sql_write("record invocation execution snapshot"))?;
             tx.execute(
                 "UPDATE agent_session_preparations SET payload_json=?2 WHERE invocation_id=?1",
                 params![p.invocation_id.as_str(), to_json(p)?],
@@ -207,30 +244,6 @@ impl SqliteAgentSessionRepository {
                 return Err(RepositoryError::new(
                     RepositoryErrorKind::Conflict,
                     "Only known preparation failures can be retried",
-                ));
-            }
-            let latest: String = tx
-                .query_row(
-                    "SELECT id FROM agent_session_invocations WHERE session_id=?1
-                 ORDER BY created_at DESC,rowid DESC LIMIT 1",
-                    [preparation.session_id.as_str()],
-                    |row| row.get(0),
-                )
-                .map_err(sql_unavailable("check retry boundary"))?;
-            if latest != id.as_str() {
-                return Err(RepositoryError::new(
-                    RepositoryErrorKind::Conflict,
-                    "A later submission exists; send a new prompt instead",
-                ));
-            }
-            let active = active_invocation(tx, &preparation.session_id)?;
-            if active
-                .as_ref()
-                .is_some_and(|invocation| invocation.id != *id)
-            {
-                return Err(RepositoryError::new(
-                    RepositoryErrorKind::Conflict,
-                    "Another submission is active",
                 ));
             }
             tx.execute(

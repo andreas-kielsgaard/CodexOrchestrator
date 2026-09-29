@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react';
 import { CollapsibleSection } from '../../components/CollapsibleSection';
 import { ValidationSummary } from '../../components/ValidationSummary';
 import type {
-  ModelAllowanceDto,
   ProfileModelCatalogueDto,
   ProfileRoutePolicyDto,
   RuntimeSelectionsDto,
@@ -43,37 +42,21 @@ function sameExecution(
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function rangeValues(
-  allowance: ModelAllowanceDto,
-  reasoning: readonly string[],
-): readonly string[] {
-  const first = reasoning.indexOf(allowance.minimumReasoning);
-  const last = reasoning.indexOf(allowance.maximumReasoning);
-  return first < 0 || last < first ? [] : reasoning.slice(first, last + 1);
-}
-
 function synchronizeLegacyContract(
   profile: CapabilityProfileDraft,
   routePolicies: readonly ProfileRoutePolicyDto[],
   defaultRouteId: string | null,
 ): CapabilityProfileDraft {
   const selected = routePolicies.find((route) => route.routeId === defaultRouteId);
-  const allowances = routePolicies.flatMap((route) => route.modelAllowances);
-  const models = byKnownOrder(
-    allowances.map((allowance) => allowance.modelId),
-    MODEL_ORDER,
-  );
-  const reasoningModes = byKnownOrder(
-    allowances.flatMap((allowance) => rangeValues(allowance, REASONING_ORDER)),
-    REASONING_ORDER,
-  );
   return {
     ...profile,
     routePolicies,
     defaultRouteId,
     execution: selected?.execution ?? profile.execution,
     defaults: selected?.defaults ?? profile.defaults ?? emptyDefaults(),
-    allowedCapabilities: { ...profile.allowedCapabilities, models, reasoningModes },
+    // Route model ranges are remembered authoring intent. Runtime exposure remains the source of
+    // truth for models and reasoning, so editing preferences must not narrow the legacy ceiling.
+    allowedCapabilities: profile.allowedCapabilities,
   };
 }
 
@@ -364,7 +347,7 @@ function AddRouteDialog({
             >
               {matchingDeviceRoutes.map((candidate) => (
                 <option key={candidate.id} value={candidate.id}>
-                  {candidate.harnessLabel ?? candidate.label}
+                        {candidate.label}
                 </option>
               ))}
             </select>

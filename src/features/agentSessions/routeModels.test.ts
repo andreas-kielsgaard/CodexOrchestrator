@@ -1,6 +1,6 @@
 import type { CapabilityProfileDto } from '../../application/executionConfiguration';
 import type { ExecutionBindingDto } from '../../application/executionTargets/contracts';
-import { otherRouteModels, withOtherRouteModels } from './routeModels';
+import { capabilityProfileDeviceModels, withCapabilityProfileDeviceModels } from './routeModels';
 
 const binding = (provider: string, deviceId = 'local'): ExecutionBindingDto => ({
   deviceId,
@@ -27,12 +27,12 @@ const profile = {
   ],
 } as unknown as CapabilityProfileDto;
 
-it('offers the other providers models on the same device', () => {
-  const models = otherRouteModels(profile, binding('codex'));
-  expect(models.map((model) => model.id)).toEqual(['opus']);
-  expect(models[0].label).toBe('opus · Claude');
-  expect(models[0].reasoningModes.map((mode) => mode.id)).toEqual(['low', 'medium', 'high']);
-  const merged = withOtherRouteModels(
+it('offers the capability profile models on the same device without exposing route composition', () => {
+  const models = capabilityProfileDeviceModels(profile, binding('codex'));
+  expect(models.map((model) => model.id)).toEqual(['gpt-5', 'opus']);
+  expect(models[1].label).toBe('opus');
+  expect(models[1].reasoningModes.map((mode) => mode.id)).toEqual(['low', 'medium', 'high']);
+  const merged = withCapabilityProfileDeviceModels(
     {
       configuration: null,
       models: [
@@ -51,4 +51,35 @@ it('offers the other providers models on the same device', () => {
     models,
   );
   expect(merged?.models.map((model) => model.id)).toEqual(['gpt-5', 'opus']);
+});
+
+it('uses provider-observed models even when no model preferences were recorded', () => {
+  const claude = route('claude', 'ignored');
+  const withoutPreferences = {
+    ...profile,
+    routePolicies: [{ ...claude, modelAllowances: [] }],
+  } as unknown as CapabilityProfileDto;
+  const models = capabilityProfileDeviceModels(withoutPreferences, binding('claude'), {
+    'local/claude/claude-setup': {
+      route: {
+        deviceId: 'local',
+        provider: 'claude',
+        configurationRef: 'claude-setup',
+      },
+      observedAt: '2026-09-28T00:00:00Z',
+      observationError: null,
+      models: [
+        {
+          id: 'claude-haiku-4-5',
+          label: 'Haiku',
+          description: 'Fast',
+          defaultReasoningMode: 'high',
+          reasoningModes: [{ id: 'high', description: '' }],
+        },
+      ],
+    },
+  });
+
+  expect(models.map((model) => model.id)).toEqual(['claude-haiku-4-5']);
+  expect(models[0].label).toBe('Haiku');
 });

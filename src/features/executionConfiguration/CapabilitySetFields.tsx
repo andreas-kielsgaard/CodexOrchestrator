@@ -1,5 +1,6 @@
 import { CatalogMultiSelect } from '../../components/CatalogSelect';
 import { OtpMcpToolsPicker } from './OtpMcpToolsPicker';
+import { SkillsPicker } from './SkillsPicker';
 import type { CapabilitySetViewModel, RuntimeCapabilityCatalogs } from './types';
 import { mcpToolsFromSelectedValues, selectedMcpToolValues } from './types';
 
@@ -43,12 +44,10 @@ export function CapabilitySetFields({
         disabled={disabled}
         onChange={(values) => onChange({ ...value, mcpTools: mcpToolsFromSelectedValues(values) })}
       />
-      <CatalogMultiSelect
-        label="Skills"
+      <SkillsPicker
         catalog={catalogs.skills}
         values={value.skills}
         disabled={disabled}
-        hint={`${scopeLabel} may expose these skills.`}
         onChange={(skills) => onChange({ ...value, skills })}
       />
     </div>

@@ -66,9 +66,7 @@ impl AgentSessionApplication {
         &self,
         command: SteerAgentSessionCommand,
     ) -> Result<SessionInteraction, AgentSessionApplicationError> {
-        if (command.text.trim().is_empty() && command.attachments.is_empty())
-            || command.input_id.trim().is_empty()
-        {
+        if command.text.trim().is_empty() || command.input_id.trim().is_empty() {
             return Err(AgentSessionApplicationError::invalid(
                 "Steering requires text and an input identity",
             ));
@@ -104,20 +102,15 @@ impl AgentSessionApplication {
         }
 
         let runtime = self.runtime_for_invocation(&command.invocation_id)?;
-        let target = runtime
-            .active_turn(&command.invocation_id)
-            .map_err(AgentSessionApplicationError::runtime)?;
         self.record_interaction(
             &command.invocation_id,
             RuntimeControlRecord::SteeringPending {
                 input_id: command.input_id.clone(),
                 text: command.text.clone(),
-                target: target.clone(),
             },
         )?;
         let result = runtime.steer(
             &command.invocation_id,
-            &target,
             &command.input_id,
             &command.text,
             &command.attachments,

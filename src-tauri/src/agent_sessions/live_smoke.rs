@@ -18,8 +18,8 @@ use crate::{
         ports::{AgentSessionHistory, AgentSessionRepository},
         repository::{SqliteAgentSessionRepository, AGENT_SESSION_SCHEMA},
     },
-    runtime::providers::codex::{CodexCliCapabilities, CodexCliCapabilityProbe, CodexCliRuntime},
     runtime::processes::ProcessLaunchSpec,
+    runtime::providers::codex::{CodexCliCapabilities, CodexCliCapabilityProbe, CodexCliRuntime},
 };
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -336,8 +336,7 @@ impl LiveSmokeDriver {
         }
         let result = self
             .application()?
-            .send_message(SendAgentSessionMessageCommand {
-                session_id,
+            .send_message(SendAgentSessionMessageCommand { attachments: vec![], session_id,
                 submitted_text,
                 title: Some("ignored live smoke".into()),
                 working_directory: Some(
@@ -649,8 +648,7 @@ impl LiveSmokeDriver {
             .send_idempotent_application_message_with_launch_observation(
                 SendIdempotentApplicationAgentSessionMessageCommand {
                     invocation_id: invocation_id.clone(),
-                    message: SendAgentSessionMessageCommand {
-                        session_id: None,
+                    message: SendAgentSessionMessageCommand { attachments: vec![], session_id: None,
                         submitted_text: "Reply with only PIP01D_LAUNCH_ACCEPTANCE.".into(),
                         title: Some("PIP-01D launch acceptance smoke".into()),
                         working_directory: Some(

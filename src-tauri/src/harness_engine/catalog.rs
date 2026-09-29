@@ -1,8 +1,6 @@
 use super::{
     configuration::{HarnessConfiguration, HarnessMetadata},
-    domain::{
-        HarnessId, HarnessVersionNumber, HarnessVersionRef, HarnessVersionScope,
-    },
+    domain::{HarnessId, HarnessVersionNumber, HarnessVersionRef, HarnessVersionScope},
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

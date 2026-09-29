@@ -21,28 +21,42 @@ fn failed_preparation(fixture: &PreparationFixture, id: &str) -> SendAgentSessio
 }
 
 #[test]
-fn startup_classifies_stopped_setup_without_replaying_and_preserves_current_target() {
+fn startup_resumes_a_durable_queued_retry_and_preserves_activated_target() {
     let fixture = PreparationFixture::new();
     let ack = failed_preparation(&fixture, "stopped-setup");
+    fixture.wait(|| {
+        fixture
+            .repository
+            .queue_entry_for_invocation(&ack.invocation_id)
+            .unwrap()
+            .is_some_and(|entry| {
+                entry.state == crate::agent_sessions::queue::SessionQueueEntryState::Blocked
+            })
+    });
+    let entry = fixture
+        .repository
+        .queue_entry_for_invocation(&ack.invocation_id)
+        .unwrap()
+        .expect("queued message");
+    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+    let _reserved = loop {
+        match fixture.app.preparation_workers.reserve(&ack.invocation_id) {
+            Ok(reserved) => break reserved,
+            Err(_) => {
+                assert!(Instant::now() < deadline, "preparation worker did not stop");
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+    };
     fixture
         .repository
-        .retry_preparation(&ack.invocation_id, fixture.app.clock.now())
+        .retry_queue_entry(&entry.id, fixture.app.clock.now())
         .unwrap();
-    assert_eq!(fixture.app.reconcile_startup().unwrap(), 1);
-    let preparation = fixture.preparation(&ack.invocation_id);
-    assert_eq!(preparation.phase, PreparationPhase::Failed);
-    assert!(preparation.can_retry);
-    assert_eq!(fixture.runtime.attempts(), 1);
+    assert_eq!(fixture.app.reconcile_startup().unwrap(), 0);
+    fixture.app.preparation_workers.release(&ack.invocation_id);
+    fixture.app.wake_session_queue(ack.session_id.clone());
+    fixture.wait(|| fixture.runtime.attempts() == 2);
     assert!(fixture.runtime.state.lock().unwrap().delivered.is_empty());
-    assert_eq!(
-        fixture
-            .app
-            .load_session(&ack.session_id)
-            .unwrap()
-            .session
-            .execution_target,
-        Some(fixture.old_target.clone())
-    );
     assert_eq!(
         fixture
             .repository
@@ -50,7 +64,76 @@ fn startup_classifies_stopped_setup_without_replaying_and_preserves_current_targ
             .unwrap()
             .unwrap()
             .status,
-        AgentInvocationStatus::Interrupted
+        AgentInvocationStatus::Pending
+    );
+    assert_eq!(
+        fixture
+            .app
+            .load_session(&ack.session_id)
+            .unwrap()
+            .session
+            .execution_target,
+        fixture.preparation(&ack.invocation_id).resolved_target
+    );
+    fixture.runtime.release(true);
+    fixture.wait(|| {
+        fixture
+            .repository
+            .get_invocation(&ack.invocation_id)
+            .unwrap()
+            .unwrap()
+            .status
+            .is_terminal()
+    });
+    assert_eq!(fixture.runtime.state.lock().unwrap().delivered.len(), 1);
+}
+
+#[test]
+fn startup_turns_interrupted_target_staging_into_a_retryable_blocker() {
+    let fixture = PreparationFixture::new();
+    let now = fixture.app.clock.now();
+    let mut operation = crate::agent_sessions::target_operation::SessionTargetOperation::new(
+        "interrupted-target".into(),
+        fixture.session.id.clone(),
+        fixture.session.execution_target.clone(),
+        fixture.selection.clone(),
+        now,
+    );
+    fixture
+        .repository
+        .enqueue_target_operation(operation.clone(), now)
+        .unwrap();
+    operation.phase = crate::agent_sessions::target_operation::TargetOperationPhase::Staging;
+    operation.actions[0].status =
+        crate::agent_sessions::target_operation::TargetOperationActionStatus::Running;
+    fixture
+        .repository
+        .save_target_operation(&operation)
+        .unwrap();
+
+    assert_eq!(fixture.app.reconcile_startup().unwrap(), 0);
+
+    let operation = fixture
+        .repository
+        .target_operation(&operation.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        operation.phase,
+        crate::agent_sessions::target_operation::TargetOperationPhase::Blocked
+    );
+    assert!(operation
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("restarted")));
+    let entry = fixture
+        .repository
+        .queue_entry_for_operation(&operation.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        entry.state,
+        crate::agent_sessions::queue::SessionQueueEntryState::Blocked
     );
 }
 

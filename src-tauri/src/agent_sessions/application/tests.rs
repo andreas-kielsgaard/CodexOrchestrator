@@ -2,45 +2,76 @@ use super::{
     AgentSessionApplication, AgentSessionClock, AgentSessionIdProvider, AgentSessionNotification,
     AgentSessionNotifier, AgentSessionOwnership, ApplicationInvocationLaunchEvidence,
     CancelAgentInvocationCommand, CreateAgentSessionCommand, ProviderLaunchPreparation,
-    RenameAgentSessionCommand, SendAgentSessionMessageCommand,
-    SendIdempotentApplicationAgentSessionMessageCommand, SessionHarnessLaunchAuthority,
-    SessionHarnessVersionResolver, UpdateAgentSessionHarnessCommand,
+    SendAgentSessionMessageCommand, SendIdempotentApplicationAgentSessionMessageCommand,
+    SessionHarnessLaunchAuthority, SessionHarnessVersionResolver, UpdateAgentSessionHarnessCommand,
     UpdateAgentSessionIdentityCommand, UpdateAgentSessionModelOverrideCommand,
 };
 mod import_tests;
 
 /// Test composition: register fakes as the `codex` provider, served by this application's runtime.
 impl AgentSessionApplication {
-    pub(crate) fn with_profile_source(self, source: Arc<dyn ProviderConfigurationSource>) -> Self {
-        self.with_codex_parts(|providers| providers.configurations.replace("codex", source))
-    }
-
-    pub(crate) fn with_launch_preparation(
-        self,
-        preparation: Arc<dyn ProviderLaunchPreparation>,
-    ) -> Self {
-        self.with_codex_parts(|providers| providers.launches.replace("codex", preparation))
-    }
-
-    fn with_codex_parts(
+    pub(crate) fn with_profile_source(
         mut self,
-        register: impl FnOnce(&mut crate::runtime::providers::registrations::ProviderRegistrations),
+        source: Arc<dyn ProviderConfigurationSource>,
     ) -> Self {
         let mut providers = self
             .endpoints
             .as_ref()
             .map(|endpoints| endpoints.providers().clone())
-            .unwrap_or_default();
-        if providers.runtimes.find("codex").is_none() {
-            providers.runtimes.replace("codex", self.runtime.clone());
-        }
-        register(&mut providers);
+            .unwrap_or_else(|| {
+                crate::runtime::providers::registrations::ProviderRegistrations::single(
+                    "codex",
+                    source.clone(),
+                    self.runtime.clone(),
+                )
+            });
+        let _ = providers.replace_configuration("codex", source);
+        self.install_test_providers(providers);
+        self
+    }
+
+    pub(crate) fn with_launch_preparation(
+        mut self,
+        preparation: Arc<dyn ProviderLaunchPreparation>,
+    ) -> Self {
+        let mut providers = self
+            .endpoints
+            .as_ref()
+            .map(|endpoints| endpoints.providers().clone())
+            .unwrap_or_else(|| {
+                struct UnusedConfigurationSource;
+                impl ProviderConfigurationSource for UnusedConfigurationSource {
+                    fn profile_for_configuration(
+                        &self,
+                        _: &str,
+                        _: Option<&str>,
+                    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError>
+                    {
+                        Err(ProviderConfigurationSourceError::unavailable(
+                            "Test provider configuration is unavailable",
+                        ))
+                    }
+                }
+                crate::runtime::providers::registrations::ProviderRegistrations::single(
+                    "codex",
+                    Arc::new(UnusedConfigurationSource),
+                    self.runtime.clone(),
+                )
+            });
+        providers.replace_launch("codex", preparation).unwrap();
+        self.install_test_providers(providers);
+        self
+    }
+
+    fn install_test_providers(
+        &mut self,
+        providers: crate::runtime::providers::registrations::ProviderRegistrations,
+    ) {
         let endpoints = match &self.endpoints {
             Some(endpoints) => endpoints.with_providers(providers),
             None => crate::execution_targets::endpoints::ExecutionEndpoints::new(providers),
         };
         self.endpoints = Some(Arc::new(endpoints));
-        self
     }
 }
 mod preparation_tests;
@@ -405,14 +436,9 @@ fn pinned_profile_query_and_direct_user_message_preserve_session_configuration()
         })
         .collect::<Vec<_>>();
     assert_eq!(launches.len(), 3);
-    assert_eq!(
-        launches[0]
-            .launch_extension
-            .as_ref()
-            .and_then(|extension| extension.initial_prompt_prefix.as_ref())
-            .map(|prefix| prefix.content.as_str()),
-        Some("You are the plan reviewer.")
-    );
+    assert!(launches[0]
+        .content
+        .contains_text("You are the plan reviewer."));
     assert!(launches[1]
         .launch_extension
         .as_ref()
@@ -600,21 +626,6 @@ fn application_creates_and_updates_session_owned_harness_and_identity() {
         })
         .expect("clear Session identity");
     assert!(cleared.assigned_identity.is_none());
-
-    let renamed = application
-        .rename_session(RenameAgentSessionCommand {
-            session_id: cleared.id.clone(),
-            title: "  Renamed session  ".into(),
-        })
-        .expect("rename Session");
-    assert_eq!(renamed.title, "Renamed session");
-    let blank = application
-        .rename_session(RenameAgentSessionCommand {
-            session_id: cleared.id,
-            title: "  ".into(),
-        })
-        .expect_err("blank Session title");
-    assert!(blank.to_string().contains("cannot be blank"));
 }
 
 #[test]
@@ -1531,9 +1542,7 @@ fn startup_reconciliation_interrupts_pending_and_running_once() {
         })
         .expect("pending session");
     let created_at = Utc.with_ymd_and_hms(2026, 7, 10, 12, 0, 0).unwrap();
-    let pending = AgentInvocation {
-        attachments: vec![],
-        id: AgentInvocationId::new("pending-manual").expect("ID"),
+    let pending = AgentInvocation { attachments: vec![], id: AgentInvocationId::new("pending-manual").expect("ID"),
         session_id: pending_session.id,
         submitted_text: "Pending".to_string(),
         input_provenance: AgentInvocationInputProvenance::User,
@@ -1871,10 +1880,7 @@ impl Harness {
     }
 }
 
-fn message(session_id: &AgentSessionId, text: &str) -> SendAgentSessionMessageCommand {
-    SendAgentSessionMessageCommand {
-        attachments: vec![],
-        session_id: Some(session_id.clone()),
+fn message(session_id: &AgentSessionId, text: &str) -> SendAgentSessionMessageCommand { SendAgentSessionMessageCommand { attachments: vec![], session_id: Some(session_id.clone()),
         submitted_text: text.to_string(),
         title: None,
         working_directory: None,
@@ -2206,10 +2212,13 @@ impl FakeRuntime {
 }
 
 impl AgentRuntime for FakeRuntime {
-    fn active_turn(
+    fn steer(
         &self,
         invocation_id: &AgentInvocationId,
-    ) -> Result<crate::agent_sessions::ports::RuntimeTurnTarget, RuntimePortError> {
+        input_id: &str,
+        _text: &str,
+        _attachments: &[crate::agent_sessions::domain::RuntimeImageAttachment],
+    ) -> Result<(), RuntimePortError> {
         let active = self.active.lock().unwrap();
         if !active.as_ref().is_some_and(|(id, _)| id == invocation_id) {
             return Err(RuntimePortError::new(
@@ -2217,20 +2226,6 @@ impl AgentRuntime for FakeRuntime {
                 "not active",
             ));
         }
-        Ok(crate::agent_sessions::ports::RuntimeTurnTarget {
-            thread_id: "test-thread".into(),
-            turn_id: "test-turn".into(),
-        })
-    }
-    fn steer(
-        &self,
-        invocation_id: &AgentInvocationId,
-        target: &crate::agent_sessions::ports::RuntimeTurnTarget,
-        input_id: &str,
-        _text: &str,
-        _attachments: &[crate::agent_sessions::domain::RuntimeImageAttachment],
-    ) -> Result<(), RuntimePortError> {
-        assert_eq!(*target, self.active_turn(invocation_id)?);
         self.calls
             .lock()
             .unwrap()
@@ -2396,10 +2391,9 @@ impl AgentSessionNotifier for RecordingNotifier {
                 .repository
                 .preparation(invocation_id)
                 .is_ok_and(|p| p.is_some()),
-            AgentSessionNotification::TargetTransitionUpdated { session_id } => self
-                .repository
-                .target_transition(session_id)
-                .is_ok_and(|transition| transition.is_some()),
+            AgentSessionNotification::QueueUpdated { session_id } => {
+                self.repository.session_queue(session_id).is_ok()
+            }
             AgentSessionNotification::SteeringAccepted {
                 invocation_id,
                 input_id,
@@ -2500,6 +2494,16 @@ struct FaultInjectingRepository {
 }
 
 impl AgentSessionRepository for FaultInjectingRepository {
+    fn update_session_title(
+        &self,
+        session_id: &AgentSessionId,
+        title: String,
+        updated_at: DateTime<Utc>,
+    ) -> Result<AgentSession, RepositoryError> {
+        self.inner
+            .update_session_title(session_id, title, updated_at)
+    }
+
     fn create_session_with_placement(
         &self,
         session: AgentSession,
@@ -2584,16 +2588,6 @@ impl AgentSessionRepository for FaultInjectingRepository {
     ) -> Result<AgentSession, RepositoryError> {
         self.inner
             .update_assigned_identity(session_id, assigned_identity, updated_at)
-    }
-
-    fn update_session_title(
-        &self,
-        session_id: &AgentSessionId,
-        title: String,
-        updated_at: DateTime<Utc>,
-    ) -> Result<AgentSession, RepositoryError> {
-        self.inner
-            .update_session_title(session_id, title, updated_at)
     }
 
     fn update_session_model_override(

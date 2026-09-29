@@ -6,6 +6,7 @@ import {
   type SessionPreparationStepDto,
 } from '../../application/agentSessions/preparation';
 import './sessionPreparation.css';
+import { ModalDialog } from '../../components/ModalDialog';
 export function SessionPreparationPanel({
   preparation,
   preview,
@@ -46,6 +47,33 @@ export function SessionPreparationPanel({
           : phase === 'preview'
             ? 'Preparation on Send'
             : 'Preparing session';
+  if (showPreview)
+    return (
+      <ModalDialog
+        labelledBy="session-preparation-preview-title"
+        onClose={onClosePreview}
+        className="session-preparation-preview"
+      >
+        <header>
+          <div>
+            <p>Message preparation</p>
+            <h2 id="session-preparation-preview-title">Preparation on Send</h2>
+            <small>{deviceName}</small>
+          </div>
+          <button type="button" aria-label="Close preparation preview" onClick={onClosePreview}>
+            <X size={16} />
+          </button>
+        </header>
+        <ol>
+          {steps.map((step) => (
+            <li key={step.id} className={`session-preparation-step--${step.status}`}>
+              <Circle size={18} aria-hidden="true" />
+              <span>{step.label}</span>
+            </li>
+          ))}
+        </ol>
+      </ModalDialog>
+    );
   return (
     <aside
       className={`session-preparation-panel${collapsed ? ' session-preparation-panel--collapsed' : ''}`}

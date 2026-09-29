@@ -52,7 +52,13 @@ impl ManagedMcpGrant {
     /// continuation must reach its token-protected loopback transport from inside the sandbox.
     pub(crate) fn work_unit_implementer_reporting(server_url: &str, bearer: String) -> Self {
         let tools = IMPLEMENTER_REPORTING_TOOLS.map(String::from);
-        let mut grant = Self::new(IMPLEMENTER_REPORTING_SCOPE, server_url, bearer, &tools, true);
+        let mut grant = Self::new(
+            IMPLEMENTER_REPORTING_SCOPE,
+            server_url,
+            bearer,
+            &tools,
+            true,
+        );
         grant.sandbox_network_access = true;
         grant
     }
@@ -75,9 +81,15 @@ impl ManagedMcpGrant {
                 .strip_prefix(IMPLEMENTER_REPORTING_SCOPE)
                 .is_some_and(|suffix| suffix.len() > 1 && suffix.starts_with('_'))
             && !server.url.is_empty()
-            && server.bearer_token.as_deref().is_some_and(|bearer| !bearer.is_empty())
+            && server
+                .bearer_token
+                .as_deref()
+                .is_some_and(|bearer| !bearer.is_empty())
             && server.enabled_tools.as_deref().is_some_and(|tools| {
-                tools.iter().map(String::as_str).eq(IMPLEMENTER_REPORTING_TOOLS)
+                tools
+                    .iter()
+                    .map(String::as_str)
+                    .eq(IMPLEMENTER_REPORTING_TOOLS)
             })
     }
 }
@@ -123,8 +135,12 @@ mod tests {
     #[test]
     fn grant_is_child_scoped_and_carries_only_accepted_intent() {
         let tools = vec!["submit_epic_plan_proposal".to_string()];
-        let grant =
-            ManagedMcpGrant::plan_builder("http://127.0.0.1:5555/mcp", "secret".into(), &tools, true);
+        let grant = ManagedMcpGrant::plan_builder(
+            "http://127.0.0.1:5555/mcp",
+            "secret".into(),
+            &tools,
+            true,
+        );
         let mut extension = RuntimeLaunchExtension::default();
         grant.clone().apply(&mut extension);
 

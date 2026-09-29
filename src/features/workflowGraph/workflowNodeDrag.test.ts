@@ -32,8 +32,14 @@ describe('workflow node drag geometry', () => {
       moved: false,
     });
     expect(projectWorkflowNodeDrag(drag, -100, -100, { width: 900, height: 700 })).toMatchObject({
-      positionX: 24,
-      positionY: 28,
+      positionX: 20,
+      positionY: 20,
+    });
+    expect(
+      projectWorkflowNodeDrag(drag, 315, 313, { width: 900, height: 700 }, false),
+    ).toMatchObject({
+      positionX: 45,
+      positionY: 43,
     });
   });
 });

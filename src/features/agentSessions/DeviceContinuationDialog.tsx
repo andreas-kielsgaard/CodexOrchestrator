@@ -1,9 +1,5 @@
 import type { RepositoryBranchSource, ReviewTarget } from '../../application/branches';
 import type {
-  AgentSessionProfileClient,
-  SessionTargetTransitionDto,
-} from '../../application/agentSessions';
-import type {
   ExecutionTargetClient,
   ExecutionTargetDeviceDto,
   SessionExecutionSelectionDto,
@@ -18,13 +14,12 @@ import './deviceContinuation.css';
 
 export interface DeviceContinuationDialogProps {
   readonly client: ExecutionTargetClient;
-  readonly profileClient?: AgentSessionProfileClient;
   readonly sessionId?: string;
   readonly source: RepositoryBranchSource;
   /** The fixed source worktree of the conversation being continued. */
   readonly sourceTarget: SessionExecutionTargetDto | null;
   readonly onChooseDevice?: (deviceId: string) => void;
-  readonly onTransitionChanged?: (transition: SessionTargetTransitionDto | null) => void;
+  readonly onQueueSelection?: (selection: SessionExecutionSelectionDto) => Promise<void> | void;
   onClose(): void;
 }
 
@@ -66,29 +61,6 @@ function TargetState({
   );
 }
 
-function taskSummary(transition: SessionTargetTransitionDto | null) {
-  if (!transition) return 'Choose a target worktree to calculate the worktree transition.';
-  if (transition.error) return transition.error;
-  if (transition.phase === 'ready') return 'The destination worktree is ready for this session.';
-  if (transition.phase === 'failed') return transition.error ?? 'The worktree transition failed.';
-  if (transition.phase === 'running')
-    return 'Copying the source worktree state to the destination.';
-  return 'The actions below are ready. Start switching now, or send a prompt to start them.';
-}
-
-function taskLabel(kind: SessionTargetTransitionDto['tasks'][number]['kind']) {
-  return {
-    inspect_source: 'Inspect source worktree',
-    inspect_destination: 'Inspect destination worktree',
-    capture_snapshot: 'Capture source worktree state',
-    materialize_destination: 'Materialize destination worktree',
-    transfer_snapshot: 'Transfer source worktree state',
-    apply_snapshot: 'Apply source worktree state',
-    verify_destination: 'Verify destination worktree',
-    activate_sister: 'Activate sister worktree',
-  }[kind];
-}
-
 function matchingWorktrees(device: ExecutionTargetDeviceDto | null) {
   return (
     device?.profiles.flatMap((profile) =>
@@ -97,18 +69,14 @@ function matchingWorktrees(device: ExecutionTargetDeviceDto | null) {
   );
 }
 
-/**
- * A device switch first plans worktree work at the session boundary. Legacy callers still get
- * the previous device picker until their server exposes the optional transition boundary.
- */
+/** A device switch chooses the destination recorded by the Session queue. */
 export function DeviceContinuationDialog({
   client,
-  profileClient,
   sessionId,
   source,
   sourceTarget,
   onChooseDevice,
-  onTransitionChanged,
+  onQueueSelection,
   onClose,
 }: DeviceContinuationDialogProps) {
   const [devices, setDevices] = useState<readonly ExecutionTargetDeviceDto[]>([]);
@@ -116,10 +84,7 @@ export function DeviceContinuationDialog({
   const [error, setError] = useState<string>();
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>();
   const [selectedWorktreeKey, setSelectedWorktreeKey] = useState<string | 'create'>();
-  const [step, setStep] = useState<'device' | 'worktrees' | 'plan'>('device');
-  const [transition, setTransition] = useState<SessionTargetTransitionDto | null>(null);
-  const [transitionLoading, setTransitionLoading] = useState(false);
-  const [transitionError, setTransitionError] = useState<string>();
+  const [step, setStep] = useState<'device' | 'worktrees'>('device');
 
   useEffect(() => {
     let cancelled = false;
@@ -154,48 +119,6 @@ export function DeviceContinuationDialog({
     };
   }, [client, sourceTarget]);
 
-  useEffect(() => {
-    if (!sessionId || !profileClient?.loadTargetTransition) return;
-    let cancelled = false;
-    void profileClient.loadTargetTransition(sessionId).then(
-      (loaded) => {
-        if (cancelled || !loaded) return;
-        setTransition(loaded);
-        setSelectedDeviceId(loaded.destinationSelection.execution.deviceId);
-        setStep('plan');
-      },
-      (cause) => {
-        if (!cancelled) setTransitionError(String(cause));
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [profileClient, sessionId]);
-
-  useEffect(() => {
-    if (transition?.phase !== 'running' || !sessionId || !profileClient?.loadTargetTransition)
-      return;
-    let cancelled = false;
-    const poll = () => {
-      void profileClient.loadTargetTransition!(sessionId).then(
-        (next) => {
-          if (cancelled || !next) return;
-          setLoadedTransition(next);
-        },
-        (cause) => {
-          if (!cancelled) setTransitionError(String(cause));
-        },
-      );
-    };
-    const timer = window.setInterval(poll, 1000);
-    poll();
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [profileClient, sessionId, transition?.phase]);
-
   const selectedDevice = useMemo(
     () => devices.find((device) => device.deviceId === selectedDeviceId) ?? null,
     [devices, selectedDeviceId],
@@ -222,12 +145,6 @@ export function DeviceContinuationDialog({
     ) ?? false;
   const sourceBranch =
     sourceTarget?.branchRef.replace(/^refs\/heads\//, '') ?? 'No source worktree';
-  const transitionSupported = Boolean(
-    sessionId &&
-    sourceTarget &&
-    profileClient?.requestTargetTransition &&
-    profileClient.startTargetTransition,
-  );
   const chosen = targetInstances.find(
     ({ instance, profile }) =>
       `${profile.capabilityProfileId}:${profile.capabilityProfileRevision}:${instance.worktreeId}` ===
@@ -278,35 +195,6 @@ export function DeviceContinuationDialog({
     return null;
   }, [chosen, selectedDevice, selectedWorktreeKey, sourceTarget]);
 
-  const setLoadedTransition = (next: SessionTargetTransitionDto | null) => {
-    setTransition(next);
-    onTransitionChanged?.(next);
-  };
-  const requestPlan = () => {
-    if (!sourceTarget || !sessionId || !destination || !profileClient?.requestTargetTransition)
-      return;
-    setTransitionLoading(true);
-    setTransitionError(undefined);
-    void profileClient
-      .requestTargetTransition({ sessionId, sourceTarget, destinationSelection: destination })
-      .then((next) => {
-        setLoadedTransition(next);
-        setStep('plan');
-      })
-      .catch((cause) => setTransitionError(String(cause)))
-      .finally(() => setTransitionLoading(false));
-  };
-  const startSwitching = () => {
-    if (!sessionId || !profileClient?.startTargetTransition) return;
-    setTransitionLoading(true);
-    setTransitionError(undefined);
-    void profileClient
-      .startTargetTransition(sessionId)
-      .then((next) => setLoadedTransition(next))
-      .catch((cause) => setTransitionError(String(cause)))
-      .finally(() => setTransitionLoading(false));
-  };
-
   return (
     <ModalDialog
       labelledBy="device-continuation-title"
@@ -328,11 +216,8 @@ export function DeviceContinuationDialog({
         <li className={step === 'device' ? 'is-current' : 'is-complete'}>
           <span>{step === 'device' ? '1' : <Check size={14} />}</span> Choose device
         </li>
-        <li className={step === 'worktrees' ? 'is-current' : step === 'plan' ? 'is-complete' : ''}>
-          <span>{step === 'plan' ? <Check size={14} /> : '2'}</span> Compare worktrees
-        </li>
-        <li className={step === 'plan' ? 'is-current' : ''}>
-          <span>3</span> Switch plan
+        <li className={step === 'worktrees' ? 'is-current' : ''}>
+          <span>2</span> Choose worktree
         </li>
       </ol>
 
@@ -390,7 +275,7 @@ export function DeviceContinuationDialog({
             })}
           </div>
         </section>
-      ) : step === 'worktrees' && sourceTarget ? (
+      ) : sourceTarget ? (
         <section className="device-continuation__comparison" aria-label="Worktree comparison">
           <div className="device-continuation__comparison-heading">
             <button
@@ -498,58 +383,13 @@ export function DeviceContinuationDialog({
             </section>
           </div>
         </section>
-      ) : (
-        <section className="device-continuation__plan" aria-label="Device switch plan">
-          <div className="device-continuation__comparison-heading">
-            <button
-              type="button"
-              className="worktree-review__secondary"
-              onClick={() => setStep('worktrees')}
-            >
-              <ArrowLeft size={16} aria-hidden="true" /> Back to worktrees
-            </button>
-            <p>Review the worktree tasks before they start.</p>
-          </div>
-          <section className="device-continuation__plan-card">
-            <p className="worktree-review__step">Pending device switch</p>
-            <h3>
-              {selectedDevice?.deviceName ?? transition?.destinationSelection.execution.deviceName}
-            </h3>
-            <p>{taskSummary(transition)}</p>
-            {(transition?.snapshot || transition?.transferEstimate) && (
-              <p className="device-continuation__estimate">
-                Snapshot migration
-                {transition?.snapshot
-                  ? ` · ${(transition.snapshot.totalBytes / 1024 / 1024).toFixed(1)} MB`
-                  : ''}
-                {transition?.transferEstimate
-                  ? ` · about ${transition.transferEstimate.estimatedSeconds}s`
-                  : ''}
-              </p>
-            )}
-            <ol className="device-continuation__task-list">
-              {(transition?.tasks ?? []).map((task) => (
-                <li key={task.kind} className={`is-${task.status}`}>
-                  <span aria-hidden="true" />
-                  <div>
-                    <strong>{taskLabel(task.kind)}</strong>
-                    {(task.detail ?? task.error) && <p>{task.detail ?? task.error}</p>}
-                  </div>
-                </li>
-              ))}
-            </ol>
-            {transitionError && <p role="alert">{transitionError}</p>}
-          </section>
-        </section>
-      )}
+      ) : null}
 
       <footer className="device-continuation__footer">
         <p>
-          {step === 'plan'
-            ? 'Closing keeps this planned switch. Sending the next prompt starts any remaining work and holds that prompt until it finishes.'
-            : transitionSupported
-              ? 'No worktree changes happen until you create this switch plan.'
-              : 'This server has not enabled worktree transition planning yet.'}
+          {onQueueSelection
+            ? 'The switch is added to the Session queue. Its preparation can run before it reaches the front.'
+            : 'Choose the device for this conversation target.'}
         </p>
         {step === 'device' ? (
           <button
@@ -566,42 +406,22 @@ export function DeviceContinuationDialog({
           >
             {sourceTarget ? 'Select device' : 'Use device'}
           </button>
-        ) : step === 'worktrees' ? (
+        ) : (
           <button
             type="button"
             className="worktree-review__primary"
-            disabled={!destination || transitionLoading}
+            disabled={!destination}
             onClick={() => {
-              if (transitionSupported) requestPlan();
-              else if (selectedDeviceId) {
+              if (onQueueSelection && destination) {
+                void onQueueSelection(destination);
+                onClose();
+              } else if (selectedDeviceId) {
                 onChooseDevice?.(selectedDeviceId);
                 onClose();
               }
             }}
           >
-            {transitionSupported
-              ? transitionLoading
-                ? 'Creating plan…'
-                : 'Review switch plan'
-              : 'Use device'}
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="worktree-review__primary"
-            disabled={
-              transitionLoading ||
-              !transition ||
-              Boolean(transition.error) ||
-              transition.phase === 'ready'
-            }
-            onClick={startSwitching}
-          >
-            {transition?.phase === 'ready'
-              ? 'Switch complete'
-              : transitionLoading
-                ? 'Starting…'
-                : 'Start switching'}
+            {onQueueSelection ? 'Queue device switch' : 'Use device'}
           </button>
         )}
       </footer>

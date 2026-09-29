@@ -30,6 +30,27 @@ export function selectionForTarget(
   };
 }
 
+export function selectionSatisfiedByTarget(
+  selection: SessionExecutionSelectionDto | null,
+  target: SessionExecutionTargetDto | null,
+) {
+  if (!selection || !target) return false;
+  if (
+    selection.capabilityProfileId !== target.capabilityProfileId ||
+    selection.capabilityProfileRevision !== target.capabilityProfileRevision ||
+    !sameExecutionRoute(selection.execution, target.execution)
+  )
+    return false;
+  if (selection.workspace.kind === 'existing')
+    return selection.workspace.target.worktreeId === target.worktreeId;
+  if (selection.workspace.kind === 'auxiliary') return !target.repositoryId;
+  return (
+    selection.workspace.repositoryId === target.repositoryId &&
+    selection.workspace.branchRef === target.branchRef &&
+    (!selection.workspace.commit || selection.workspace.commit === target.head)
+  );
+}
+
 function sameExecutionRoute(
   left: SessionExecutionSelectionDto['execution'],
   right: SessionExecutionSelectionDto['execution'],
@@ -51,8 +72,9 @@ function rebaseDraftSelection(
   );
   if (!profile) return null;
   const matchingExecution = profile.routePolicies?.length
-    ? profile.routePolicies.find((route) => sameExecutionRoute(route.execution, selection.execution))
-        ?.execution
+    ? profile.routePolicies.find((route) =>
+        sameExecutionRoute(route.execution, selection.execution),
+      )?.execution
     : profile.execution && sameExecutionRoute(profile.execution, selection.execution)
       ? profile.execution
       : undefined;
@@ -98,6 +120,7 @@ export function useSessionTarget(
   const [error, setError] = useState<string | null>(null);
   const [branchChoice, setBranchChoice] = useState<DraftBranchChoice | null>(null);
   const [resolvingBranch, setResolvingBranch] = useState(false);
+  const [validatingTarget, setValidatingTarget] = useState(false);
   const dirty = useRef(false);
   const acknowledgedSession = useRef<string | null>(null);
   const cacheKey = composerDraftCacheKey(sessionId, folderTarget);
@@ -119,6 +142,69 @@ export function useSessionTarget(
     setDeviceId(cachedSelection?.execution.deviceId ?? null);
     setHydratedCacheKey(cacheKey);
   }, [sessionId, cacheKey]);
+  useEffect(() => {
+    if (
+      sessionId ||
+      hydratedCacheKey !== cacheKey ||
+      !client ||
+      selection?.workspace.kind !== 'existing'
+    )
+      return;
+    const target = selection.workspace.target;
+    if (!target.repositoryId || !target.branchRef) return;
+    let current = true;
+    setValidatingTarget(true);
+    void client
+      .listTargets(target.repositoryId, target.branchRef)
+      .then(
+        (devices) => {
+          if (!current) return;
+          const available = devices.some(
+            (device) =>
+              device.deviceId === target.execution.deviceId &&
+              device.profiles.some(
+                (profile) =>
+                  !profile.error &&
+                  profile.capabilityProfileId === target.capabilityProfileId &&
+                  profile.instances.some(
+                    (instance) =>
+                      instance.worktreeId === target.worktreeId && instance.path === target.path,
+                  ),
+              ),
+          );
+          if (available) return;
+          const active = selectionRef.current?.workspace;
+          if (
+            active?.kind !== 'existing' ||
+            active.target.worktreeId !== target.worktreeId ||
+            active.target.path !== target.path
+          )
+            return;
+          setSelectionState((previous) =>
+            previous?.workspace.kind === 'existing' &&
+            previous.workspace.target.worktreeId === target.worktreeId &&
+            previous.workspace.target.path === target.path
+              ? { ...previous, workspace: { kind: 'auxiliary' } }
+              : previous,
+          );
+          setBranchChoice({
+            repositoryId: target.repositoryId,
+            branchRef: target.branchRef,
+            label: `${target.branchRef.replace(/^refs\/heads\//, '')} · choose worktree`,
+            requiresWorktree: true,
+          });
+        },
+        (cause) => {
+          if (current) setError(String(cause));
+        },
+      )
+      .finally(() => {
+        if (current) setValidatingTarget(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, [cacheKey, client, hydratedCacheKey, selection, sessionId]);
   useEffect(() => {
     let current = true;
     if (!profiles) return;
@@ -183,9 +269,10 @@ export function useSessionTarget(
   );
   const adoptCurrent = useCallback(
     (target: SessionExecutionTargetDto | null, accepted?: SessionExecutionSelectionDto | null) => {
-      if (dirty.current) return;
+      if (dirty.current && !selectionSatisfiedByTarget(selectionRef.current, target)) return;
       const next = target ? selectionForTarget(target) : accepted;
       if (next) {
+        dirty.current = false;
         setSelectionState((previous) =>
           JSON.stringify(previous) === JSON.stringify(next) ? previous : next,
         );
@@ -313,12 +400,15 @@ export function useSessionTarget(
   }, [selection, target?.path, client, branchResolutionKey]);
   const acceptReady = useCallback(
     (accepted: SessionExecutionSelectionDto | null, target: SessionExecutionTargetDto | null) => {
-      if (target)
+      if (target) {
+        if (selectionSatisfiedByTarget(selectionRef.current, target)) dirty.current = false;
         setSelectionState((current) =>
-          JSON.stringify(current) === JSON.stringify(accepted)
+          JSON.stringify(current) === JSON.stringify(accepted) ||
+          selectionSatisfiedByTarget(current, target)
             ? selectionForTarget(target)
             : current,
         );
+      }
     },
     [],
   );
@@ -336,7 +426,7 @@ export function useSessionTarget(
     deviceId,
     chooseDevice,
     chooseProfile,
-    loading: loading || resolvingBranch,
+    loading: loading || resolvingBranch || validatingTarget,
     error,
     branchChoice,
     workspaceLabel:

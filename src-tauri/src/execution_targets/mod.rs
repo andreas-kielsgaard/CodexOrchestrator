@@ -212,9 +212,7 @@ fn ensure_device_ready(
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
     };
-    let _operation = gate
-        .lock()
-        .map_err(|_| "Device readiness is unavailable")?;
+    let _operation = gate.lock().map_err(|_| "Device readiness is unavailable")?;
     if probe().is_ok() {
         return Ok(());
     }

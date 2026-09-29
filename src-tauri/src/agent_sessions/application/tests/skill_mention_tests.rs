@@ -42,7 +42,9 @@ fn pinned_input(path: &str, name: &str) -> RuntimeSkillInput {
     }
 }
 
-fn application_with(catalogue: ProviderSkillCatalogue) -> (AgentSessionApplication, Arc<NativeSkills>) {
+fn application_with(
+    catalogue: ProviderSkillCatalogue,
+) -> (AgentSessionApplication, Arc<NativeSkills>) {
     let source = Arc::new(NativeSkills {
         catalogue,
         reads: AtomicU64::new(0),

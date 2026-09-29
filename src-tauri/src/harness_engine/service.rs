@@ -130,6 +130,34 @@ impl ManagedMcpUpstreamRegistry {
         }
     }
 
+    fn unregister_session(&self, session_id: &str) {
+        let owners = self
+            .descriptors
+            .lock()
+            .map(|mut descriptors| {
+                let mut owners = Vec::new();
+                descriptors.retain(|_, registrations| {
+                    let mut retained = Vec::new();
+                    for registration in registrations.drain(..) {
+                        if registration.session_id.as_deref() == Some(session_id) {
+                            if let Some(owner) = registration.owner {
+                                owners.push(owner);
+                            }
+                        } else {
+                            retained.push(registration);
+                        }
+                    }
+                    *registrations = retained;
+                    !registrations.is_empty()
+                });
+                owners
+            })
+            .unwrap_or_default();
+        for owner in owners {
+            owner.stop();
+        }
+    }
+
     pub(super) fn resolve(&self, name: &str) -> Result<ManagedMcpUpstreamDescriptor, String> {
         self.resolve_for_session(None, name)
     }
@@ -218,12 +246,11 @@ pub(crate) struct HarnessEngineService {
 }
 
 impl HarnessEngineService {
-    pub(crate) fn bind_session_profile(
+    fn provision_agent_mcp_upstreams(
         &self,
         session_id: &AgentSessionId,
         profile: &crate::execution_configuration::SessionCreationResolution,
     ) -> Result<(), String> {
-        profile.verify_digest().map_err(|error| error.to_string())?;
         let provisioners = self
             .agent_mcp_provisioners
             .lock()
@@ -232,14 +259,38 @@ impl HarnessEngineService {
         for provisioner in provisioners {
             provisioner.provision(session_id, profile, &self.upstreams)?;
         }
+        Ok(())
+    }
+
+    pub(crate) fn bind_session_profile(
+        &self,
+        session_id: &AgentSessionId,
+        profile: &crate::execution_configuration::SessionCreationResolution,
+    ) -> Result<(), String> {
+        profile.verify_digest().map_err(|error| error.to_string())?;
         let snapshot = serde_json::to_string(profile).map_err(|error| error.to_string())?;
         if let Some(binding) = self.repository.current_for_session(session_id.as_str())? {
             binding.verify_digest()?;
-            if binding.harness_snapshot != snapshot {
-                return Err("Session MCP binding does not match its pinned profile".into());
+            if binding.harness_snapshot == snapshot {
+                self.provision_agent_mcp_upstreams(session_id, profile)?;
+                return Ok(());
             }
-            return Ok(());
+            match binding.stage {
+                HarnessBindingStage::Prepared => {
+                    self.repository.discard_prepared(&binding.id)?;
+                }
+                HarnessBindingStage::Bound => {
+                    self.sidecar.retire_binding(&binding.id)?;
+                    self.repository
+                        .retire(&binding.id, &Utc::now().to_rfc3339())?;
+                }
+                HarnessBindingStage::Retired => {
+                    return Err("The current Session Harness binding is retired.".into());
+                }
+            }
+            self.upstreams.unregister_session(session_id.as_str());
         }
+        self.provision_agent_mcp_upstreams(session_id, profile)?;
         let mut exposures = Vec::new();
         for (index, (server, tools)) in profile
             .session_profile()
@@ -346,7 +397,7 @@ impl HarnessEngineTauriState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     #[derive(Default)]
     struct FakeSidecar {
@@ -367,10 +418,12 @@ mod tests {
                 return Err("sidecar registration failed".to_string());
             }
             drop(failures);
-            let token = registration
-                .harness_token
-                .clone()
-                .unwrap_or_else(|| "stable-harness-token".to_string());
+            let token = registration.harness_token.clone().unwrap_or_else(|| {
+                format!(
+                    "stable-harness-token-{}",
+                    self.registrations.lock().unwrap().len() + 1
+                )
+            });
             registration.harness_token = Some(token.clone());
             self.registrations.lock().unwrap().push(registration);
             Ok(token)
@@ -403,6 +456,39 @@ mod tests {
         }
     }
 
+    struct RecordingSessionProvisioner {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl AgentMcpUpstreamProvisioner for RecordingSessionProvisioner {
+        fn provision(
+            &self,
+            session_id: &AgentSessionId,
+            _profile: &crate::execution_configuration::SessionCreationResolution,
+            upstreams: &ManagedMcpUpstreamRegistry,
+        ) -> Result<(), String> {
+            if upstreams
+                .resolve_scoped(session_id.as_str(), "workflow")
+                .is_ok()
+            {
+                return Ok(());
+            }
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            upstreams.register_for_session(
+                session_id.as_str(),
+                ManagedMcpUpstreamDescriptor {
+                    name: "workflow".into(),
+                    url: "http://127.0.0.1:41001/mcp".into(),
+                    bearer_token: "session-secret".into(),
+                    workflow_tool_name: None,
+                    workflow_prepare_url: None,
+                    caller_context: false,
+                },
+            )?;
+            Ok(())
+        }
+    }
+
     struct FailingMarkBoundRepository {
         inner: Arc<SqliteHarnessBindingRepository>,
         fail_once: AtomicBool,
@@ -411,6 +497,10 @@ mod tests {
     impl HarnessBindingRepository for FailingMarkBoundRepository {
         fn insert_prepared(&self, binding: &HarnessBindingRecord) -> Result<(), String> {
             self.inner.insert_prepared(binding)
+        }
+
+        fn discard_prepared(&self, binding_id: &str) -> Result<(), String> {
+            self.inner.discard_prepared(binding_id)
         }
 
         fn mark_bound(
@@ -476,7 +566,9 @@ mod tests {
         SessionProfileResolver::resolve_snapshot(
             RuntimeProfileSnapshot {
                 contract_version: 1,
-                configuration: orchid_engine::contracts::ProviderConfigurationRef::new("codex", "runtime"),
+                configuration: orchid_engine::contracts::ProviderConfigurationRef::new(
+                    "codex", "runtime",
+                ),
                 exposure: capabilities.clone(),
                 locked: RuntimeSelections::default(),
                 provider_options: None,
@@ -558,6 +650,53 @@ mod tests {
             sidecar.prepared_invocations.lock().unwrap()[0].1,
             "invocation-1"
         );
+    }
+
+    #[test]
+    fn a_later_route_profile_replaces_the_between_turn_harness_binding() {
+        let (_directory, repository) = repository();
+        let sidecar = Arc::new(FakeSidecar::default());
+        let registry = Arc::new(ManagedMcpUpstreamRegistry::default());
+        registry
+            .register(ManagedMcpUpstreamDescriptor {
+                name: "plan_builder".into(),
+                url: "http://127.0.0.1:48000/mcp".into(),
+                bearer_token: "secret".into(),
+                workflow_tool_name: None,
+                workflow_prepare_url: None,
+                caller_context: false,
+            })
+            .unwrap();
+        let service =
+            HarnessEngineService::new(repository.clone(), sidecar.clone(), registry).unwrap();
+        let session = AgentSessionId::new("session-1").unwrap();
+
+        service
+            .bind_session_profile(&session, &profile(Some("plan_builder")))
+            .unwrap();
+        service
+            .prepare_launch(&session, &AgentInvocationId::new("first").unwrap(), None)
+            .unwrap();
+        let first = repository
+            .current_for_session(session.as_str())
+            .unwrap()
+            .unwrap();
+
+        service
+            .bind_session_profile(&session, &profile(None))
+            .unwrap();
+        let replacement = repository
+            .current_for_session(session.as_str())
+            .unwrap()
+            .unwrap();
+        assert_ne!(replacement.id, first.id);
+        assert_eq!(replacement.stage, HarnessBindingStage::Prepared);
+        assert_eq!(sidecar.retired.lock().unwrap().as_slice(), &[first.id]);
+        let extension = service
+            .prepare_launch(&session, &AgentInvocationId::new("second").unwrap(), None)
+            .unwrap()
+            .unwrap();
+        assert!(extension.managed_mcp_servers.is_empty());
     }
 
     #[test]
@@ -677,6 +816,66 @@ mod tests {
                 .unwrap()
                 .unwrap(),
             before
+        );
+    }
+
+    #[test]
+    fn matching_durable_binding_reprovisions_session_upstreams_after_restart() {
+        let (_directory, repository) = repository();
+        let session = AgentSessionId::new("session-1").unwrap();
+        let first_calls = Arc::new(AtomicUsize::new(0));
+        let first_registry = Arc::new(ManagedMcpUpstreamRegistry::default());
+        let first = HarnessEngineService::new(
+            repository.clone(),
+            Arc::new(FakeSidecar::default()),
+            first_registry.clone(),
+        )
+        .unwrap();
+        first
+            .attach_agent_mcp_provisioner(Arc::new(RecordingSessionProvisioner {
+                calls: first_calls.clone(),
+            }))
+            .unwrap();
+        first
+            .bind_session_profile(&session, &profile(Some("workflow")))
+            .unwrap();
+        let durable_binding = repository
+            .current_for_session(session.as_str())
+            .unwrap()
+            .unwrap();
+        assert_eq!(first_calls.load(Ordering::SeqCst), 1);
+        assert!(first_registry
+            .resolve_scoped(session.as_str(), "workflow")
+            .is_ok());
+        drop(first);
+
+        let reopened_calls = Arc::new(AtomicUsize::new(0));
+        let reopened_registry = Arc::new(ManagedMcpUpstreamRegistry::default());
+        let reopened = HarnessEngineService::new(
+            repository.clone(),
+            Arc::new(FakeSidecar::default()),
+            reopened_registry.clone(),
+        )
+        .unwrap();
+        reopened
+            .attach_agent_mcp_provisioner(Arc::new(RecordingSessionProvisioner {
+                calls: reopened_calls.clone(),
+            }))
+            .unwrap();
+        reopened
+            .bind_session_profile(&session, &profile(Some("workflow")))
+            .unwrap();
+
+        assert_eq!(reopened_calls.load(Ordering::SeqCst), 1);
+        assert!(reopened_registry
+            .resolve_scoped(session.as_str(), "workflow")
+            .is_ok());
+        assert_eq!(
+            repository
+                .current_for_session(session.as_str())
+                .unwrap()
+                .unwrap(),
+            durable_binding
         );
     }
 

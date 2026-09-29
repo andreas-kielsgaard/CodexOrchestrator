@@ -1430,9 +1430,7 @@ impl PostConfirmationTransitionService {
                         .send_idempotent_application_message_with_launch_observation(
                             SendIdempotentApplicationAgentSessionMessageCommand {
                                 invocation_id: invocation_id.clone(),
-                                message: SendAgentSessionMessageCommand {
-                                    attachments: vec![],
-                                    session_id: Some(bootstrap_session_id.clone()),
+                                message: SendAgentSessionMessageCommand { attachments: vec![], session_id: Some(bootstrap_session_id.clone()),
                                     submitted_text: bootstrap_prompt(&record, &attempt),
                                     title: None,
                                     working_directory: Some(discovery_root),
@@ -1552,9 +1550,7 @@ impl PostConfirmationTransitionService {
                     )?;
                     let command = SendIdempotentApplicationAgentSessionMessageCommand {
                         invocation_id: invocation_id.clone(),
-                        message: SendAgentSessionMessageCommand {
-                            attachments: vec![],
-                            session_id: Some(session_id.clone()),
+                        message: SendAgentSessionMessageCommand { attachments: vec![], session_id: Some(session_id.clone()),
                             submitted_text: self.runner_prompt(
                                 &refreshed,
                                 accepted_attempt_id,
@@ -1686,9 +1682,7 @@ impl PostConfirmationTransitionService {
                     .send_idempotent_application_message_with_launch_observation(
                         SendIdempotentApplicationAgentSessionMessageCommand {
                             invocation_id,
-                            message: SendAgentSessionMessageCommand {
-                                attachments: vec![],
-                                session_id: Some(session_id),
+                            message: SendAgentSessionMessageCommand { attachments: vec![], session_id: Some(session_id),
                                 submitted_text: self.runner_recovery_prompt(
                                     &refreshed,
                                     accepted_attempt_id,
@@ -3223,11 +3217,11 @@ mod tests {
             Some(crate::agent_sessions::domain::RuntimeSandboxMode::ReadOnly)
         );
         assert!(bootstrap_request
-            .submitted_text
-            .contains("complete_epic_bootstrap"));
+            .content
+            .contains_text("complete_epic_bootstrap"));
         assert!(bootstrap_request
-            .submitted_text
-            .contains(&initial.approved_plan_path));
+            .content
+            .contains_text(&initial.approved_plan_path));
         let bootstrap_extension = bootstrap_request.launch_extension.as_ref().unwrap();
         assert_eq!(bootstrap_extension.managed_mcp_servers.len(), 1);
         assert!(bootstrap_extension.managed_mcp_servers[0]
@@ -3278,11 +3272,11 @@ mod tests {
             Some(crate::agent_sessions::domain::RuntimeSandboxMode::ReadOnly)
         );
         assert!(runner_request
-            .submitted_text
-            .contains("Do not create or start a product Sprint"));
+            .content
+            .contains_text("Do not create or start a product Sprint"));
         assert!(runner_request
-            .submitted_text
-            .contains("Use request_next_sprint_runner exactly once"));
+            .content
+            .contains_text("Use request_next_sprint_runner exactly once"));
         let runner_extension = runner_request.launch_extension.as_ref().unwrap();
         assert_eq!(runner_extension.managed_mcp_servers.len(), 1);
         assert_eq!(
@@ -3441,9 +3435,9 @@ mod tests {
         assert!(accepted.accepted, "{accepted:?}");
         assert_eq!(fixture.runtime.requests().len(), 4);
         let delivery = &fixture.runtime.requests()[3];
-        assert!(delivery.submitted_text.contains("forecast A"));
-        assert!(delivery.submitted_text.contains("uncertainty A"));
-        assert!(delivery.submitted_text.contains("Epic authorization"));
+        assert!(delivery.content.contains_text("forecast A"));
+        assert!(delivery.content.contains_text("uncertainty A"));
+        assert!(delivery.content.contains_text("Epic authorization"));
         assert!(matches!(service.start_selected_sprint(&AgentInvocationId::new("wrong-epic-continuation").unwrap()),Err(crate::orchestration::sprint_runner_transition::SprintRunnerTransitionError::Forbidden)));
         let barrier = Arc::new(Barrier::new(2));
         let start_calls = (0..2)
@@ -3533,9 +3527,9 @@ mod tests {
         let recovery = fixture.runtime.requests()[2].clone();
         assert_eq!(recovery.session_id.as_str(), runner.runner_session_id);
         assert!(recovery
-            .submitted_text
-            .contains(&format!("exact durable Sprint ID: {sprint_id}")));
-        assert!(recovery.submitted_text.contains("historical and immutable"));
+            .content
+            .contains_text(&format!("exact durable Sprint ID: {sprint_id}")));
+        assert!(recovery.content.contains_text("historical and immutable"));
         let recovery_id = recovery.invocation_id.clone();
         let sprint =
             crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
@@ -3912,11 +3906,9 @@ mod tests {
         assert!(delivered.epic_continuation_launch_accepted_at.is_some());
         assert_eq!(fixture.runtime.requests().len(), 4);
         let continuation = &fixture.runtime.requests()[3];
-        assert!(continuation.submitted_text.contains("deferred forecast"));
-        assert!(continuation.submitted_text.contains("deferred uncertainty"));
-        assert!(continuation
-            .submitted_text
-            .contains("deferred prerequisite"));
+        assert!(continuation.content.contains_text("deferred forecast"));
+        assert!(continuation.content.contains_text("deferred uncertainty"));
+        assert!(continuation.content.contains_text("deferred prerequisite"));
         reopened.reconcile_startup().unwrap();
         let after_terminal =
             crate::orchestration::sprint_runner_transition::SprintRunnerTransitionService::open(
@@ -4200,9 +4192,9 @@ mod tests {
         assert!(accepted.accepted);
         assert_eq!(fixture.runtime.requests().len(), 5);
         let delivery = &fixture.runtime.requests()[4];
-        assert!(delivery.submitted_text.contains("v2 forecast"));
-        assert!(delivery.submitted_text.contains("v2 uncertainty"));
-        assert!(delivery.submitted_text.contains("v2 prerequisite"));
+        assert!(delivery.content.contains_text("v2 forecast"));
+        assert!(delivery.content.contains_text("v2 uncertainty"));
+        assert!(delivery.content.contains_text("v2 prerequisite"));
         reopened.reconcile_startup().unwrap();
         assert_eq!(fixture.runtime.requests().len(), 5);
         let continuation = accepted.epic_continuation_invocation_id.clone().unwrap();
@@ -4411,8 +4403,8 @@ mod tests {
         let request = &runtime.requests()[0];
         assert_eq!(request.options, sprint_harness.runtime_options());
         assert!(request
-            .submitted_text
-            .contains("Sprint Runner for one application-authorized Sprint"));
+            .content
+            .contains_text("Sprint Runner for one application-authorized Sprint"));
         assert_eq!(
             request.launch_extension.as_ref().unwrap().approval,
             crate::agent_sessions::ports::RuntimeApprovalIntent::Unattended
@@ -5884,7 +5876,7 @@ mod tests {
             .into_iter()
             .find(|request| request.invocation_id == planner)
             .unwrap();
-        assert!(initial_launch.submitted_text.contains(
+        assert!(initial_launch.content.contains_text(
             "Read the application-bound current planning context before proposing work."
         ));
 
@@ -6321,22 +6313,20 @@ mod tests {
             launch.working_directory.as_deref(),
             Some(worktree_root.to_string_lossy().as_ref())
         );
+        assert!(launch.content.contains_context_source("work_slice_planner"));
         assert!(launch
-            .submitted_text
-            .contains("product_initial_prompt_prefix"));
-        assert!(launch
-            .submitted_text
-            .contains("Submit only proposal-local lanes through the supplied actions"));
+            .content
+            .contains_text("Submit only proposal-local lanes through the supplied actions"));
         assert!(!launch
-            .submitted_text
-            .contains("Review current Sprint reality and become ready to plan"));
-        assert!(launch.submitted_text.contains("Do not accept a proposal"));
+            .content
+            .contains_text("Review current Sprint reality and become ready to plan"));
+        assert!(launch.content.contains_text("Do not accept a proposal"));
         assert!(launch
-            .submitted_text
-            .contains("create Work Units, Handler or Implementer Sessions"));
+            .content
+            .contains_text("create Work Units, Handler or Implementer Sessions"));
         assert!(launch
-            .submitted_text
-            .contains("settle the Sprint, or advance to a later planning point"));
+            .content
+            .contains_text("settle the Sprint, or advance to a later planning point"));
         let extension = launch.launch_extension.as_ref().unwrap();
         assert_eq!(
             extension.approval,
@@ -7719,19 +7709,18 @@ mod tests {
             )
             .unwrap();
         assert!(implementer_launch
-            .submitted_text
-            .contains("Application-derived Work Unit specification:"));
-        assert!(implementer_launch.submitted_text.contains(&specification));
+            .content
+            .contains_text("Application-derived Work Unit specification:"));
+        assert!(implementer_launch.content.contains_text(&specification));
         for handler_launch in [original_handler_launch, action_handler_launch] {
             let extension = handler_launch.launch_extension.as_ref().unwrap();
             assert_eq!(
                 extension.approval,
                 crate::agent_sessions::ports::RuntimeApprovalIntent::Unattended
             );
-            assert_eq!(
-                extension.initial_prompt_prefix.as_ref().unwrap().source,
-                "work_unit_handler"
-            );
+            assert!(handler_launch
+                .content
+                .contains_context_source("work_unit_handler"));
         }
         let implementer_extension = implementer_launch.launch_extension.as_ref().unwrap();
         assert_eq!(
@@ -7743,14 +7732,9 @@ mod tests {
         assert!(implementer_extension.trusted_workspace);
         assert!(implementer_extension.managed_mcp_servers.is_empty());
         assert!(implementer_extension.environment.is_empty());
-        assert_eq!(
-            implementer_extension
-                .initial_prompt_prefix
-                .as_ref()
-                .unwrap()
-                .source,
-            "work_unit_implementer"
-        );
+        assert!(implementer_launch
+            .content
+            .contains_context_source("work_unit_implementer"));
         let (implementer_revision, implementer_digest, implementer_commit): (String, String, String) =
             Connection::open(&fixture.database_path)
                 .unwrap()
@@ -10362,9 +10346,7 @@ mod tests {
                     SendIdempotentApplicationAgentSessionMessageCommand {
                         invocation_id: AgentInvocationId::new(implementer_invocation_id.clone())
                             .unwrap(),
-                        message: SendAgentSessionMessageCommand {
-                            attachments: vec![],
-                            session_id: Some(AgentSessionId::new(session_id.clone()).unwrap()),
+                        message: SendAgentSessionMessageCommand { attachments: vec![], session_id: Some(AgentSessionId::new(session_id.clone()).unwrap()),
                             submitted_text: "Implement the bounded Work Unit.".into(),
                             title: None,
                             working_directory: Some(
@@ -10387,9 +10369,7 @@ mod tests {
                     SendIdempotentApplicationAgentSessionMessageCommand {
                         invocation_id: AgentInvocationId::new(reporting_invocation_id.clone())
                             .unwrap(),
-                        message: SendAgentSessionMessageCommand {
-                            attachments: vec![],
-                            session_id: Some(AgentSessionId::new(session_id.clone()).unwrap()),
+                        message: SendAgentSessionMessageCommand { attachments: vec![], session_id: Some(AgentSessionId::new(session_id.clone()).unwrap()),
                             submitted_text: "Report the completed implementation.".into(),
                             title: None,
                             working_directory: Some(
@@ -10654,9 +10634,7 @@ mod tests {
                     SendIdempotentApplicationAgentSessionMessageCommand {
                         invocation_id: AgentInvocationId::new(self.handler_invocation_id.clone())
                             .unwrap(),
-                        message: SendAgentSessionMessageCommand {
-                            attachments: vec![],
-                            session_id: Some(session.clone()),
+                        message: SendAgentSessionMessageCommand { attachments: vec![], session_id: Some(session.clone()),
                             submitted_text: "Original Handler.".into(),
                             title: None,
                             working_directory: Some(original_package.working_directory().into()),
@@ -10679,9 +10657,7 @@ mod tests {
                             self.handler_action_invocation_id.clone(),
                         )
                         .unwrap(),
-                        message: SendAgentSessionMessageCommand {
-                            attachments: vec![],
-                            session_id: Some(session),
+                        message: SendAgentSessionMessageCommand { attachments: vec![], session_id: Some(session),
                             submitted_text: "Handler action.".into(),
                             title: None,
                             working_directory: Some(action_package.working_directory().into()),
@@ -11397,8 +11373,7 @@ mod tests {
         sessions.send_idempotent_application_message_with_launch_observation(
             SendIdempotentApplicationAgentSessionMessageCommand {
                 invocation_id: original_invocation.clone(),
-                message: SendAgentSessionMessageCommand { attachments: vec![],
-                    session_id: Some(session_id.clone()),
+                message: SendAgentSessionMessageCommand { attachments: vec![], session_id: Some(session_id.clone()),
                     submitted_text: "Use only the file-editing tool to append exactly PIP01W_REPORTING_LIVE followed by a newline to README.md in the current workspace. Do not use shell or command tools. Stop after the edit.".into(),
                     title: None,
                     working_directory: Some(package.working_directory().into()),
@@ -11772,9 +11747,7 @@ mod tests {
             .send_idempotent_application_message_with_launch_observation(
                 SendIdempotentApplicationAgentSessionMessageCommand {
                     invocation_id: AgentInvocationId::new("direct-result-original").unwrap(),
-                    message: SendAgentSessionMessageCommand {
-                        attachments: vec![],
-                        session_id: Some(session.clone()),
+                    message: SendAgentSessionMessageCommand { attachments: vec![], session_id: Some(session.clone()),
                         submitted_text: "Original Epic Runner work.".into(),
                         title: None,
                         working_directory: Some(
@@ -11935,9 +11908,7 @@ mod tests {
             .send_idempotent_application_message_with_launch_observation(
                 SendIdempotentApplicationAgentSessionMessageCommand {
                     invocation_id: AgentInvocationId::new("terminal-result-origin").unwrap(),
-                    message: SendAgentSessionMessageCommand {
-                        attachments: vec![],
-                        session_id: Some(session.clone()),
+                    message: SendAgentSessionMessageCommand { attachments: vec![], session_id: Some(session.clone()),
                         submitted_text: "Origin.".into(),
                         title: None,
                         working_directory: None,
@@ -12104,9 +12075,7 @@ mod tests {
             .send_idempotent_application_message_with_launch_observation(
                 SendIdempotentApplicationAgentSessionMessageCommand {
                     invocation_id: AgentInvocationId::new("terminal-unsettled-origin").unwrap(),
-                    message: SendAgentSessionMessageCommand {
-                        attachments: vec![],
-                        session_id: Some(session.clone()),
+                    message: SendAgentSessionMessageCommand { attachments: vec![], session_id: Some(session.clone()),
                         submitted_text: "Origin.".into(),
                         title: None,
                         working_directory: None,
@@ -12241,9 +12210,7 @@ mod tests {
             .send_idempotent_application_message_with_launch_observation(
                 SendIdempotentApplicationAgentSessionMessageCommand {
                     invocation_id: AgentInvocationId::new("foreign-result-origin").unwrap(),
-                    message: SendAgentSessionMessageCommand {
-                        attachments: vec![],
-                        session_id: Some(session.clone()),
+                    message: SendAgentSessionMessageCommand { attachments: vec![], session_id: Some(session.clone()),
                         submitted_text: "Origin.".into(),
                         title: None,
                         working_directory: None,
@@ -12328,9 +12295,7 @@ mod tests {
             .send_idempotent_application_message_with_launch_observation(
                 SendIdempotentApplicationAgentSessionMessageCommand {
                     invocation_id: AgentInvocationId::new("direct-negative-original").unwrap(),
-                    message: SendAgentSessionMessageCommand {
-                        attachments: vec![],
-                        session_id: Some(session.clone()),
+                    message: SendAgentSessionMessageCommand { attachments: vec![], session_id: Some(session.clone()),
                         submitted_text: "Original.".into(),
                         title: None,
                         working_directory: None,
@@ -12658,9 +12623,7 @@ mod tests {
             .send_idempotent_application_message_with_launch_observation(
                 SendIdempotentApplicationAgentSessionMessageCommand {
                     invocation_id: AgentInvocationId::new("handback-epic-invocation").unwrap(),
-                    message: SendAgentSessionMessageCommand {
-                        attachments: vec![],
-                        session_id: Some(epic_session.clone()),
+                    message: SendAgentSessionMessageCommand { attachments: vec![], session_id: Some(epic_session.clone()),
                         submitted_text: "Original Epic Runner work.".into(),
                         title: None,
                         working_directory: Some(
@@ -12685,9 +12648,7 @@ mod tests {
             .send_idempotent_application_message_with_launch_observation(
                 SendIdempotentApplicationAgentSessionMessageCommand {
                     invocation_id: AgentInvocationId::new("handback-active-runner").unwrap(),
-                    message: SendAgentSessionMessageCommand {
-                        attachments: vec![],
-                        session_id: Some(runner_session.clone()),
+                    message: SendAgentSessionMessageCommand { attachments: vec![], session_id: Some(runner_session.clone()),
                         submitted_text: "Current Sprint Runner work.".into(),
                         title: None,
                         working_directory: Some(
@@ -12756,7 +12717,7 @@ mod tests {
             "handback-active-runner",
             AgentInvocationTerminalStatus::Completed,
         );
-        fixture.base.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: AgentInvocationId::new(invocation.clone()).unwrap(), message: SendAgentSessionMessageCommand { attachments: vec![],  session_id: Some(runner_session), submitted_text: "The application delivered one exact no-progress Work Unit concern. Read only the supplied reassessment context, record one truthful next movement, then stop. Continuing eligible work does not settle the concern; do not contact an Epic Runner or declare Sprint/Epic blockage.".into(), title: None, working_directory: Some(conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunnerHandbackReassessment).unwrap()), requested_options: Some(handback_harness.runtime_options()) } }).unwrap();
+        fixture.base.sessions.prepare_idempotent_application_invocation(SendIdempotentApplicationAgentSessionMessageCommand { invocation_id: AgentInvocationId::new(invocation.clone()).unwrap(), message: SendAgentSessionMessageCommand { attachments: vec![], session_id: Some(runner_session), submitted_text: "The application delivered one exact no-progress Work Unit concern. Read only the supplied reassessment context, record one truthful next movement, then stop. Continuing eligible work does not settle the concern; do not contact an Epic Runner or declare Sprint/Epic blockage.".into(), title: None, working_directory: Some(conversation_harness::role_discovery_root(ConversationHarnessRole::SprintRunnerHandbackReassessment).unwrap()), requested_options: Some(handback_harness.runtime_options()) } }).unwrap();
         let reopened = fixture.reopened();
         let concurrent = fixture.reopened();
         let barrier = Arc::new(Barrier::new(2));
@@ -12873,9 +12834,7 @@ mod tests {
             .send_idempotent_application_message_with_launch_observation(
                 SendIdempotentApplicationAgentSessionMessageCommand {
                     invocation_id: AgentInvocationId::new("handback-epic-active").unwrap(),
-                    message: SendAgentSessionMessageCommand {
-                        attachments: vec![],
-                        session_id: Some(epic_session.clone()),
+                    message: SendAgentSessionMessageCommand { attachments: vec![], session_id: Some(epic_session.clone()),
                         submitted_text: "Other Epic Runner work.".into(),
                         title: None,
                         working_directory: Some(

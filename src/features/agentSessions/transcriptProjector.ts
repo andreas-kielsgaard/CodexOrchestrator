@@ -130,6 +130,17 @@ export function projectAgentSessionTranscript(
   return transcript(details.session.id, invocations);
 }
 
+export function withoutTranscriptInvocations(
+  projected: ProjectedTranscript,
+  hiddenInvocationIds: ReadonlySet<string>,
+): ProjectedTranscript {
+  if (!hiddenInvocationIds.size) return projected;
+  return transcript(
+    projected.sessionId,
+    projected.invocations.filter((invocation) => !hiddenInvocationIds.has(invocation.id)),
+  );
+}
+
 interface CachedInvocationProjection {
   readonly entry: AgentInvocationDetailsDto;
   readonly interactions: readonly SessionInteractionDto[] | undefined;
@@ -257,8 +268,7 @@ function updateInvocationProjection(
   const appendOnly =
     previousEvents === events ||
     (previousEvents.length < events.length &&
-      (previousEvents.length === 0 ||
-        previousEvents.at(-1) === events[previousEvents.length - 1]));
+      (previousEvents.length === 0 || previousEvents.at(-1) === events[previousEvents.length - 1]));
   const appended = appendOnly ? events.slice(previousEvents.length) : [];
   if (
     !appendOnly ||

@@ -1,6 +1,6 @@
 use super::runtime_profile::{
-    validate_identifier, validate_provider_options, validate_selection_availability,
-    CapabilitySet, RuntimeSelections,
+    validate_identifier, validate_provider_options, validate_selection_availability, CapabilitySet,
+    RuntimeSelections,
 };
 use crate::agent_sessions::ports::RuntimeSkillInput;
 use orchid_engine::contracts::{ProviderConfigurationRef, ProviderNativeOptions};
@@ -84,10 +84,6 @@ impl SessionProfile {
 
     pub(crate) fn node_capabilities(&self) -> &CapabilitySet {
         &self.node_capabilities
-    }
-
-    pub(crate) fn agent_mcp_configuration(&self) -> &BTreeMap<String, serde_json::Value> {
-        &self.agent_mcp_configuration
     }
 
     pub(crate) fn session_skill_inputs(&self) -> &[RuntimeSkillInput] {

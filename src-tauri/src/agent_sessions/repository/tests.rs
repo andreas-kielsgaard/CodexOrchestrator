@@ -138,24 +138,6 @@ fn model_override_persists_without_replacing_the_session_sandbox() {
 }
 
 #[test]
-fn renamed_session_title_is_persisted() {
-    let repository = memory_repository();
-    let session = repository
-        .create_session(test_session("rename-session", at(0)))
-        .expect("create session");
-
-    let renamed = repository
-        .update_session_title(&session.id, "Planning notes".into(), at(1))
-        .expect("rename session");
-
-    assert_eq!(renamed.title, "Planning notes");
-    assert_eq!(
-        repository.get_session(&session.id).unwrap().unwrap().title,
-        "Planning notes"
-    );
-}
-
-#[test]
 fn persists_and_updates_session_owned_harness_and_identity() {
     let path = temporary_database_path();
     let connection = initialized_file_database(&path);
@@ -432,22 +414,28 @@ fn survives_close_and_reopen_with_complete_multi_invocation_history() {
 }
 
 #[test]
-fn enforces_one_active_invocation_and_rolls_back_rejected_create() {
+fn permits_pending_queue_but_rejects_new_messages_while_one_is_running() {
     let repository = memory_repository();
     let session = repository
         .create_session(test_session("session", at(0)))
         .expect("create session");
-    repository
+    let first = repository
         .create_pending_invocation(test_invocation("first", &session.id, at(1)))
-        .expect("create active invocation");
+        .expect("create first queued invocation");
+    repository
+        .create_pending_invocation(test_invocation("second", &session.id, at(2)))
+        .expect("create second queued invocation");
+    repository
+        .mark_invocation_running(&first.id, at(3), options(), at(3))
+        .expect("start first invocation");
 
     let error = repository
-        .create_pending_invocation(test_invocation("second", &session.id, at(2)))
-        .expect_err("reject second active invocation");
+        .create_pending_invocation(test_invocation("third", &session.id, at(4)))
+        .expect_err("reject another message while an invocation is running");
 
     assert_eq!(error.kind, RepositoryErrorKind::Conflict);
     assert!(repository
-        .get_invocation(&AgentInvocationId::new("second").expect("ID"))
+        .get_invocation(&AgentInvocationId::new("third").expect("ID"))
         .expect("query rejected invocation")
         .is_none());
     assert_eq!(
@@ -455,7 +443,7 @@ fn enforces_one_active_invocation_and_rolls_back_rejected_create() {
             .list_invocations(&session.id)
             .expect("invocations")
             .len(),
-        1
+        2
     );
 }
 
@@ -650,10 +638,7 @@ fn test_invocation(
     id: &str,
     session_id: &AgentSessionId,
     created_at: DateTime<Utc>,
-) -> AgentInvocation {
-    AgentInvocation {
-        attachments: vec![],
-        id: AgentInvocationId::new(id).expect("invocation ID"),
+) -> AgentInvocation { AgentInvocation { attachments: vec![], id: AgentInvocationId::new(id).expect("invocation ID"),
         session_id: session_id.clone(),
         submitted_text: format!("input for {id}"),
         input_provenance: AgentInvocationInputProvenance::User,
@@ -845,7 +830,7 @@ fn organization_creation_is_atomic_and_default_pin_does_not_change_placement() {
 }
 
 #[test]
-fn a_provider_change_parks_the_source_conversation_until_its_provider_returns() {
+fn provider_sessions_are_retained_by_exact_execution_route_and_workspace() {
     let connection = Connection::open_in_memory().expect("memory database");
     connection
         .execute_batch(&format!(
@@ -857,45 +842,238 @@ fn a_provider_change_parks_the_source_conversation_until_its_provider_returns() 
     let session = repository
         .create_session(test_session("switching", at(0)))
         .unwrap();
-    let parked = crate::agent_sessions::domain::ParkedNativeConversation {
-        provider: "codex".into(),
+    let target = crate::execution_targets::domain::SessionExecutionTarget {
+        capability_profile_id: "profile".into(),
+        capability_profile_revision: 1,
+        execution: crate::execution_targets::domain::ExecutionBinding::default(),
+        repository_id: "repository".into(),
+        branch_ref: "refs/heads/main".into(),
+        worktree_id: "worktree-one".into(),
+        path: "/worktree-one".into(),
+        head: None,
+    };
+    let cached = crate::agent_sessions::domain::ProviderSessionBinding {
         external_context_id: ExternalRuntimeContextId::new("codex-thread").unwrap(),
         runtime_version: None,
-        location: crate::execution_targets::domain::ExecutionBinding::default(),
+        location: target.execution.clone(),
+        workspace: Some(crate::agent_sessions::domain::ProviderWorkspaceIdentity::from(&target)),
         last_invocation_id: Some(AgentInvocationId::new("turn-one").unwrap()),
     };
     repository
-        .write("park", |tx| {
-            super::native_conversations::swap_parked_conversations(
+        .write("retain", |tx| {
+            super::native_conversations::retain_source_provider_binding(
                 tx,
                 &session.id,
-                Some(&parked),
-                "claude",
+                Some(&cached),
                 at(1),
             )
         })
         .unwrap();
     assert_eq!(
         repository
-            .parked_native_conversation(&session.id, "codex")
+            .provider_session_binding(&session.id, &target)
             .unwrap(),
-        Some(parked)
+        Some(cached.clone())
     );
-    repository
-        .write("return", |tx| {
-            super::native_conversations::swap_parked_conversations(
-                tx,
-                &session.id,
-                None,
-                "codex",
-                at(2),
-            )
-        })
-        .unwrap();
+    let mut other_configuration = target.clone();
+    other_configuration.execution.configuration_ref = "other-setup".into();
     assert!(repository
-        .parked_native_conversation(&session.id, "codex")
+        .provider_session_binding(&session.id, &other_configuration)
         .unwrap()
         .is_none());
+    let mut other_workspace = target.clone();
+    other_workspace.worktree_id = "worktree-two".into();
+    other_workspace.path = "/worktree-two".into();
+    assert!(repository
+        .provider_session_binding(&session.id, &other_workspace)
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn queued_preparations_accept_multiple_pending_messages_and_reorder_them_atomically() {
+    let connection = Connection::open_in_memory().expect("memory database");
+    connection
+        .execute_batch(&format!(
+            "PRAGMA foreign_keys = ON; {AGENT_SESSION_SCHEMA} {PREPARATION_SCHEMA} {QUEUE_SCHEMA}"
+        ))
+        .expect("initialize queued Session schema");
+    let repository = SqliteAgentSessionRepository::new(connection).expect("repository");
+    let session = repository
+        .create_session(test_session("queued", at(0)))
+        .unwrap();
+    let preparation =
+        |invocation_id: AgentInvocationId| crate::agent_sessions::preparation::SessionPreparation {
+            invocation_id,
+            session_id: session.id.clone(),
+            phase: crate::agent_sessions::preparation::PreparationPhase::Accepted,
+            steps: Vec::new(),
+            error: None,
+            can_retry: false,
+            selection: None,
+            source_target: None,
+            source_binding: AgentRuntimeBinding {
+                external_context_id: None,
+                runtime_version: None,
+            },
+            prepared_binding: None,
+            source_provider_binding: None,
+            resolved_target: None,
+            resolved_working_directory: None,
+            accepted_working_directory: None,
+            context: Vec::new(),
+            current_resolution: None,
+            resolution: None,
+            execution_snapshot: None,
+            model: None,
+            reasoning_mode: None,
+            sandbox_mode: None,
+            delivery_started: false,
+        };
+    let first = test_invocation("queued-one", &session.id, at(1));
+    let second = test_invocation("queued-two", &session.id, at(2));
+    repository
+        .accept_queued_preparation(
+            None,
+            first.clone(),
+            preparation(first.id.clone()),
+            None,
+            at(1),
+        )
+        .unwrap();
+    let accepted = repository
+        .accept_queued_preparation(
+            None,
+            second.clone(),
+            preparation(second.id.clone()),
+            None,
+            at(2),
+        )
+        .unwrap();
+    assert_eq!(accepted.entries.len(), 2);
+    assert!(accepted
+        .entries
+        .iter()
+        .all(|entry| entry.state == crate::agent_sessions::queue::SessionQueueEntryState::Pending));
+    let ids = accepted
+        .entries
+        .iter()
+        .rev()
+        .map(|entry| entry.id.clone())
+        .collect::<Vec<_>>();
+    let reordered = repository
+        .reorder_session_queue(&session.id, accepted.revision, &ids, at(3))
+        .unwrap();
+    assert_eq!(
+        reordered.entries[0].id,
+        format!("message:{}", second.id.as_str())
+    );
+}
+
+#[test]
+fn legacy_target_transition_and_waiting_prompt_migrate_to_adjacent_queue_entries() {
+    let repository = memory_repository();
+    let session = repository
+        .create_session(test_session("legacy-queue", at(0)))
+        .unwrap();
+    let source = crate::execution_targets::domain::SessionExecutionTarget {
+        capability_profile_id: "source-profile".into(),
+        capability_profile_revision: 1,
+        execution: crate::execution_targets::domain::ExecutionBinding::default(),
+        repository_id: "repository".into(),
+        branch_ref: "refs/heads/main".into(),
+        worktree_id: "source-tree".into(),
+        path: "C:/source".into(),
+        head: Some("a".repeat(40)),
+    };
+    let destination_execution = crate::execution_targets::domain::ExecutionBinding {
+        device_id: "remote".into(),
+        device_name: "Remote".into(),
+        provider: "codex".into(),
+        configuration_ref: "default".into(),
+        connection: crate::execution_targets::domain::ExecutionConnection::Ssh {
+            target: "remote.example".into(),
+            host_executable: "orchid-host".into(),
+        },
+    };
+    let mut payload = json!({
+        "sessionId": session.id,
+        "sourceTarget": source,
+        "destinationSelection": crate::execution_targets::domain::SessionExecutionSelection {
+            capability_profile_id: "destination-profile".into(),
+            capability_profile_revision: 1,
+            execution: destination_execution,
+            workspace: crate::execution_targets::domain::SessionWorkspaceSelection::Create {
+                repository_id: "repository".into(),
+                branch_ref: "refs/heads/main".into(),
+                commit: "b".repeat(40),
+                attachment: "branch".into(),
+            },
+        },
+        "phase": "pending",
+        "resolvedTarget": null,
+        "error": null,
+        "createdAt": at(1),
+        "updatedAt": at(1),
+    });
+    payload["queuedPrompt"] = json!({
+        "text": "Keep this prompt",
+        "clientMessageId": "legacy-message"
+    });
+    repository
+        .write("seed legacy transition", |tx| {
+            tx.execute_batch(
+                "CREATE TABLE agent_session_target_transitions (
+                   session_id TEXT PRIMARY KEY REFERENCES agent_sessions(id) ON DELETE CASCADE,
+                   payload_json TEXT NOT NULL CHECK(json_valid(payload_json))
+                 );",
+            )
+            .map_err(sql_write("create legacy target transition storage"))?;
+            tx.execute(
+                "INSERT INTO agent_session_target_transitions(session_id,payload_json) VALUES(?1,?2)",
+                params![session.id.as_str(), payload.to_string()],
+            )
+            .map_err(sql_write("seed legacy target transition"))?;
+            Ok(())
+        })
+        .unwrap();
+    repository
+        .write("migrate legacy transition", |tx| {
+            migrate_legacy_target_transitions(tx)
+                .map_err(|error| RepositoryError::new(RepositoryErrorKind::Unavailable, error))
+        })
+        .unwrap();
+
+    let queue = repository.session_queue(&session.id).unwrap();
+    assert_eq!(queue.entries.len(), 2);
+    assert!(matches!(
+        queue.entries[0].item,
+        crate::agent_sessions::queue::SessionQueueEntryItem::TargetOperation { .. }
+    ));
+    assert!(matches!(
+        queue.entries[1].item,
+        crate::agent_sessions::queue::SessionQueueEntryItem::Message { .. }
+    ));
+    assert_eq!(
+        repository
+            .get_invocation(&AgentInvocationId::new("legacy-message").unwrap())
+            .unwrap()
+            .unwrap()
+            .submitted_text,
+        "Keep this prompt"
+    );
+    let legacy_table_exists = repository
+        .read("inspect retired legacy storage", |connection| {
+            connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_session_target_transitions')",
+                    [],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(sql_unavailable("inspect retired legacy storage"))
+        })
+        .unwrap();
+    assert!(!legacy_table_exists);
 }
 
 #[test]

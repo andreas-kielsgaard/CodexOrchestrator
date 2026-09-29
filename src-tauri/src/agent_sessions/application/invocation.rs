@@ -3,9 +3,9 @@
 use super::update_sink::{DeviceActivityRuntimeUpdateSink, PersistedRuntimeUpdateSink};
 use super::{
     AgentSessionApplication, AgentSessionApplicationError, AgentSessionNotification,
-    ApplicationInvocationLaunchEvidence, CreateAgentSessionCommand, SendAgentSessionMessageCommand,
-    SendAgentSessionMessageLaunchResult, SendAgentSessionMessageResult,
-    SendIdempotentApplicationAgentSessionMessageCommand,
+    ApplicationInvocationLaunchEvidence, CreateAgentSessionCommand, InvocationDeliveryIntent,
+    SendAgentSessionMessageCommand, SendAgentSessionMessageLaunchResult,
+    SendAgentSessionMessageResult, SendIdempotentApplicationAgentSessionMessageCommand,
 };
 use crate::agent_sessions::domain::{
     AgentDiagnosticSource, AgentInvocation, AgentInvocationId, AgentInvocationInputProvenance,
@@ -13,8 +13,9 @@ use crate::agent_sessions::domain::{
     AgentSessionAvailability, AgentSessionId, InvocationCompletion,
 };
 use crate::agent_sessions::ports::{
-    AgentRuntimeUpdateSink, RepositoryError, RuntimeInvocationMode, RuntimeInvocationRequest,
-    RuntimeLaunchExtension, RuntimePortError, RuntimePortErrorKind,
+    AgentRuntimeUpdateSink, InitialPromptPrefix, InvocationContent, InvocationContextPart,
+    RepositoryError, RuntimeInvocationMode, RuntimeInvocationRequest, RuntimeLaunchExtension,
+    RuntimePortError, RuntimePortErrorKind,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -36,14 +37,20 @@ impl AgentSessionApplication {
         command: SendAgentSessionMessageCommand,
         launch_extension: Option<RuntimeLaunchExtension>,
     ) -> Result<SendAgentSessionMessageResult, AgentSessionApplicationError> {
-        self.send_message_with_provenance(
-            command,
-            launch_extension,
-            AgentInvocationInputProvenance::User,
-            None,
-            false,
-        )
-        .map(|result| result.acknowledgement)
+        self.delivery()
+            .deliver(InvocationDeliveryIntent {
+                invocation_id: None,
+                provenance: AgentInvocationInputProvenance::User,
+                session_id: command.session_id,
+                title: command.title,
+                working_directory: command.working_directory,
+                requested_options: command.requested_options,
+                content: InvocationContent::query(command.submitted_text),
+                attachments: command.attachments,
+                launch_extension,
+                prepared_only: false,
+            })
+            .map(|result| result.acknowledgement)
     }
 
     pub(crate) fn send_idempotent_application_message_with_launch_observation(
@@ -51,13 +58,18 @@ impl AgentSessionApplication {
         command: SendIdempotentApplicationAgentSessionMessageCommand,
         launch_extension: Option<RuntimeLaunchExtension>,
     ) -> Result<SendAgentSessionMessageLaunchResult, AgentSessionApplicationError> {
-        self.send_message_with_provenance(
-            command.message,
+        self.delivery().deliver(InvocationDeliveryIntent {
+            invocation_id: Some(command.invocation_id),
+            provenance: AgentInvocationInputProvenance::Application,
+            session_id: command.message.session_id,
+            title: command.message.title,
+            working_directory: command.message.working_directory,
+            requested_options: command.message.requested_options,
+            content: InvocationContent::query(command.message.submitted_text),
+            attachments: command.message.attachments,
             launch_extension,
-            AgentInvocationInputProvenance::Application,
-            Some(command.invocation_id),
-            false,
-        )
+            prepared_only: false,
+        })
     }
 
     /// Launches only an already-persisted pending application invocation. It never allocates a
@@ -84,13 +96,18 @@ impl AgentSessionApplication {
                 "prepared application invocation working directory does not match its Session",
             ));
         }
-        self.send_message_with_provenance(
-            command.message,
+        self.delivery().deliver(InvocationDeliveryIntent {
+            invocation_id: Some(command.invocation_id),
+            provenance: AgentInvocationInputProvenance::Application,
+            session_id: command.message.session_id,
+            title: command.message.title,
+            working_directory: command.message.working_directory,
+            requested_options: command.message.requested_options,
+            content: InvocationContent::query(command.message.submitted_text),
+            attachments: command.message.attachments,
             launch_extension,
-            AgentInvocationInputProvenance::Application,
-            Some(command.invocation_id),
-            true,
-        )
+            prepared_only: true,
+        })
     }
 
     pub(crate) fn send_idempotent_user_message_with_launch_observation(
@@ -98,13 +115,18 @@ impl AgentSessionApplication {
         command: SendIdempotentApplicationAgentSessionMessageCommand,
         launch_extension: Option<RuntimeLaunchExtension>,
     ) -> Result<SendAgentSessionMessageLaunchResult, AgentSessionApplicationError> {
-        self.send_message_with_provenance(
-            command.message,
+        self.delivery().deliver(InvocationDeliveryIntent {
+            invocation_id: Some(command.invocation_id),
+            provenance: AgentInvocationInputProvenance::User,
+            session_id: command.message.session_id,
+            title: command.message.title,
+            working_directory: command.message.working_directory,
+            requested_options: command.message.requested_options,
+            content: InvocationContent::query(command.message.submitted_text),
+            attachments: command.message.attachments,
             launch_extension,
-            AgentInvocationInputProvenance::User,
-            Some(command.invocation_id),
-            false,
-        )
+            prepared_only: false,
+        })
     }
 
     pub(crate) fn allocate_application_invocation_id(&self) -> AgentInvocationId {
@@ -116,9 +138,7 @@ impl AgentSessionApplication {
         &self,
         command: SendIdempotentApplicationAgentSessionMessageCommand,
     ) -> Result<SendAgentSessionMessageResult, AgentSessionApplicationError> {
-        if command.message.submitted_text.trim().is_empty()
-            && command.message.attachments.is_empty()
-        {
+        if command.message.submitted_text.trim().is_empty() {
             return Err(AgentSessionApplicationError::invalid(
                 "submitted text cannot be empty",
             ));
@@ -166,11 +186,9 @@ impl AgentSessionApplication {
         let created_at = self.clock.now();
         let invocation = self
             .repository
-            .create_pending_invocation(AgentInvocation {
-                id: command.invocation_id,
+            .create_pending_invocation(AgentInvocation { attachments: command.message.attachments, id: command.invocation_id,
                 session_id: session.id.clone(),
                 submitted_text: command.message.submitted_text,
-                attachments: command.message.attachments,
                 input_provenance: AgentInvocationInputProvenance::Application,
                 status: AgentInvocationStatus::Pending,
                 requested_options,
@@ -287,17 +305,32 @@ impl AgentSessionApplication {
         )
     }
 
-    fn send_message_with_provenance(
+    pub(super) fn execute_delivery_intent(
         &self,
-        command: SendAgentSessionMessageCommand,
-        launch_extension: Option<RuntimeLaunchExtension>,
-        input_provenance: AgentInvocationInputProvenance,
-        requested_invocation_id: Option<AgentInvocationId>,
-        launch_existing_prepared: bool,
+        intent: InvocationDeliveryIntent,
     ) -> Result<SendAgentSessionMessageLaunchResult, AgentSessionApplicationError> {
+        let InvocationDeliveryIntent {
+            invocation_id: requested_invocation_id,
+            provenance: input_provenance,
+            session_id,
+            title,
+            working_directory,
+            requested_options,
+            content,
+            attachments,
+            launch_extension,
+            prepared_only: launch_existing_prepared,
+        } = intent;
+        let command = SendAgentSessionMessageCommand { attachments: attachments.clone(), session_id,
+            submitted_text: content.primary_query,
+            title,
+            working_directory,
+            requested_options,
+        };
+        let delivery_context = content.context;
         if command.submitted_text.trim().is_empty() && command.attachments.is_empty() {
             return Err(AgentSessionApplicationError::invalid(
-                "a message requires text or an image",
+                "submitted text cannot be empty",
             ));
         }
 
@@ -310,17 +343,10 @@ impl AgentSessionApplication {
                     AgentSessionApplicationError::not_found("Agent Session not found")
                 })?,
             None => self.create_session(CreateAgentSessionCommand {
-                title: command.title.clone().or_else(|| {
-                    Some(if command.submitted_text.trim().is_empty() {
-                        command
-                            .attachments
-                            .first()
-                            .map(|image| image.name.clone())
-                            .unwrap_or_else(|| "Image".into())
-                    } else {
-                        title_from_message(&command.submitted_text)
-                    })
-                }),
+                title: command
+                    .title
+                    .clone()
+                    .or_else(|| Some(title_from_message(&command.submitted_text))),
                 working_directory: command.working_directory.clone(),
                 requested_options: command.requested_options.clone().unwrap_or_default(),
             })?,
@@ -364,7 +390,6 @@ impl AgentSessionApplication {
             {
                 if existing.session_id != session.id
                     || existing.submitted_text != command.submitted_text
-                    || existing.attachments != command.attachments
                     || existing.input_provenance != input_provenance
                     || existing.requested_options != requested_options
                 {
@@ -406,11 +431,9 @@ impl AgentSessionApplication {
             None => {
                 let created_at = self.clock.now();
                 self.repository
-                    .create_pending_invocation(AgentInvocation {
-                        id: requested_invocation_id.unwrap_or_else(|| self.ids.invocation_id()),
+                    .create_pending_invocation(AgentInvocation { attachments: command.attachments.clone(), id: requested_invocation_id.unwrap_or_else(|| self.ids.invocation_id()),
                         session_id: session.id.clone(),
                         submitted_text: command.submitted_text.clone(),
-                        attachments: command.attachments.clone(),
                         input_provenance,
                         status: AgentInvocationStatus::Pending,
                         requested_options: requested_options.clone(),
@@ -473,7 +496,6 @@ impl AgentSessionApplication {
             } else {
                 launch_extension
             };
-            let launch_extension = self.add_workspace_capabilities(launch_extension);
             let configuration = super::configuration::session_configuration(&session);
             let launch_extension = match self.launch_preparation(&configuration.provider) {
                 Some(preparation) => match preparation.prepare_launch(
@@ -518,10 +540,22 @@ impl AgentSessionApplication {
 
             launch_extension
         };
-        if let Some(prefix) = launch_extension
+        let semantic_initial = delivery_context.iter().find_map(|part| match part {
+            InvocationContextPart::InitialInstructions {
+                source,
+                version,
+                content,
+            } => Some(InitialPromptPrefix {
+                source: source.clone(),
+                version: *version,
+                content: content.clone(),
+            }),
+            _ => None,
+        });
+        let legacy_initial = launch_extension
             .as_ref()
-            .and_then(|extension| extension.initial_prompt_prefix.as_ref())
-        {
+            .and_then(|extension| extension.initial_prompt_prefix.as_ref());
+        if let Some(prefix) = semantic_initial.as_ref().or(legacy_initial) {
             if let Err(error) = self
                 .repository
                 .record_initial_prompt_prefix(&session.id, prefix)
@@ -604,15 +638,25 @@ impl AgentSessionApplication {
             }
         }
 
-        let request = RuntimeInvocationRequest {
-            session_id: session.id.clone(),
+        let mut launch_extension = launch_extension;
+        let mut context = delivery_context;
+        context.extend(
+            launch_extension
+                .as_mut()
+                .and_then(|extension| extension.initial_prompt_prefix.take())
+                .map(|prefix| InvocationContextPart::InitialInstructions {
+                    source: prefix.source,
+                    version: prefix.version,
+                    content: prefix.content,
+                })
+                .into_iter(),
+        );
+        let request = RuntimeInvocationRequest { attachments: invocation.attachments.clone(), session_id: session.id.clone(),
             invocation_id: invocation.id.clone(),
-            submitted_text: launch_extension
-                .as_ref()
-                .and_then(|extension| extension.initial_prompt_prefix.as_ref())
-                .map(|context| context.render_before_user_query(&invocation.submitted_text))
-                .unwrap_or_else(|| invocation.submitted_text.clone()),
-            attachments: invocation.attachments.clone(),
+            content: InvocationContent {
+                primary_query: invocation.submitted_text.clone(),
+                context,
+            },
             // Product-specific callers may select a neutral per-invocation discovery root without
             // mutating the provider-neutral Agent Session identity. Ordinary sends continue to
             // inherit the durable session directory because they do not supply an override.

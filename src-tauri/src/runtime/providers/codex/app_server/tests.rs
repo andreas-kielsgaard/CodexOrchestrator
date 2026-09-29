@@ -125,8 +125,7 @@ fn disconnected_steering_stays_uncertain_and_is_never_replayed() {
         SessionWorkspaces::new(folder.path().join("product"), "database".into()).unwrap(),
     );
     let started = application
-        .send_message(SendAgentSessionMessageCommand {
-            attachments: vec![],
+        .send_message(SendAgentSessionMessageCommand { attachments: vec![],
             session_id: None,
             submitted_text: "Wait".into(),
             title: None,
@@ -134,7 +133,15 @@ fn disconnected_steering_stays_uncertain_and_is_never_replayed() {
             requested_options: None,
         })
         .unwrap();
-    wait_until(|| runtime.active_turn(&started.invocation_id).is_ok());
+    wait_until(|| {
+        application
+            .load_session(&started.session_id)
+            .unwrap()
+            .invocations
+            .iter()
+            .flat_map(|invocation| &invocation.events)
+            .any(|event| event.raw_payload["kind"] == "runtime_turn_active")
+    });
     let command = SteerAgentSessionCommand {
         attachments: vec![],
         session_id: started.session_id.clone(),
@@ -199,8 +206,7 @@ impl AgentSessionNotifier for ReentrantNotifier {
                     .unwrap();
                 *successor = Some(
                     application
-                        .send_message(SendAgentSessionMessageCommand {
-                            attachments: vec![],
+                        .send_message(SendAgentSessionMessageCommand { attachments: vec![],
                             session_id: Some(session_id),
                             submitted_text: "Successor".into(),
                             title: None,
@@ -245,8 +251,7 @@ fn terminal_observer_can_start_successor_before_old_process_exits() {
     );
     *notifier.application.lock().unwrap() = Some(Arc::downgrade(&application));
     let started = application
-        .send_message(SendAgentSessionMessageCommand {
-            attachments: vec![],
+        .send_message(SendAgentSessionMessageCommand { attachments: vec![],
             session_id: None,
             submitted_text: "First".into(),
             title: None,
@@ -254,7 +259,15 @@ fn terminal_observer_can_start_successor_before_old_process_exits() {
             requested_options: None,
         })
         .unwrap();
-    wait_until(|| runtime.active_turn(&started.invocation_id).is_ok());
+    wait_until(|| {
+        application
+            .load_session(&started.session_id)
+            .unwrap()
+            .invocations
+            .iter()
+            .flat_map(|invocation| &invocation.events)
+            .any(|event| event.raw_payload["kind"] == "runtime_turn_active")
+    });
     application
         .steer_session(SteerAgentSessionCommand {
             attachments: vec![],
@@ -329,8 +342,7 @@ fn application_steering_and_approval_keep_one_invocation_and_survive_reopen() {
         SessionWorkspaces::new(folder.path().join("product"), "test-database".into()).unwrap(),
     );
     let started = application
-        .send_message(SendAgentSessionMessageCommand {
-            attachments: vec![],
+        .send_message(SendAgentSessionMessageCommand { attachments: vec![],
             session_id: None,
             submitted_text: "Wait for steering".into(),
             title: None,

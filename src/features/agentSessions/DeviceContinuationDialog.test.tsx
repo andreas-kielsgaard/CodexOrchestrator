@@ -44,7 +44,7 @@ it('keeps the conversation branch fixed while comparing its worktrees on a selec
   );
 });
 
-it('plans and explicitly starts a session-owned device switch when the transition endpoints exist', async () => {
+it('queues a selected device and worktree as one target operation', async () => {
   const user = userEvent.setup();
   const fixture = sessionTargetFixtures();
   const sourceTarget = {
@@ -60,49 +60,14 @@ it('plans and explicitly starts a session-owned device switch when the transitio
     worktreeId: 'local-worktree',
     path: 'C:\\projects\\orchid\\worktrees\\review',
   };
-  let planned: Record<string, unknown> | undefined;
-  const requested = vi.fn(async (input) => {
-    planned = {
-      sessionId: input.sessionId,
-      sourceTarget: input.sourceTarget,
-      destinationSelection: input.destinationSelection,
-      phase: 'pending' as const,
-      tasks: [
-        { kind: 'capture_snapshot' as const, status: 'pending' as const },
-        { kind: 'apply_snapshot' as const, status: 'pending' as const },
-      ],
-      snapshot: {
-        sourceHead: sourceTarget.head,
-        destinationHead: remoteTarget.head,
-        totalBytes: 2 * 1024 * 1024,
-      },
-      transferEstimate: {
-        snapshotBytes: 2 * 1024 * 1024,
-        bytesPerSecond: 512 * 1024,
-        estimatedSeconds: 4,
-        measuredAt: '2026-09-17T12:00:00Z',
-      },
-    };
-    return planned;
-  });
-  const started = vi.fn(async () => ({
-    ...planned,
-    phase: 'running' as const,
-    tasks: [{ kind: 'capture_snapshot' as const, status: 'running' as const }],
-  }));
+  const queued = vi.fn(async () => {});
   render(
     <DeviceContinuationDialog
       client={fixture.client}
       source={fixture.source}
       sourceTarget={sourceTarget}
       sessionId="session-one"
-      profileClient={
-        {
-          requestTargetTransition: requested,
-          loadTargetTransition: vi.fn(async () => null),
-          startTargetTransition: started,
-        } as never
-      }
+      onQueueSelection={queued}
       onClose={() => {}}
     />,
   );
@@ -110,19 +75,14 @@ it('plans and explicitly starts a session-owned device switch when the transitio
   await user.click(await screen.findByRole('button', { name: /Remote server/ }));
   await user.click(screen.getByRole('button', { name: 'Select device' }));
   await user.click(screen.getByRole('radio', { name: /review/i }));
-  await user.click(screen.getByRole('button', { name: 'Review switch plan' }));
+  await user.click(screen.getByRole('button', { name: 'Queue device switch' }));
 
-  expect(requested).toHaveBeenCalledWith(
-    expect.objectContaining({ sessionId: 'session-one', sourceTarget }),
+  expect(queued).toHaveBeenCalledWith(
+    expect.objectContaining({
+      execution: remoteTarget.execution,
+      workspace: expect.objectContaining({ kind: 'existing', target: remoteTarget }),
+    }),
   );
-  expect(await screen.findByText('Capture source worktree state')).toBeVisible();
-  expect(screen.getByText(/about 4s/)).toBeVisible();
-
-  await user.click(screen.getByRole('button', { name: 'Start switching' }));
-  expect(started).toHaveBeenCalledWith('session-one');
-  expect(
-    await screen.findByText('Copying the source worktree state to the destination.'),
-  ).toBeVisible();
 });
 
 it('keeps an existing sister fixed while still showing other branch worktrees', async () => {

@@ -133,6 +133,13 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
     ) -> Result<Option<super::super::preparation::SessionPreparation>, RepositoryError> {
         Ok(None)
     }
+    fn invocation_execution_snapshot(
+        &self,
+        _id: &AgentInvocationId,
+    ) -> Result<Option<super::super::preparation::InvocationExecutionSnapshot>, RepositoryError>
+    {
+        Ok(None)
+    }
     fn save_preparation(
         &self,
         _preparation: &super::super::preparation::SessionPreparation,
@@ -142,12 +149,12 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
             "Session preparation storage is unavailable",
         ))
     }
-    /// A provider's parked conversation in this Session, if it has one.
-    fn parked_native_conversation(
+    /// A provider-owned conversation cached at this exact execution route.
+    fn provider_session_binding(
         &self,
         _session_id: &AgentSessionId,
-        _provider: &str,
-    ) -> Result<Option<crate::agent_sessions::domain::ParkedNativeConversation>, RepositoryError>
+        _target: &crate::execution_targets::domain::SessionExecutionTarget,
+    ) -> Result<Option<crate::agent_sessions::domain::ProviderSessionBinding>, RepositoryError>
     {
         Ok(None)
     }
@@ -165,8 +172,7 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
     ) -> Result<Option<super::InitialPromptPrefix>, RepositoryError> {
         Ok(None)
     }
-    /// Commits the destination binding. When the preparation parks the source provider's
-    /// conversation, it is stored; the destination provider's parked conversation becomes current.
+    /// Commits the destination binding and retains the previous route's provider session.
     fn commit_prepared_binding(
         &self,
         _preparation: &super::super::preparation::SessionPreparation,
@@ -189,30 +195,154 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
         ))
     }
 
-    /// One current device/worktree transition can be retained independently from an invocation.
-    fn target_transition(
+    fn accept_queued_preparation(
+        &self,
+        _session: Option<(
+            AgentSession,
+            Option<crate::agent_sessions::organization::SessionPlacement>,
+        )>,
+        _invocation: AgentInvocation,
+        _preparation: super::super::preparation::SessionPreparation,
+        _operation: Option<crate::agent_sessions::target_operation::SessionTargetOperation>,
+        _at: DateTime<Utc>,
+    ) -> Result<crate::agent_sessions::queue::SessionQueueSnapshot, RepositoryError> {
+        Err(RepositoryError::new(
+            RepositoryErrorKind::Unavailable,
+            "Session queue storage is unavailable",
+        ))
+    }
+
+    fn session_queue(
         &self,
         _session_id: &AgentSessionId,
+    ) -> Result<crate::agent_sessions::queue::SessionQueueSnapshot, RepositoryError> {
+        Err(RepositoryError::new(
+            RepositoryErrorKind::Unavailable,
+            "Session queue storage is unavailable",
+        ))
+    }
+
+    fn enqueue_target_operation(
+        &self,
+        _operation: crate::agent_sessions::target_operation::SessionTargetOperation,
+        _at: DateTime<Utc>,
+    ) -> Result<crate::agent_sessions::queue::SessionQueueSnapshot, RepositoryError> {
+        Err(RepositoryError::new(
+            RepositoryErrorKind::Unavailable,
+            "Session queue storage is unavailable",
+        ))
+    }
+
+    fn target_operation(
+        &self,
+        _operation_id: &str,
     ) -> Result<
-        Option<crate::agent_sessions::target_transition::SessionTargetTransition>,
+        Option<crate::agent_sessions::target_operation::SessionTargetOperation>,
         RepositoryError,
     > {
         Ok(None)
     }
-    fn save_target_transition(
+
+    fn save_target_operation(
         &self,
-        _transition: &crate::agent_sessions::target_transition::SessionTargetTransition,
-    ) -> Result<crate::agent_sessions::target_transition::SessionTargetTransition, RepositoryError>
-    {
+        _operation: &crate::agent_sessions::target_operation::SessionTargetOperation,
+    ) -> Result<crate::agent_sessions::queue::SessionQueueSnapshot, RepositoryError> {
         Err(RepositoryError::new(
             RepositoryErrorKind::Unavailable,
-            "Target transition storage is unavailable",
+            "Target operation storage is unavailable",
         ))
     }
-    fn clear_target_transition(&self, _session_id: &AgentSessionId) -> Result<(), RepositoryError> {
+
+    fn set_queue_entry_state(
+        &self,
+        _entry_id: &str,
+        _state: crate::agent_sessions::queue::SessionQueueEntryState,
+        _blocked_reason: Option<String>,
+        _at: DateTime<Utc>,
+    ) -> Result<crate::agent_sessions::queue::SessionQueueSnapshot, RepositoryError> {
         Err(RepositoryError::new(
             RepositoryErrorKind::Unavailable,
-            "Target transition storage is unavailable",
+            "Session queue storage is unavailable",
+        ))
+    }
+
+    fn retry_queue_entry(
+        &self,
+        _entry_id: &str,
+        _at: DateTime<Utc>,
+    ) -> Result<crate::agent_sessions::queue::SessionQueueSnapshot, RepositoryError> {
+        Err(RepositoryError::new(
+            RepositoryErrorKind::Unavailable,
+            "Session queue retry is unavailable",
+        ))
+    }
+
+    fn queue_entry_for_invocation(
+        &self,
+        _invocation_id: &AgentInvocationId,
+    ) -> Result<Option<crate::agent_sessions::queue::SessionQueueEntry>, RepositoryError> {
+        Ok(None)
+    }
+
+    fn queue_entry_for_operation(
+        &self,
+        _operation_id: &str,
+    ) -> Result<Option<crate::agent_sessions::queue::SessionQueueEntry>, RepositoryError> {
+        Ok(None)
+    }
+
+    fn reorder_session_queue(
+        &self,
+        _session_id: &AgentSessionId,
+        _expected_revision: u64,
+        _entry_ids: &[String],
+        _at: DateTime<Utc>,
+    ) -> Result<crate::agent_sessions::queue::SessionQueueSnapshot, RepositoryError> {
+        Err(RepositoryError::new(
+            RepositoryErrorKind::Unavailable,
+            "Session queue storage is unavailable",
+        ))
+    }
+
+    fn update_queued_message(
+        &self,
+        _session_id: &AgentSessionId,
+        _entry_id: &str,
+        _expected_revision: u64,
+        _submitted_text: &str,
+        _model: Option<String>,
+        _reasoning_mode: Option<String>,
+        _sandbox_mode: Option<crate::execution_configuration::SandboxMode>,
+        _at: DateTime<Utc>,
+    ) -> Result<crate::agent_sessions::queue::SessionQueueSnapshot, RepositoryError> {
+        Err(RepositoryError::new(
+            RepositoryErrorKind::Unavailable,
+            "Session queue editing is unavailable",
+        ))
+    }
+
+    fn replace_target_operation(
+        &self,
+        _session_id: &AgentSessionId,
+        _entry_id: &str,
+        _expected_revision: u64,
+        _destination: crate::execution_targets::domain::SessionExecutionSelection,
+        _at: DateTime<Utc>,
+    ) -> Result<crate::agent_sessions::queue::SessionQueueSnapshot, RepositoryError> {
+        Err(RepositoryError::new(
+            RepositoryErrorKind::Unavailable,
+            "Target operation editing is unavailable",
+        ))
+    }
+
+    fn activate_target_operation(
+        &self,
+        _operation_id: &str,
+        _at: DateTime<Utc>,
+    ) -> Result<crate::agent_sessions::queue::SessionQueueSnapshot, RepositoryError> {
+        Err(RepositoryError::new(
+            RepositoryErrorKind::Unavailable,
+            "Target activation is unavailable",
         ))
     }
 

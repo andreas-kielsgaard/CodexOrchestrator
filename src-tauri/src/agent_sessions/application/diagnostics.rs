@@ -56,8 +56,8 @@ fn notification_ids(
     notification: &AgentSessionNotification,
 ) -> (AgentInvocationId, AgentSessionId) {
     match notification {
-        AgentSessionNotification::TargetTransitionUpdated { .. } => {
-            unreachable!("target-transition notifications do not record invocation diagnostics")
+        AgentSessionNotification::QueueUpdated { .. } => {
+            unreachable!("queue notifications do not record invocation diagnostics")
         }
         AgentSessionNotification::PreparationUpdated {
             session_id,

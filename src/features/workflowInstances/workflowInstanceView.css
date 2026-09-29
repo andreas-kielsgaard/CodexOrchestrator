@@ -166,6 +166,16 @@
   justify-self: start;
 }
 
+.workflow-instance-view__request-note {
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid #d7ddd8;
+  border-radius: 9px;
+  background: #f7f8f5;
+  color: #68756d;
+  font-size: 0.8rem;
+}
+
 .workflow-instance-view__section {
   margin-bottom: 10px;
 }

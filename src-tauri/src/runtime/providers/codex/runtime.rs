@@ -282,7 +282,7 @@ impl CodexCliRuntime {
         let resume = matches!(&command, InvocationCommand::Resume(_));
         let mut args = build_args_from_effective_options(
             command,
-            &request.submitted_text,
+            &request.content.primary_query,
             &request.options,
             request.launch_extension.as_ref(),
             request.working_directory.as_deref(),

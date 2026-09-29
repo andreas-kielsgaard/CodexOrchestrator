@@ -4,31 +4,29 @@ pub(crate) mod configuration;
 pub(crate) mod launch;
 pub(crate) mod setups;
 
-use crate::runtime::providers::registrations::ProviderRegistrations;
+use crate::runtime::providers::registrations::{ProviderRegistration, ProviderRegistrations};
 use orchid_engine::providers::claude::{ClaudeRuntime, PROVIDER};
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
 
-/// Registers Claude's runtime, configuration discovery and launch preparation. Claude has no
-/// continuation port: a conversation that moves to another device restarts from the session log.
+/// Registers Claude's runtime, configuration discovery, and launch preparation.
 pub(crate) fn register(
     registrations: &mut ProviderRegistrations,
     setups: Arc<setups::ClaudeSetups>,
     product_tools: BTreeMap<String, BTreeSet<String>>,
 ) -> Result<(), String> {
-    registrations
-        .runtimes
-        .register(PROVIDER, Arc::new(ClaudeRuntime::system("claude")))?;
-    registrations.configurations.register(
+    let configuration = Arc::new(configuration::ClaudeConfigurationSource::new(
+        setups.clone(),
+        product_tools,
+    ));
+    registrations.register(
         PROVIDER,
-        Arc::new(configuration::ClaudeConfigurationSource::new(
-            setups.clone(),
-            product_tools,
-        )),
-    )?;
-    registrations
-        .launches
-        .register(PROVIDER, Arc::new(launch::ClaudeLaunchPreparation(setups)))
+        ProviderRegistration::new(
+            configuration,
+            Arc::new(ClaudeRuntime::system("claude")),
+            Some(Arc::new(launch::ClaudeLaunchPreparation(setups))),
+        ),
+    )
 }

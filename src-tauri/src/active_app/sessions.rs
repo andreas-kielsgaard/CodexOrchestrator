@@ -37,20 +37,18 @@ pub(super) fn compose(
     otp_skill_roots: BTreeMap<String, Vec<String>>,
 ) -> Result<SessionServices, String> {
     let workspaces = SessionWorkspaces::system(database_path.to_string_lossy().into_owned())?;
-    let (capability_profiles, endpoints, product_skills) =
-        super::execution_configuration::compose(
-            database.clone(),
-            native_profiles.clone(),
-            claude_setups,
-            &workspaces,
-            product_tools,
-            otp_skill_roots,
-        )?;
+    let (capability_profiles, endpoints, product_skills) = super::execution_configuration::compose(
+        database.clone(),
+        native_profiles.clone(),
+        claude_setups,
+        &workspaces,
+        product_tools,
+        otp_skill_roots,
+    )?;
     // Sessions route to their provider through the endpoints; the default route's runtime serves
     // only unprofiled legacy Sessions.
-    let default_runtime = endpoints.local_runtime(
-        &crate::execution_targets::domain::ExecutionBinding::default().provider,
-    )?;
+    let default_runtime = endpoints
+        .local_runtime(&crate::execution_targets::domain::ExecutionBinding::default().provider)?;
     let execution_targets = Arc::new(crate::execution_targets::ExecutionTargetService::new(
         database,
         endpoints.clone(),
@@ -84,7 +82,9 @@ pub(super) fn compose(
             application: application.clone(),
             homes: native_profiles,
             history: Arc::new(
-                crate::runtime::providers::codex::app_server::history::CodexHistoryReader("codex".into()),
+                crate::runtime::providers::codex::app_server::history::CodexHistoryReader(
+                    "codex".into(),
+                ),
             ),
             store: repository,
             lane: std::sync::Mutex::new(()),

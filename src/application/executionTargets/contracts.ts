@@ -1,6 +1,4 @@
-import type {
-  RuntimeProfileSnapshotDto,
-} from '../executionConfiguration';
+import type { RuntimeProfileSnapshotDto } from '../executionConfiguration';
 
 export interface ExecutionBindingDto {
   readonly deviceId: string;
@@ -146,7 +144,7 @@ export interface ExecutionTargetClient {
     deviceId: string,
     seconds: number,
   ): Promise<readonly ExecutionDeviceConfigurationDto[]>;
-  resolvePublishedTip?(input: {
+  resolveBranchTip?(input: {
     repositoryId: string;
     branchRef: string;
     execution: ExecutionBindingDto;

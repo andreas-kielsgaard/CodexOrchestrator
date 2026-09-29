@@ -23,18 +23,39 @@ pub(crate) struct AgentRuntimeBinding {
     pub(crate) runtime_version: Option<String>,
 }
 
-/// The native conversation of a provider the Session no longer runs on. Switching provider parks
-/// the current conversation here; switching back continues it with the turns it missed.
+/// One provider-owned conversation cached at its exact execution route. Orchid may resume this
+/// instance later, but never moves its native handle to another provider, configuration, or device.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ParkedNativeConversation {
-    pub(crate) provider: String,
+pub(crate) struct ProviderSessionBinding {
     pub(crate) external_context_id: ExternalRuntimeContextId,
     pub(crate) runtime_version: Option<String>,
-    /// Where the conversation lives. Continuing it on another route transfers it first.
+    /// The immutable route on which the provider owns this conversation.
     pub(crate) location: crate::execution_targets::domain::ExecutionBinding,
+    /// The physical workspace in which the provider conversation was created. Legacy bindings
+    /// without this identity are never used as an exact destination cache.
+    #[serde(default)]
+    pub(crate) workspace: Option<ProviderWorkspaceIdentity>,
     /// The last invocation the conversation took part in.
     pub(crate) last_invocation_id: Option<AgentInvocationId>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProviderWorkspaceIdentity {
+    pub(crate) repository_id: String,
+    pub(crate) worktree_id: String,
+    pub(crate) path: String,
+}
+
+impl From<&crate::execution_targets::domain::SessionExecutionTarget> for ProviderWorkspaceIdentity {
+    fn from(target: &crate::execution_targets::domain::SessionExecutionTarget) -> Self {
+        Self {
+            repository_id: target.repository_id.clone(),
+            worktree_id: target.worktree_id.clone(),
+            path: target.path.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -96,8 +117,7 @@ pub(crate) struct AgentDiagnostic {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct AgentInvocation {
-    pub(crate) id: AgentInvocationId,
+pub(crate) struct AgentInvocation { pub(crate) id: AgentInvocationId,
     pub(crate) session_id: AgentSessionId,
     pub(crate) submitted_text: String,
     #[serde(default)]
@@ -125,8 +145,7 @@ pub(crate) struct InvocationCompletion {
     pub(crate) runtime_error: Option<AgentRuntimeFailure>,
 }
 
-impl AgentInvocation {
-    pub(crate) fn mark_running(
+impl AgentInvocation { pub(crate) fn mark_running(
         &self,
         started_at: DateTime<Utc>,
         effective_options: AgentRuntimeOptions,
@@ -292,7 +311,9 @@ pub(crate) fn validate_new_invocation(
     if candidate.status != AgentInvocationStatus::Pending {
         return Err(ContractViolation::InvocationMustStartPending);
     }
-    if let Some(active) = active_invocation.filter(|invocation| invocation.status.is_active()) {
+    if let Some(active) =
+        active_invocation.filter(|invocation| invocation.status == AgentInvocationStatus::Running)
+    {
         return Err(ContractViolation::ActiveInvocationExists {
             invocation_id: active.id.clone(),
         });

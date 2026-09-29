@@ -1,14 +1,13 @@
 use super::{
     authoring::{
-        WorkflowAuthoringNode, WorkflowRecipeDraft, WorkflowRecipeState, WorkflowRecipeSummary,
-        WORKFLOW_RECIPE_CONTRACT_VERSION,
+        WorkflowAuthoringNode, WorkflowAuthoringWorkspace, WorkflowRecipeDraft,
+        WorkflowRecipeState, WorkflowRecipeSummary, WORKFLOW_RECIPE_CONTRACT_VERSION,
     },
     authoring_repository::WorkflowAuthoringRepository,
     compiler::WorkflowCompiler,
 };
 use crate::{
     execution_configuration::{CapabilityProfile, CapabilityProfileService},
-    otp_api::{CapabilityRef, Entrypoint},
     otp_host::OtpRegistry,
     workflows::compiled_plan::WorkflowCompiledPlan,
 };
@@ -34,25 +33,23 @@ impl WorkflowAuthoringService {
         }
     }
 
-    fn default_action(&self) -> Result<CapabilityRef, String> {
-        self.registry
-            .catalogue()
-            .into_iter()
-            .find_map(|package| {
-                package
-                    .tools
-                    .into_iter()
-                    .find(|tool| matches!(tool.entrypoint, Entrypoint::Action { .. }))
-                    .map(|tool| CapabilityRef {
-                        package: package.id,
-                        tool: tool.id,
-                    })
-            })
-            .ok_or("Import an OTP with an agent action before creating a Workflow".into())
-    }
-
     pub(crate) fn list(&self) -> Result<Vec<WorkflowRecipeSummary>, String> {
         self.repository.list()
+    }
+
+    pub(crate) fn open_workspace(
+        &self,
+        preferred_recipe_id: Option<&str>,
+    ) -> Result<WorkflowAuthoringWorkspace, String> {
+        let summaries = self.list()?;
+        let selected_id = preferred_recipe_id
+            .filter(|id| summaries.iter().any(|recipe| recipe.recipe_id == *id))
+            .or_else(|| summaries.first().map(|recipe| recipe.recipe_id.as_str()));
+        let selected = selected_id.map(|id| self.load(id)).transpose()?;
+        Ok(WorkflowAuthoringWorkspace {
+            summaries,
+            selected,
+        })
     }
 
     pub(crate) fn load(&self, recipe_id: &str) -> Result<WorkflowRecipeState, String> {
@@ -61,15 +58,13 @@ impl WorkflowAuthoringService {
             .ok_or_else(|| format!("Workflow recipe `{recipe_id}` does not exist"))
     }
 
-    pub(crate) fn create(&self, name: String) -> Result<WorkflowRecipeState, String> {
+    pub(crate) fn create(&self) -> Result<WorkflowRecipeState, String> {
         let draft = WorkflowRecipeDraft {
-            entry_configuration: serde_json::json!({}),
             contract_version: WORKFLOW_RECIPE_CONTRACT_VERSION,
             recipe_id: format!("workflow-recipe-{}", Uuid::new_v4()),
-            name,
+            name: String::new(),
             revision: 1,
-            starting_node_id: None,
-            entry_action: self.default_action()?,
+            entry_node_ids: Vec::new(),
             nodes: Vec::new(),
             connections: Vec::new(),
         };
@@ -196,26 +191,25 @@ fn copy_configurable_node_state(
     destination.node_profile = source.node_profile.clone();
     destination.initial_prompt = source.initial_prompt.clone();
     destination.agent_identity_id = source.agent_identity_id.clone();
-    destination.agent_mcp_configuration = source.agent_mcp_configuration.clone();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::execution_configuration::{
-        CapabilitySet, InMemoryCapabilityProfileRepository, NodeProfile, RuntimeProfileSnapshot,
-        RuntimeSelections, SandboxMode, ProviderConfigurationSource,
-        ProviderConfigurationSourceError,
+        CapabilitySet, InMemoryCapabilityProfileRepository, NodeProfile,
+        ProviderConfigurationSource, ProviderConfigurationSourceError, RuntimeProfileSnapshot,
+        RuntimeSelections, SandboxMode,
     };
 
     struct FixedRuntimeSource(RuntimeProfileSnapshot);
 
     impl ProviderConfigurationSource for FixedRuntimeSource {
         fn profile_for_configuration(
-        &self,
-        _reference: &str,
-        _cwd: Option<&str>,
-    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
+            &self,
+            _reference: &str,
+            _cwd: Option<&str>,
+        ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
             Ok(self.0.clone())
         }
     }
@@ -226,7 +220,10 @@ mod tests {
     fn runtime_profile() -> RuntimeProfileSnapshot {
         RuntimeProfileSnapshot {
             contract_version: 1,
-            configuration: orchid_engine::contracts::ProviderConfigurationRef::new("codex", "configured-runtime"),
+            configuration: orchid_engine::contracts::ProviderConfigurationRef::new(
+                "codex",
+                "configured-runtime",
+            ),
             exposure: capabilities(),
             locked: RuntimeSelections {
                 sandbox_mode: Some(SandboxMode::WorkspaceWrite),
@@ -246,7 +243,10 @@ mod tests {
     }
 
     fn service() -> WorkflowAuthoringService {
-        let profiles = Arc::new(CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default())).with_configuration_source(Arc::new(FixedRuntimeSource(runtime_profile()))));
+        let profiles = Arc::new(
+            CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default()))
+                .with_configuration_source(Arc::new(FixedRuntimeSource(runtime_profile()))),
+        );
         profiles
             .create(
                 "capability-default".into(),
@@ -279,15 +279,15 @@ mod tests {
             },
             initial_prompt: Some(format!("You are {name}.")),
             agent_identity_id: None,
-            agent_mcp_configuration: Default::default(),
         }
     }
 
     #[test]
     fn service_saves_activates_and_compiles_recipe() {
         let service = service();
-        let mut state = service.create("Review".into()).unwrap();
-        state.draft.starting_node_id = Some("planner".into());
+        let mut state = service.create().unwrap();
+        state.draft.name = "Review".into();
+        state.draft.entry_node_ids = vec!["planner".into()];
         state.draft.nodes.push(node("planner", "Planner"));
         state = service.save_draft(state.draft).unwrap();
         let active = service.activate(&state.draft.recipe_id).unwrap();
@@ -301,9 +301,31 @@ mod tests {
     }
 
     #[test]
+    fn workspace_bootstrap_returns_summaries_and_the_preferred_recipe_together() {
+        let service = service();
+        let first = service.create().unwrap();
+        let second = service.create().unwrap();
+
+        let workspace = service
+            .open_workspace(Some(&second.draft.recipe_id))
+            .unwrap();
+
+        assert_eq!(workspace.summaries.len(), 2);
+        assert_eq!(
+            workspace.selected.unwrap().draft.recipe_id,
+            second.draft.recipe_id
+        );
+        assert!(workspace
+            .summaries
+            .iter()
+            .any(|summary| summary.recipe_id == first.draft.recipe_id));
+    }
+
+    #[test]
     fn copy_node_configuration_preserves_destination_identity_and_position() {
         let service = service();
-        let mut state = service.create("Review".into()).unwrap();
+        let mut state = service.create().unwrap();
+        state.draft.name = "Review".into();
         let mut source = node("planner", "Planner");
         source.agent_identity_id = Some("identity-avery".into());
         source.position_x = 50.0;
@@ -340,7 +362,7 @@ mod tests {
     #[test]
     fn activation_rejects_structurally_incomplete_recipe() {
         let service = service();
-        let state = service.create("Review".into()).unwrap();
+        let state = service.create().unwrap();
 
         assert!(service.activate(&state.draft.recipe_id).is_err());
     }

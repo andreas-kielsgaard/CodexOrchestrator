@@ -282,8 +282,7 @@ impl AgentSessionApplication {
         }
         let acknowledgement = self
             .send_message_with_launch_extension(
-                SendAgentSessionMessageCommand {
-                    session_id: Some(command.session_id),
+                SendAgentSessionMessageCommand { session_id: Some(command.session_id),
                     submitted_text: command.submitted_text,
                     attachments: command.attachments,
                     title: None,

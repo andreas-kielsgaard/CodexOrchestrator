@@ -1,7 +1,7 @@
 use rusqlite::Connection;
 
 pub(crate) const AGENT_SESSION_SCHEMA: &str = r#"
-CREATE TABLE agent_sessions (
+CREATE TABLE IF NOT EXISTS agent_sessions (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   availability TEXT NOT NULL CHECK (availability IN ('available', 'archived')),
@@ -18,7 +18,7 @@ CREATE TABLE agent_sessions (
   updated_at TEXT NOT NULL
 );
 
-CREATE TABLE agent_session_invocations (
+CREATE TABLE IF NOT EXISTS agent_session_invocations (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,
   submitted_text TEXT NOT NULL,
@@ -37,20 +37,20 @@ CREATE TABLE agent_session_invocations (
   FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
 );
 
-CREATE UNIQUE INDEX agent_session_one_active_invocation
+CREATE UNIQUE INDEX IF NOT EXISTS agent_session_one_running_invocation
 ON agent_session_invocations(session_id)
-WHERE status IN ('pending', 'running');
+WHERE status = 'running';
 
-CREATE INDEX agent_session_invocations_history
+CREATE INDEX IF NOT EXISTS agent_session_invocations_history
 ON agent_session_invocations(session_id, created_at, id);
 
-CREATE TABLE agent_session_invocation_launch_acceptances (
+CREATE TABLE IF NOT EXISTS agent_session_invocation_launch_acceptances (
   invocation_id TEXT PRIMARY KEY,
   accepted_at TEXT NOT NULL,
   FOREIGN KEY (invocation_id) REFERENCES agent_session_invocations(id) ON DELETE CASCADE
 );
 
-CREATE TABLE agent_session_runtime_events (
+CREATE TABLE IF NOT EXISTS agent_session_runtime_events (
   id TEXT PRIMARY KEY,
   invocation_id TEXT NOT NULL,
   sequence INTEGER NOT NULL CHECK (sequence >= 0),
@@ -62,10 +62,10 @@ CREATE TABLE agent_session_runtime_events (
   UNIQUE (invocation_id, sequence)
 );
 
-CREATE INDEX agent_session_runtime_events_history
+CREATE INDEX IF NOT EXISTS agent_session_runtime_events_history
 ON agent_session_runtime_events(invocation_id, sequence);
 
-CREATE TABLE agent_session_invocation_diagnostics (
+CREATE TABLE IF NOT EXISTS agent_session_invocation_diagnostics (
   invocation_id TEXT NOT NULL,
   sequence INTEGER NOT NULL CHECK (sequence >= 0),
   diagnostic_json TEXT NOT NULL CHECK (json_valid(diagnostic_json)),

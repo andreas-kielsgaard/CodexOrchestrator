@@ -16,11 +16,11 @@ mod orchestration;
 mod persistence;
 mod product_database;
 mod product_decisions;
+#[cfg(test)]
+mod provider_boundary_tests;
 mod repository_catalog;
 mod repository_context;
 mod repository_discovery;
-#[cfg(test)]
-mod provider_boundary_tests;
 mod runtime;
 mod session_events;
 mod session_navigation;

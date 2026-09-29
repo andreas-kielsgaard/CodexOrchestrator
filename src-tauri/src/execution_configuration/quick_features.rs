@@ -17,7 +17,8 @@ pub(crate) struct RuntimeQuickFeatures {
 impl RuntimeQuickFeatures {
     /// Exposes enabled, unambiguous provider-native skills under the native skill group.
     pub(crate) fn append_native_skills(&mut self, catalogue: &ProviderSkillCatalogue) {
-        self.limitations.extend(catalogue.limitations.iter().cloned());
+        self.limitations
+            .extend(catalogue.limitations.iter().cloned());
         let mut names = BTreeMap::<&str, Vec<_>>::new();
         for skill in catalogue.skills.iter().filter(|skill| skill.enabled) {
             names.entry(skill.name.as_str()).or_default().push(skill);

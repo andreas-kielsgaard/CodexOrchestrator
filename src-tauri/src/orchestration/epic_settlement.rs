@@ -385,10 +385,7 @@ fn reconcile_one(connection: &mut Connection, epic: &str) -> Result<(), String> 
     tx.commit().map_err(|error| error.to_string())
 }
 
-fn reconcile_one_transaction(
-    tx: &rusqlite::Transaction<'_>,
-    epic: &str,
-) -> Result<(), String> {
+fn reconcile_one_transaction(tx: &rusqlite::Transaction<'_>, epic: &str) -> Result<(), String> {
     let snapshot = Snapshot::load(&tx, epic)?;
     if let Err((reason, resume, fingerprint)) = snapshot.eligible() {
         persist_unresolved(&tx, epic, &reason, &resume, &fingerprint)?;

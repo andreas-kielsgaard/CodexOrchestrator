@@ -54,8 +54,7 @@ pub(crate) struct UpdateAgentSessionModelOverrideCommand {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct SendAgentSessionMessageCommand {
-    pub(crate) session_id: Option<AgentSessionId>,
+pub(crate) struct SendAgentSessionMessageCommand { pub(crate) session_id: Option<AgentSessionId>,
     pub(crate) submitted_text: String,
     pub(crate) attachments: Vec<crate::agent_sessions::domain::RuntimeImageAttachment>,
     pub(crate) title: Option<String>,

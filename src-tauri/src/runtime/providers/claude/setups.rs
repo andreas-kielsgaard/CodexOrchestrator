@@ -66,7 +66,11 @@ impl ClaudeSetups {
         }
     }
 
-    pub(crate) fn add(&self, folder: &Path, executable: Option<String>) -> Result<ClaudeSetup, String> {
+    pub(crate) fn add(
+        &self,
+        folder: &Path,
+        executable: Option<String>,
+    ) -> Result<ClaudeSetup, String> {
         if !folder.is_absolute() {
             return Err("Choose an absolute folder for the Claude setup.".into());
         }
@@ -75,9 +79,11 @@ impl ClaudeSetups {
         let setup = ClaudeSetup {
             id: format!("claude-{}", uuid::Uuid::new_v4().simple()),
             folder: folder.to_string_lossy().into_owned(),
-            executable: executable
-                .filter(|executable| !executable.trim().is_empty())
-                .unwrap_or_else(|| DEFAULT_EXECUTABLE.into()),
+            executable: effective_executable(
+                &executable
+                    .filter(|executable| !executable.trim().is_empty())
+                    .unwrap_or_else(|| DEFAULT_EXECUTABLE.into()),
+            ),
         };
         self.database
             .write("add Claude setup", |tx| {
@@ -159,7 +165,10 @@ impl ClaudeSetups {
         let Ok(output) = output else {
             return (
                 ProviderSetupState::Unavailable,
-                Some(format!("Claude Code CLI '{}' was not found.", setup.executable)),
+                Some(format!(
+                    "Claude Code CLI '{}' was not found.",
+                    setup.executable
+                )),
             );
         };
         let status: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_default();
@@ -180,7 +189,9 @@ impl ClaudeSetups {
         self.database
             .read("list Claude setups", |connection: &Connection| {
                 let mut statement = connection
-                    .prepare("SELECT id,folder,executable FROM claude_setups ORDER BY created_at, id")
+                    .prepare(
+                        "SELECT id,folder,executable FROM claude_setups ORDER BY created_at, id",
+                    )
                     .map_err(|error| error.to_string())?;
                 let rows = statement
                     .query_map([], |row| {
@@ -191,10 +202,65 @@ impl ClaudeSetups {
                         })
                     })
                     .map_err(|error| error.to_string())?;
-                rows.collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())
+                rows.collect::<Result<Vec<_>, _>>()
+                    .map(|setups| {
+                        setups
+                            .into_iter()
+                            .map(|mut setup| {
+                                // Older rows may contain the npm shim name. Resolve it on every
+                                // read so an application upgrade repairs them without rewriting
+                                // account configuration.
+                                setup.executable = effective_executable(&setup.executable);
+                                setup
+                            })
+                            .collect()
+                    })
+                    .map_err(|error| error.to_string())
             })
             .map_err(|error| error.into_string())
     }
+}
+
+fn effective_executable(executable: &str) -> String {
+    #[cfg(windows)]
+    {
+        let path = Path::new(executable);
+        if path.components().count() > 1 {
+            if path
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("cmd"))
+            {
+                return path
+                    .parent()
+                    .and_then(resolve_windows_claude_in)
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| executable.to_string());
+            }
+            return executable.to_string();
+        }
+        if let Some(path) = std::env::var_os("PATH").and_then(|value| {
+            std::env::split_paths(&value).find_map(|folder| resolve_windows_claude_in(&folder))
+        }) {
+            return path.to_string_lossy().into_owned();
+        }
+    }
+    executable.to_string()
+}
+
+#[cfg(windows)]
+fn resolve_windows_claude_in(folder: &Path) -> Option<PathBuf> {
+    let native = folder.join("claude.exe");
+    if native.is_file() {
+        return Some(native);
+    }
+    let shim = folder.join("claude.cmd");
+    let npm_native = folder
+        .join("node_modules")
+        .join("@anthropic-ai")
+        .join("claude-code")
+        .join("bin")
+        .join("claude.exe");
+    (shim.is_file() && npm_native.is_file()).then_some(npm_native)
 }
 
 pub(crate) struct ClaudeSetupTauriState(pub(crate) Arc<ClaudeSetups>);
@@ -213,9 +279,11 @@ pub(crate) async fn add_claude_setup(
     input: AddClaudeSetupInput,
 ) -> Result<ClaudeSetup, String> {
     let setups = state.0.clone();
-    tauri::async_runtime::spawn_blocking(move || setups.add(Path::new(&input.folder), input.executable))
-        .await
-        .map_err(|error| error.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        setups.add(Path::new(&input.folder), input.executable)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -231,10 +299,13 @@ pub(crate) async fn remove_claude_setup(
 
 #[cfg(test)]
 pub(crate) fn test_setups(default_folder: Option<PathBuf>) -> ClaudeSetups {
-    let database = ActiveDatabase::from_connection(Connection::open_in_memory().unwrap(), |connection| {
-        connection.execute_batch(SCHEMA).map_err(|error| error.to_string())
-    })
-    .unwrap();
+    let database =
+        ActiveDatabase::from_connection(Connection::open_in_memory().unwrap(), |connection| {
+            connection
+                .execute_batch(SCHEMA)
+                .map_err(|error| error.to_string())
+        })
+        .unwrap();
     ClaudeSetups::new(Arc::new(database), default_folder)
 }
 
@@ -251,7 +322,7 @@ mod tests {
         std::fs::create_dir(&default).unwrap();
         let listed = setups.list().unwrap();
         assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].executable, "claude");
+        assert!(!listed[0].executable.trim().is_empty());
         assert!(setups.environment(&listed[0]).is_empty());
         assert_eq!(setups.list().unwrap(), listed);
     }
@@ -279,11 +350,28 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let setups = test_setups(None);
         setups
-            .add(root.path(), Some(root.path().join("missing-claude").to_string_lossy().into()))
+            .add(
+                root.path(),
+                Some(root.path().join("missing-claude").to_string_lossy().into()),
+            )
             .unwrap();
         let listed = setups.provider_setups().unwrap();
         assert_eq!(listed[0].state, ProviderSetupState::Unavailable);
         assert!(listed[0].selected);
         assert_eq!(listed[0].provider, "claude");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_npm_shim_resolves_to_the_native_claude_binary() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("claude.cmd"), "@echo off").unwrap();
+        let native = root
+            .path()
+            .join("node_modules/@anthropic-ai/claude-code/bin/claude.exe");
+        std::fs::create_dir_all(native.parent().unwrap()).unwrap();
+        std::fs::write(&native, "native").unwrap();
+
+        assert_eq!(resolve_windows_claude_in(root.path()), Some(native));
     }
 }

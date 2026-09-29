@@ -40,8 +40,8 @@ pub fn materialize_checkout(
             "The requested exact commit is unavailable in the repository.",
         ));
     }
-    preflight_attachment(&runner, &repository, request)?;
     let target = normalized_unused_target(&repository, &request.worktree_root)?;
+    preflight_attachment(&runner, &repository, &target, request)?;
     if fs::symlink_metadata(&target).is_ok() {
         return verify_checkout(&runner, &repository, &target, request)
             .map_err(|_| checkout_conflict("The existing checkout does not match its plan."));
@@ -56,6 +56,7 @@ pub fn materialize_checkout(
 fn preflight_attachment(
     runner: &GitRunner,
     repository: &Path,
+    target: &Path,
     request: &PhysicalWorktreeCheckoutRequest,
 ) -> Result<(), CheckoutError> {
     match &request.attachment {
@@ -65,13 +66,20 @@ fn preflight_attachment(
                 repository,
                 ["rev-parse", "--verify", &format!("{branch_ref}^{{commit}}")],
             )?)?;
-            if commit == request.commit_id {
-                Ok(())
-            } else {
-                Err(checkout_conflict(
+            if commit != request.commit_id {
+                return Err(checkout_conflict(
                     "The named branch no longer identifies the planned commit.",
-                ))
+                ));
             }
+            if let Some(path) = checked_out_branch_path(runner, repository, branch_ref)? {
+                if path != target {
+                    return Err(checkout_conflict(format!(
+                        "Branch {branch_ref} is already checked out at {}.",
+                        path.display()
+                    )));
+                }
+            }
+            Ok(())
         }
         PhysicalWorktreeAttachment::NewBranch { branch_name } => {
             runner.required(repository, ["check-ref-format", "--branch", branch_name])?;
@@ -85,6 +93,32 @@ fn preflight_attachment(
             }
         }
     }
+}
+
+fn checked_out_branch_path(
+    runner: &GitRunner,
+    repository: &Path,
+    branch_ref: &str,
+) -> Result<Option<PathBuf>, CheckoutError> {
+    let output = runner.required(repository, ["worktree", "list", "--porcelain", "-z"])?;
+    let mut path = None;
+    for field in output.split(|byte| *byte == 0) {
+        if field.is_empty() {
+            path = None;
+            continue;
+        }
+        if let Some(value) = field.strip_prefix(b"worktree ") {
+            path = String::from_utf8(value.to_vec()).ok().map(|value| {
+                let path = PathBuf::from(value);
+                path.canonicalize().unwrap_or(path)
+            });
+            continue;
+        }
+        if field.strip_prefix(b"branch ") == Some(branch_ref.as_bytes()) {
+            return Ok(path);
+        }
+    }
+    Ok(None)
 }
 
 fn checkout_arguments(request: &PhysicalWorktreeCheckoutRequest, target: &Path) -> Vec<OsString> {
@@ -211,6 +245,6 @@ fn checkout_unavailable(message: &'static str) -> CheckoutError {
     CheckoutError::new(CheckoutErrorKind::CheckoutUnavailable, message)
 }
 
-fn checkout_conflict(message: &'static str) -> CheckoutError {
+fn checkout_conflict(message: impl Into<String>) -> CheckoutError {
     CheckoutError::new(CheckoutErrorKind::CheckoutConflict, message)
 }

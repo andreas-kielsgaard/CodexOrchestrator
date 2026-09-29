@@ -3,7 +3,10 @@ import { AlertCircle, X } from 'lucide-react';
 import { AgentSessionComposer } from './AgentSessionComposer';
 import type { ComposerQuickFeatures } from './composerQuickActions';
 import type { ComposerTargetSource } from './composerTargetActions';
-import type { NewAgentImageAttachmentDto, RuntimeInteractionResponseDto, SessionInteractionDto } from '../../application/agentSessions';
+import type {
+  RuntimeInteractionResponseDto,
+  SessionInteractionDto,
+} from '../../application/agentSessions';
 import { AgentSessionTranscript } from './AgentSessionTranscript';
 import {
   projectedTranscriptContent,
@@ -14,6 +17,7 @@ import {
 import { useTranscriptFollow } from './useTranscriptFollow';
 import { pendingRequestLabel, pendingSessionRequests } from './sessionAttention';
 import type { AgentIdentity } from '../../application/agentSessions';
+import type { NewAgentImageAttachmentDto } from '../../application/agentSessions';
 
 export interface ConversationViewportSegment {
   /** Caller-assigned causal position. Segments are rendered in this exact array order. */
@@ -24,13 +28,19 @@ export interface ConversationViewportSegment {
 
 export interface ConversationViewportComposerTarget {
   toolbar?: ReactNode;
-  preparationPanel?: ReactNode;
+  deviceActivityPanel?: ReactNode;
+  queuePanel?: ReactNode;
+  composerDialog?: ReactNode;
   quickFeatures?: ComposerQuickFeatures;
   targetSource?: ComposerTargetSource;
   steeringAvailable?: boolean;
   needsWorkingDirectory?: boolean;
   interactions?: readonly SessionInteractionDto[];
-  respondToRequest?(invocationId: string, requestId: string, response: RuntimeInteractionResponseDto): Promise<void>;
+  respondToRequest?(
+    invocationId: string,
+    requestId: string,
+    response: RuntimeInteractionResponseDto,
+  ): Promise<void>;
   sessionId: string | null;
   draft: string;
   workingDirectory: string;
@@ -41,6 +51,7 @@ export interface ConversationViewportComposerTarget {
   setDraft(value: string): void;
   setWorkingDirectory(value: string): void;
   send(attachments?: readonly NewAgentImageAttachmentDto[]): Promise<void>;
+  steer?(attachments?: readonly NewAgentImageAttachmentDto[]): Promise<void>;
   cancel(): Promise<void>;
 }
 
@@ -99,7 +110,8 @@ export function ConversationViewport({
 
   return (
     <div className="agent-session-conversation">
-      {composerTarget?.preparationPanel}
+      {composerTarget?.deviceActivityPanel}
+      {composerTarget?.composerDialog}
       {requests.length > 0 && (
         <section className="session-request-notice" aria-label="Pending agent requests">
           <span role="status">
@@ -160,9 +172,9 @@ export function ConversationViewport({
           />
         )}
       </div>
+      {composerTarget?.queuePanel}
       {composerTarget && (
         <AgentSessionComposer
-          key={composerTarget.sessionId ?? 'new-session'}
           toolbar={composerTarget.toolbar}
           quickFeatures={composerTarget.quickFeatures}
           targetSource={composerTarget.targetSource}
@@ -185,6 +197,11 @@ export function ConversationViewport({
             follow.requestFollow();
             void composerTarget.send(attachments);
           }}
+          onSteer={
+            composerTarget.steer
+              ? (attachments) => void composerTarget.steer?.(attachments)
+              : undefined
+          }
           onCancel={() => void composerTarget.cancel()}
         />
       )}

@@ -25,7 +25,7 @@ describe('conversation state', () => {
     const { result } = renderHook(() => useConversationHost(client, { sendExistingMessage }));
     await waitFor(() => expect(result.current.loading).toBe(false));
     act(() => result.current.setDraft('Change direction'));
-    await act(() => result.current.send());
+    await act(() => result.current.steer?.());
     expect(steerSession).toHaveBeenCalledWith({
       sessionId: 'session-1',
       invocationId: 'invocation-1',
@@ -44,7 +44,7 @@ describe('conversation state', () => {
     const { result } = renderHook(() => useConversationHost(client));
     await waitFor(() => expect(result.current.loading).toBe(false));
     act(() => result.current.setDraft('Keep this correction'));
-    await act(() => result.current.send());
+    await act(() => result.current.steer?.());
     expect(result.current.draft).toBe('Keep this correction');
     expect(result.current.error).toBe('Turn completed');
     expect(client.sent).toEqual([]);

@@ -185,7 +185,9 @@ pub(crate) enum HarnessUpdatePolicy {
         notify_removed_items: bool,
         prompt_reconstruction: HarnessPromptReconstruction,
     },
-    NotConfigured { reason: String },
+    NotConfigured {
+        reason: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -267,10 +269,7 @@ fn required(value: &str, label: &str) -> Result<(), String> {
 }
 
 fn unique_required(values: &[String], label: &str) -> Result<(), String> {
-    let mut normalized = values
-        .iter()
-        .map(|value| value.trim())
-        .collect::<Vec<_>>();
+    let mut normalized = values.iter().map(|value| value.trim()).collect::<Vec<_>>();
     if normalized.iter().any(|value| value.is_empty()) {
         return Err(format!("{label} must not contain empty values."));
     }

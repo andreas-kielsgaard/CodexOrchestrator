@@ -44,7 +44,10 @@ pub(crate) async fn load_native_profile_skills(
     let service = state.service.clone();
     tauri::async_runtime::spawn_blocking(move || {
         service
-            .native_skills_for_configuration(&input.configuration, input.working_directory.as_deref())
+            .native_skills_for_configuration(
+                &input.configuration,
+                input.working_directory.as_deref(),
+            )
             .map_err(|error| error.to_string())
     })
     .await

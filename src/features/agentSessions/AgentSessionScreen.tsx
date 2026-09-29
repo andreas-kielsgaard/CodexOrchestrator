@@ -1,18 +1,23 @@
 import type { AgentSessionImportClient } from '../../application/agentSessions/importContracts';
-import { otherRouteModels, withOtherRouteModels } from './routeModels';
+import { capabilityProfileDeviceModels, withCapabilityProfileDeviceModels } from './routeModels';
 import { ImportCodexSessionDialog } from './ImportCodexSessionDialog';
 import type { SessionWorkflowTarget } from '../../application/agentSessions/workflowNavigation';
 import type { RepositoryBranchSource } from '../../application/branches';
 import type { ExecutionConfigurationClient } from '../../application/executionConfiguration';
 import {
   localExecutionBinding,
+  executionRouteKey,
+  executionRouteRef,
   type ExecutionTargetClient,
 } from '../../application/executionTargets/contracts';
+import type { ProfileModelCatalogueDto } from '../../application/executionConfiguration';
 import { selectedTargetQuickFeatures } from './selectedTargetQuickFeatures';
 import { useSessionTarget } from './useSessionTarget';
 import { SessionComposerToolbar } from './SessionComposerToolbar';
 import { SessionPreparationPanel } from './SessionPreparationPanel';
 import { preparationPreview } from './preparationPreview';
+import { SessionQueuePanel } from './SessionQueuePanel';
+import { SessionDeviceActivityList } from './SessionDeviceActivityList';
 import { SessionTargetDialog } from './SessionTargetDialog';
 import { DeviceContinuationDialog } from './DeviceContinuationDialog';
 import { legacyHarnessRoleLabel } from '../../application/identities/legacyAgentIdentityAdapter';
@@ -29,6 +34,7 @@ import type {
   AgentSessionClient,
   AgentSessionProfileClient,
 } from '../../application/agentSessions';
+import type { SessionQueueEntryViewDto } from '../../application/agentSessions/sessionQueue';
 import type { ConversationHarnessManagementSource } from '../../application/conversationHarnesses';
 import type { SessionEventQueryClient } from '../../application/sessionEvents';
 import type { ProductDecisionEvidenceDestination } from '../../application/productDecisions';
@@ -45,6 +51,7 @@ import type {
 import type { TranscriptAnchorRange } from './transcriptProjector';
 import { AgentSessionHeaderActionsProvider, AgentSessionWorkspace } from './AgentSessionWorkspace';
 import { AgentSessionExecutionSettings } from './AgentSessionExecutionSettings';
+import { effectiveSessionOptions } from './effectiveSessionOptions';
 import { HarnessAwareAgentSessionPane } from '../conversationHarnesses/HarnessAwareAgentSessionPane';
 import { SessionSelector } from './SessionSelector';
 import { useAgentSessionCollection } from './useAgentSessionCollection';
@@ -96,7 +103,10 @@ export function StandaloneAgentSessionScreen({
   onOpenWorkflow,
 }: AgentSessionScreenProps) {
   const [importOpen, setImportOpen] = useState(false);
-  const [targetPicker, setTargetPicker] = useState<{ deviceId?: string } | null>(null);
+  const [targetPicker, setTargetPicker] = useState<{
+    deviceId?: string;
+    queueEntry?: SessionQueueEntryViewDto;
+  } | null>(null);
   const [deviceContinuationOpen, setDeviceContinuationOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [localSelection, setLocalSelection] = useState<SessionNavigationSelection>({
@@ -323,17 +333,76 @@ export function StandaloneAgentSessionScreen({
           limitations: [],
         }
       : undefined);
-  const capabilities = withOtherRouteModels(
+  const [routeModelCatalogues, setRouteModelCatalogues] = useState<
+    Readonly<Record<string, ProfileModelCatalogueDto>>
+  >({});
+  const modelCatalogueRoutes = useMemo(
+    () =>
+      (targetDraft.profile?.routePolicies ?? [])
+        .filter(
+          (route) =>
+            route.execution.deviceId ===
+            (targetDraft.selection?.execution ?? currentTarget?.execution)?.deviceId,
+        )
+        .map((route) => executionRouteRef(route.execution)),
+    [
+      targetDraft.profile?.routePolicies,
+      targetDraft.selection?.execution,
+      currentTarget?.execution,
+    ],
+  );
+  const profileRouteKey = JSON.stringify(modelCatalogueRoutes);
+  useEffect(() => {
+    let active = true;
+    const load = executionConfigurationClient?.loadProfileModelCatalogue;
+    if (!load || modelCatalogueRoutes.length === 0) {
+      setRouteModelCatalogues({});
+      return;
+    }
+    void Promise.all(
+      modelCatalogueRoutes.map(async (reference) => {
+        return [executionRouteKey(reference), await load(reference)] as const;
+      }),
+    ).then(
+      (entries) => active && setRouteModelCatalogues(Object.fromEntries(entries)),
+      () => active && setRouteModelCatalogues({}),
+    );
+    return () => {
+      active = false;
+    };
+  }, [executionConfigurationClient, modelCatalogueRoutes, profileRouteKey]);
+  const capabilities = withCapabilityProfileDeviceModels(
     routeCapabilities,
-    otherRouteModels(
+    capabilityProfileDeviceModels(
       targetDraft.profile,
       targetDraft.selection?.execution ?? currentTarget?.execution,
+      routeModelCatalogues,
     ),
   );
+  const messageSelection = view.selection;
+  const setMessageSelection = view.setSelection;
+  useEffect(() => {
+    if (!capabilities || targetDraft.loading) return;
+    if (!messageSelection.model && !messageSelection.reasoningMode) return;
+    if (
+      messageSelection.model &&
+      !capabilities.models.some((model) => model.id === messageSelection.model)
+    ) {
+      setMessageSelection({ model: null, reasoningMode: null });
+      return;
+    }
+    const effective = effectiveSessionOptions(capabilities, messageSelection);
+    if (messageSelection.reasoningMode !== effective.reasoningMode)
+      setMessageSelection({
+        model: messageSelection.model,
+        reasoningMode: effective.reasoningMode,
+      });
+  }, [capabilities, targetDraft.loading, messageSelection, setMessageSelection]);
   const models = capabilities?.models.map((model) => model.id) ?? [];
+  const effectiveOptions = effectiveSessionOptions(capabilities, messageSelection);
   const hasRuntimeFacts = Boolean(capabilities);
   const selectionError = targetDraft.branchChoice?.requiresWorktree
-    ? 'Choose which matching worktree to use.'
+    ? 'Choose or create a worktree for this branch.'
     : targetDraft.deviceId && !targetDraft.selection
       ? 'Choose a Capability Profile for this device.'
       : targetDraft.selection?.execution.connection.kind === 'ssh' &&
@@ -343,20 +412,16 @@ export function StandaloneAgentSessionScreen({
             view.selection.model &&
             !targetDraft.loading &&
             !models.includes(view.selection.model)
-          ? `Model ${view.selection.model} is unavailable on the selected provider route.`
+          ? `Model ${view.selection.model} is unavailable in this Capability Profile on the selected device.`
           : hasRuntimeFacts &&
               view.selection.reasoningMode &&
               !targetDraft.loading &&
-              !capabilities?.models.some((model) =>
-                model.reasoningModes.some((mode) => mode.id === view.selection.reasoningMode),
+              !effectiveOptions.model?.reasoningModes.some(
+                (mode) => mode.id === view.selection.reasoningMode,
               )
             ? `Reasoning ${view.selection.reasoningMode} is unavailable for the selected model.`
             : undefined;
-  const sendUnavailableReason =
-    selectionError ??
-    (targetDraft.selection && (targetDraft.loading || targetDraft.error || !targetDraft.runtime)
-      ? (targetDraft.error ?? 'Loading target capabilities…')
-      : view.sendUnavailableReason);
+  const sendUnavailableReason = selectionError ?? view.sendUnavailableReason;
   const workspaceChoice = targetDraft.selection?.workspace;
   const pending = Boolean(
     targetDraft.selection &&
@@ -394,19 +459,30 @@ export function StandaloneAgentSessionScreen({
         onPreview={() => setPreviewOpen(!previewOpen)}
       />
     ) : undefined;
-  const preparationPanel = (
-    <SessionPreparationPanel
-      preparation={session.preparation}
-      preview={preview}
-      deviceName={
-        (previewOpen ? targetDraft.selection : session.preparation?.selection)?.execution
-          .deviceName ?? 'this device'
+  const queuePanel = session.queue ? (
+    <SessionQueuePanel
+      queue={session.queue}
+      controller={session}
+      onChooseTarget={(queueEntry) =>
+        setTargetPicker({
+          deviceId: queueEntry.targetOperation?.destinationSelection.execution.deviceId,
+          queueEntry,
+        })
       }
-      onClosePreview={() => setPreviewOpen(false)}
-      onCancel={() => void session.cancel()}
-      onRetry={() => void session.retryPreparation?.()}
     />
+  ) : null;
+  const deviceActivityPanel = (
+    <SessionDeviceActivityList activities={session.queuePresentation?.deviceActivities ?? []} />
   );
+  const composerDialog = preview ? (
+    <SessionPreparationPanel
+      preparation={null}
+      preview={preview}
+      deviceName={targetDraft.selection?.execution.deviceName ?? 'this device'}
+      onClosePreview={() => setPreviewOpen(false)}
+      onCancel={() => undefined}
+    />
+  ) : null;
   const workspace =
     selection.kind === 'initial' ? (
       <p role="status">Loading sessions…</p>
@@ -415,7 +491,9 @@ export function StandaloneAgentSessionScreen({
         <AgentSessionWorkspace
           controller={session}
           composerToolbar={toolbar}
-          preparationPanel={preparationPanel}
+          deviceActivityPanel={deviceActivityPanel}
+          queuePanel={queuePanel}
+          composerDialog={composerDialog}
           targetSource={
             executionTargetClient && branchSource && profileClient
               ? {
@@ -455,8 +533,26 @@ export function StandaloneAgentSessionScreen({
         <SessionTargetDialog
           client={executionTargetClient}
           source={branchSource}
-          selected={targetDraft.target}
-          initialRepositoryId={draftRepositoryId ?? undefined}
+          selected={
+            targetPicker.queueEntry?.targetOperation?.destinationSelection.workspace.kind ===
+            'existing'
+              ? targetPicker.queueEntry.targetOperation.destinationSelection.workspace.target
+              : targetPicker.queueEntry?.message
+                ? null
+                : targetDraft.target
+          }
+          initialRepositoryId={
+            targetPicker.queueEntry?.targetOperation?.destinationSelection.workspace.kind ===
+            'create'
+              ? targetPicker.queueEntry.targetOperation.destinationSelection.workspace.repositoryId
+              : (draftRepositoryId ?? undefined)
+          }
+          initialBranchRef={
+            targetPicker.queueEntry?.targetOperation?.destinationSelection.workspace.kind ===
+            'create'
+              ? targetPicker.queueEntry.targetOperation.destinationSelection.workspace.branchRef
+              : targetDraft.branchChoice?.branchRef
+          }
           deviceId={targetPicker.deviceId}
           capabilityProfileId={
             targetPicker.deviceId === targetDraft.deviceId
@@ -466,11 +562,38 @@ export function StandaloneAgentSessionScreen({
           sessionId={selectedSessionId ?? undefined}
           onClose={() => setTargetPicker(null)}
           onSelect={(target) => {
-            targetDraft.setTarget(target);
+            if (targetPicker.queueEntry?.targetOperation && target) {
+              void session.updateTargetOperation?.({
+                entryId: targetPicker.queueEntry.entry.id,
+                destination: {
+                  capabilityProfileId: target.capabilityProfileId,
+                  capabilityProfileRevision: target.capabilityProfileRevision,
+                  execution: target.execution,
+                  workspace: { kind: 'existing', target },
+                },
+              });
+            } else if (targetPicker.queueEntry?.message && target) {
+              void session.enqueueTargetOperation?.(
+                {
+                  capabilityProfileId: target.capabilityProfileId,
+                  capabilityProfileRevision: target.capabilityProfileRevision,
+                  execution: target.execution,
+                  workspace: { kind: 'existing', target },
+                },
+                targetPicker.queueEntry.entry.id,
+              );
+            } else if (!targetPicker.queueEntry) targetDraft.setTarget(target);
             setTargetPicker(null);
           }}
           onSelectSelection={(next) => {
-            targetDraft.setSelection(next);
+            if (targetPicker.queueEntry?.targetOperation)
+              void session.updateTargetOperation?.({
+                entryId: targetPicker.queueEntry.entry.id,
+                destination: next,
+              });
+            else if (targetPicker.queueEntry?.message)
+              void session.enqueueTargetOperation?.(next, targetPicker.queueEntry.entry.id);
+            else targetDraft.setSelection(next);
             setTargetPicker(null);
           }}
         />
@@ -478,15 +601,18 @@ export function StandaloneAgentSessionScreen({
       {deviceContinuationOpen && executionTargetClient && branchSource && (
         <DeviceContinuationDialog
           client={executionTargetClient}
-          profileClient={profileClient}
           sessionId={selectedSessionId ?? undefined}
           source={branchSource}
           sourceTarget={currentTarget ?? targetDraft.target}
           onChooseDevice={targetDraft.chooseDevice}
-          onTransitionChanged={() => {
-            void session.reload();
-            void reloadCollection();
-          }}
+          onQueueSelection={
+            selectedSessionId
+              ? async (destination) => {
+                  targetDraft.setSelection(destination);
+                  await session.enqueueTargetOperation?.(destination);
+                }
+              : undefined
+          }
           onClose={() => setDeviceContinuationOpen(false)}
         />
       )}

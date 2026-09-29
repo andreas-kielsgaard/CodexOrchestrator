@@ -409,8 +409,7 @@ fn send_product_decision_correction(
     let session_id = correction.session_id;
     let result = state
         .sessions
-        .send_message(SendAgentSessionMessageCommand {
-            attachments: vec![],
+        .send_message(SendAgentSessionMessageCommand { attachments: vec![],
             session_id: Some(AgentSessionId::new(session_id).map_err(|_| {
                 ProductDecisionTransportError {
                     code: "invalid_input",
@@ -506,8 +505,7 @@ fn ensure_correction_initialization(
         })?;
     let command = SendIdempotentApplicationAgentSessionMessageCommand {
         invocation_id: invocation_id.clone(),
-        message: SendAgentSessionMessageCommand {
-            attachments: vec![],
+        message: SendAgentSessionMessageCommand { attachments: vec![],
             session_id: Some(session_id.clone()),
             submitted_text: initialization.initial_prompt,
             title: None,

@@ -1,4 +1,4 @@
-//! Destination-owned published revisions and exact physical checkouts.
+//! Branch revisions and exact physical checkouts.
 pub mod checkout;
 pub mod domain;
 mod git;
@@ -84,6 +84,30 @@ pub fn published_commit(root: &str, branch: &str) -> Result<String, RuntimePortE
         })
         .ok_or_else(|| unavailable("The selected branch has no published commit"))?;
     Ok(GitCommitId::new(commit)
+        .map_err(unavailable)?
+        .as_str()
+        .into())
+}
+
+/// Resolves the exact tip of a branch present in this local repository.
+pub fn local_branch_commit(root: &str, branch: &str) -> Result<String, RuntimePortError> {
+    PhysicalWorktreeAttachment::existing_branch(branch).map_err(unavailable)?;
+    let executable = GitExecutable::discover().map_err(unavailable)?;
+    let runner = GitRunner::new(&executable);
+    let root = Path::new(root);
+    runner
+        .required(root, ["show-ref", "--verify", branch])
+        .map_err(unavailable)?;
+    let commit = git_text(
+        runner
+            .required(
+                root,
+                ["rev-parse", "--verify", &format!("{branch}^{{commit}}")],
+            )
+            .map_err(unavailable)?,
+    )
+    .map_err(unavailable)?;
+    Ok(GitCommitId::new(&commit)
         .map_err(unavailable)?
         .as_str()
         .into())
@@ -246,5 +270,45 @@ mod tests {
             fs::read_to_string(Path::new(&instance.path).join("README.md")).unwrap(),
             "published"
         );
+    }
+
+    #[test]
+    fn local_branch_tip_materializes_without_a_remote() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        fs::create_dir(&source).unwrap();
+        git(&source, &["init", "-b", "main"]);
+        git(&source, &["config", "user.name", "Fixture"]);
+        git(
+            &source,
+            &["config", "user.email", "fixture@example.invalid"],
+        );
+        fs::write(source.join("README.md"), "local").unwrap();
+        git(&source, &["add", "."]);
+        git(&source, &["commit", "-m", "local"]);
+        git(&source, &["branch", "feature/local"]);
+        let commit =
+            local_branch_commit(source.to_str().unwrap(), "refs/heads/feature/local").unwrap();
+        let instance = materialize_worktree(
+            source.to_str().unwrap(),
+            "refs/heads/feature/local",
+            &commit,
+            "local-instance",
+        )
+        .unwrap();
+        assert_eq!(instance.head.as_deref(), Some(commit.as_str()));
+        assert_eq!(
+            instance.branch_ref.as_deref(),
+            Some("refs/heads/feature/local")
+        );
+        let conflict = materialize_worktree(
+            source.to_str().unwrap(),
+            "refs/heads/feature/local",
+            &commit,
+            "another-instance",
+        )
+        .unwrap_err();
+        assert!(conflict.message.contains("refs/heads/feature/local"));
+        assert!(conflict.message.contains(&instance.path));
     }
 }

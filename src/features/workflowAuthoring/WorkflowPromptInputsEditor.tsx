@@ -6,11 +6,25 @@ import type {
   OtpOutputDto,
 } from '../../application/workflowAuthoring';
 
-const names: Record<Input['kind'], string> = {
-  output_field: 'Output field',
-  node_files: 'Files associated with node',
+type PromptSourceChoice =
+  | 'output_field'
+  | 'node_files_edited'
+  | 'node_files_created'
+  | 'node_files_either'
+  | 'file_content';
+
+const names: Record<PromptSourceChoice, string> = {
+  output_field: 'Source Node Output',
+  node_files_edited: 'List of files edited by node',
+  node_files_created: 'List of files created by node',
+  node_files_either: 'List of files created or edited by node',
   file_content: 'File content',
 };
+
+export function promptSourceChoice(input: Input): PromptSourceChoice {
+  if (input.kind !== 'node_files') return input.kind;
+  return `node_files_${input.association}`;
+}
 
 export function WorkflowPromptInputsEditor({
   value,
@@ -24,19 +38,25 @@ export function WorkflowPromptInputsEditor({
   readonly onChange: (value: readonly Input[]) => void;
 }) {
   const fields = Object.keys(output?.schema.properties ?? {});
-  const kinds: Input['kind'][] = [
+  const choices: PromptSourceChoice[] = [
     ...(fields.length ? ['output_field' as const] : []),
-    'node_files',
+    'node_files_edited',
+    'node_files_created',
+    'node_files_either',
     'file_content',
   ];
-  const make = (kind: Input['kind']): Input => {
-    switch (kind) {
+  const make = (choice: PromptSourceChoice): Input => {
+    switch (choice) {
       case 'output_field':
-        return { kind, field: fields[0] ?? '' };
-      case 'node_files':
-        return { kind, nodeId: nodes[0]?.nodeId ?? '', association: 'either' };
+        return { kind: 'output_field', field: fields[0] ?? '' };
+      case 'node_files_edited':
+        return { kind: 'node_files', nodeId: nodes[0]?.nodeId ?? '', association: 'edited' };
+      case 'node_files_created':
+        return { kind: 'node_files', nodeId: nodes[0]?.nodeId ?? '', association: 'created' };
+      case 'node_files_either':
+        return { kind: 'node_files', nodeId: nodes[0]?.nodeId ?? '', association: 'either' };
       case 'file_content':
-        return { kind, path: '' };
+        return { kind: 'file_content', path: '' };
     }
   };
   const update = (index: number, input: Input) =>
@@ -55,9 +75,6 @@ export function WorkflowPromptInputsEditor({
         {value.map((input, index) => (
           <li key={index} className="prompt-source-list__item">
             <div className="prompt-source-list__header">
-              <strong>
-                {index + 1}. {names[input.kind]}
-              </strong>
               <span className="prompt-source-list__actions">
                 <button
                   type="button"
@@ -87,24 +104,24 @@ export function WorkflowPromptInputsEditor({
             <label className="session-event-editor__field">
               Source type
               <select
-                value={input.kind}
-                onChange={(event) => update(index, make(event.target.value as Input['kind']))}
+                value={promptSourceChoice(input)}
+                onChange={(event) => update(index, make(event.target.value as PromptSourceChoice))}
               >
-                {!kinds.includes(input.kind) && (
-                  <option value={input.kind}>
-                    {names[input.kind]} (not available for this trigger)
+                {!choices.includes(promptSourceChoice(input)) && (
+                  <option value={promptSourceChoice(input)}>
+                    {names[promptSourceChoice(input)]} (not available for this trigger)
                   </option>
                 )}
-                {kinds.map((kind) => (
-                  <option key={kind} value={kind}>
-                    {names[kind]}
+                {choices.map((choice) => (
+                  <option key={choice} value={choice}>
+                    {names[choice]}
                   </option>
                 ))}
               </select>
             </label>
             {input.kind === 'output_field' && (
               <label className="session-event-editor__field">
-                Output field
+                Field
                 <select
                   value={input.field}
                   onChange={(event) => update(index, { ...input, field: event.target.value })}
@@ -138,22 +155,6 @@ export function WorkflowPromptInputsEditor({
                     ))}
                   </select>
                 </label>
-                <label className="session-event-editor__field">
-                  File association
-                  <select
-                    value={input.association}
-                    onChange={(event) =>
-                      update(index, {
-                        ...input,
-                        association: event.target.value as 'created' | 'edited' | 'either',
-                      })
-                    }
-                  >
-                    <option value="created">Created</option>
-                    <option value="edited">Edited</option>
-                    <option value="either">Created or edited</option>
-                  </select>
-                </label>
               </>
             )}
             {input.kind === 'file_content' && (
@@ -176,7 +177,8 @@ export function WorkflowPromptInputsEditor({
       <button
         className="session-event-editor__add"
         type="button"
-        onClick={() => onChange([...value, make(kinds[0])])}
+        disabled={!choices.length}
+        onClick={() => onChange([...value, make(choices[0])])}
       >
         <Plus size={15} aria-hidden="true" />
         Add prompt source

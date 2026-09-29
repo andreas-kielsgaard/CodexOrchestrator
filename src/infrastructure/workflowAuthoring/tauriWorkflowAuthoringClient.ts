@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   WorkflowAuthoringClient,
   WorkflowCompiledPlanDto,
+  WorkflowAuthoringWorkspaceDto,
   WorkflowRecipeStateDto,
   WorkflowRecipeSummaryDto,
 } from '../../application/workflowAuthoring';
@@ -16,15 +17,16 @@ export function createTauriWorkflowAuthoringClient(
   invokeCommand: WorkflowAuthoringInvoke = invoke,
 ): WorkflowAuthoringClient {
   return {
+    openWorkspace: (preferredRecipeId) =>
+      invokeCommand<WorkflowAuthoringWorkspaceDto>('open_workflow_authoring_workspace', {
+        input: { preferredRecipeId: preferredRecipeId ?? null },
+      }),
     listRecipes: () => invokeCommand<WorkflowRecipeSummaryDto[]>('list_workflow_recipes'),
     loadRecipe: (recipeId) =>
       invokeCommand<WorkflowRecipeStateDto>('load_workflow_recipe', {
         input: { recipeId },
       }),
-    createRecipe: (name) =>
-      invokeCommand<WorkflowRecipeStateDto>('create_workflow_recipe', {
-        input: { name },
-      }),
+    createRecipe: () => invokeCommand<WorkflowRecipeStateDto>('create_workflow_recipe'),
     saveDraft: (draft) =>
       invokeCommand<WorkflowRecipeStateDto>('save_workflow_recipe_draft', {
         input: { draft },

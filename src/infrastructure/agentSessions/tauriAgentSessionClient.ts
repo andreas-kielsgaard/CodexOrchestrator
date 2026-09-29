@@ -75,12 +75,21 @@ export function createTauriAgentSessionClient(
       invokeCommand('cancel_agent_session_preparation', { input: { invocationId } }),
     retryPreparation: (invocationId) =>
       invokeCommand('retry_agent_session_preparation', { input: { invocationId } }),
-    requestTargetTransition: (input) =>
-      invokeCommand('request_agent_session_target_transition', { input }),
-    loadTargetTransition: (sessionId) =>
-      invokeCommand('load_agent_session_target_transition', { input: { sessionId } }),
-    startTargetTransition: (sessionId) =>
-      invokeCommand('start_agent_session_target_transition', { input: { sessionId } }),
+    loadQueue: (sessionId) =>
+      invokeCommand('load_agent_session_queue', { input: { sessionId } }),
+    enqueueTargetOperation: (input) =>
+      invokeCommand('enqueue_agent_session_target_operation', { input }),
+    reorderQueue: (input) => invokeCommand('reorder_agent_session_queue', { input }),
+    updateQueuedMessage: (input) =>
+      invokeCommand('update_queued_agent_session_message', { input }),
+    updateTargetOperation: (input) =>
+      invokeCommand('update_agent_session_target_operation', { input }),
+    startQueueEntry: (sessionId, entryId) =>
+      invokeCommand('start_agent_session_queue_entry', { input: { sessionId, entryId } }),
+    retryQueueEntry: (sessionId, entryId) =>
+      invokeCommand('retry_agent_session_queue_entry', { input: { sessionId, entryId } }),
+    cancelQueueEntry: (sessionId, entryId) =>
+      invokeCommand('cancel_agent_session_queue_entry', { input: { sessionId, entryId } }),
     loadQuickFeatures: (input) => invokeCommand('load_agent_session_quick_features', { input }),
     startDirectUserSession: async (input) => {
       await ensureUpdateBridge();

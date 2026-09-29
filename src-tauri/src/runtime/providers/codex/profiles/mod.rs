@@ -5252,7 +5252,9 @@ mod tests {
     #[test]
     fn selected_profile_adapter_uses_native_exposure_without_product_sandbox_locks() {
         struct Environment;
-        impl crate::runtime::providers::codex::app_server::environment::CodexEnvironmentSource for Environment {
+        impl crate::runtime::providers::codex::app_server::environment::CodexEnvironmentSource
+            for Environment
+        {
             fn read(
                 &self,
                 _: PathBuf,
@@ -5274,9 +5276,8 @@ mod tests {
         let (_directory, service) = service();
         let profile = selected_profile_ready_except_mcp(&service);
         mark_mcp_ready(&service, &profile.id);
-        let source =
-            CodexConfigurationSource::new(Arc::new(service), Default::default())
-                .with_reader(Arc::new(Environment));
+        let source = CodexConfigurationSource::new(Arc::new(service), Default::default())
+            .with_reader(Arc::new(Environment));
 
         let snapshot = source.profile_for_configuration("selected", None).unwrap();
         assert_eq!(
@@ -5300,7 +5301,9 @@ mod tests {
     #[test]
     fn skill_discovery_uses_each_registered_home() {
         struct Environment(Arc<Mutex<Vec<PathBuf>>>);
-        impl crate::runtime::providers::codex::app_server::environment::CodexEnvironmentSource for Environment {
+        impl crate::runtime::providers::codex::app_server::environment::CodexEnvironmentSource
+            for Environment
+        {
             fn read(
                 &self,
                 _: PathBuf,
@@ -5327,9 +5330,8 @@ mod tests {
         let first = selected_profile_ready_except_mcp(&service);
         let second = service.create_dedicated().unwrap();
         let observed = Arc::new(Mutex::new(Vec::new()));
-        let source =
-            CodexConfigurationSource::new(Arc::new(service), Default::default())
-                .with_reader(Arc::new(Environment(observed.clone())));
+        let source = CodexConfigurationSource::new(Arc::new(service), Default::default())
+            .with_reader(Arc::new(Environment(observed.clone())));
         source
             .native_skills_for_configuration(&first.id, None)
             .unwrap();
@@ -5344,7 +5346,9 @@ mod tests {
     #[test]
     fn quick_features_cache_by_profile_and_context_until_explicit_refresh() {
         struct Environment(Arc<Mutex<usize>>);
-        impl crate::runtime::providers::codex::app_server::environment::CodexEnvironmentSource for Environment {
+        impl crate::runtime::providers::codex::app_server::environment::CodexEnvironmentSource
+            for Environment
+        {
             fn read(
                 &self,
                 _: PathBuf,
@@ -5367,9 +5371,8 @@ mod tests {
         let (_directory, service) = service();
         let profile = selected_profile_ready_except_mcp(&service);
         let reads = Arc::new(Mutex::new(0));
-        let source =
-            CodexConfigurationSource::new(Arc::new(service), Default::default())
-                .with_reader(Arc::new(Environment(reads.clone())));
+        let source = CodexConfigurationSource::new(Arc::new(service), Default::default())
+            .with_reader(Arc::new(Environment(reads.clone())));
 
         source
             .quick_features_for_configuration(&profile.id, Some("C:/repo"))
@@ -5427,11 +5430,15 @@ mod tests {
         mark_mcp_ready(&service, &first.id);
         let first_home = first.home_path.clone();
         let prepared = service
-            .prepare_configured_agent_session_launch("selected", 
+            .prepare_configured_agent_session_launch(
+                "selected",
                 "session-1",
                 "invocation-1",
                 false,
-                Some(crate::agent_sessions::ports::RuntimeLaunchExtension {                    environment: vec![("ROLE_ENV".into(), "preserved".into())],                    ..Default::default()                }),
+                Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
+                    environment: vec![("ROLE_ENV".into(), "preserved".into())],
+                    ..Default::default()
+                }),
             )
             .expect("fresh launch binding");
         assert!(prepared
@@ -5453,7 +5460,13 @@ mod tests {
         ).unwrap();
         assert_eq!(stored_path_count, 1);
         assert!(service
-            .prepare_configured_agent_session_launch("selected", "session-1", "invocation-1", false, None)
+            .prepare_configured_agent_session_launch(
+                "selected",
+                "session-1",
+                "invocation-1",
+                false,
+                None
+            )
             .is_ok());
 
         drop(service);
@@ -5463,20 +5476,36 @@ mod tests {
         )
         .expect("reopen profile service");
         assert!(reopened
-            .prepare_configured_agent_session_launch("selected", "session-1", "invocation-2", true, None)
+            .prepare_configured_agent_session_launch(
+                "selected",
+                "session-1",
+                "invocation-2",
+                true,
+                None
+            )
             .is_ok());
 
         let second = selected_profile_ready_except_mcp(&reopened);
         mark_mcp_ready(&reopened, &second.id);
         assert!(reopened
-            .prepare_configured_agent_session_launch("selected", "session-1", "invocation-3", true, None)
+            .prepare_configured_agent_session_launch(
+                "selected",
+                "session-1",
+                "invocation-3",
+                true,
+                None
+            )
             .is_err());
         assert!(reopened
-            .prepare_configured_agent_session_launch("selected", 
+            .prepare_configured_agent_session_launch(
+                "selected",
                 "session-2",
                 "invocation-4",
                 false,
-                Some(crate::agent_sessions::ports::RuntimeLaunchExtension {                    environment: vec![("CODEX_HOME".into(), "foreign".into())],                    ..Default::default()                }),
+                Some(crate::agent_sessions::ports::RuntimeLaunchExtension {
+                    environment: vec![("CODEX_HOME".into(), "foreign".into())],
+                    ..Default::default()
+                }),
             )
             .is_err());
     }

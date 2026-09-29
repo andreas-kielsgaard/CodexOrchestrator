@@ -61,35 +61,35 @@ impl ExecutionEndpoints {
         &self,
         provider: &str,
     ) -> Result<Arc<dyn ProviderConfigurationSource>, String> {
-        self.providers.configurations.get(provider)
+        self.providers.configuration(provider)
     }
     /// The provider's native launch preparation, if it has one.
     pub(crate) fn launch_preparation(
         &self,
         provider: &str,
     ) -> Option<Arc<dyn ProviderLaunchPreparation>> {
-        self.providers.launches.find(provider)
+        self.providers.launch(provider)
     }
     /// Every registered provider's setups on this device.
     pub(crate) fn provider_setups(
         &self,
     ) -> Result<Vec<crate::execution_configuration::ProviderSetup>, String> {
         let mut setups = Vec::new();
-        for source in self.providers.configurations.values() {
+        for registration in self.providers.registrations() {
+            let source = ProviderRegistrations::configuration_source(registration);
             setups.extend(source.setups().map_err(|error| error.to_string())?);
         }
         setups.sort_by(|left, right| {
-            (&left.device_id, &left.provider, &left.configuration_id)
-                .cmp(&(&right.device_id, &right.provider, &right.configuration_id))
+            (&left.device_id, &left.provider, &left.configuration_id).cmp(&(
+                &right.device_id,
+                &right.provider,
+                &right.configuration_id,
+            ))
         });
         Ok(setups)
     }
-    /// Whether the provider can transfer its native conversations between routes.
-    pub(crate) fn supports_continuation(&self, provider: &str) -> bool {
-        self.providers.continuations.find(provider).is_some()
-    }
     pub(crate) fn local_runtime(&self, provider: &str) -> Result<Arc<dyn AgentRuntime>, String> {
-        self.providers.runtimes.get(provider)
+        self.providers.runtime(provider)
     }
     pub(crate) fn describe_runtime(
         &self,
@@ -180,7 +180,7 @@ impl ExecutionEndpoints {
         }
     }
     pub(crate) fn shutdown(&self) -> Result<(), String> {
-        for runtime in self.providers.runtimes.values() {
+        for runtime in self.providers.registered_runtimes() {
             let _ = runtime.shutdown();
         }
         for runtime in self

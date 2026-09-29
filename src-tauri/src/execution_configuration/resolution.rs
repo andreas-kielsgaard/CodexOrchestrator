@@ -311,8 +311,11 @@ impl SessionProfileResolver {
             ),
             &node_capabilities,
         )?;
-        let native_mcp_enabled =
-            route.map(|route| route.mcp_groups.contains(super::capability_profile::NATIVE_MCP_GROUP));
+        let native_mcp_enabled = route.map(|route| {
+            route
+                .mcp_groups
+                .contains(super::capability_profile::NATIVE_MCP_GROUP)
+        });
         // A route envelope overrides the configuration's defaults as a whole. Providers encode
         // "inherit" as an absent envelope, never as an empty one.
         let provider_options = route

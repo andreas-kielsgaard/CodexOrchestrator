@@ -6,8 +6,7 @@ use super::{
 };
 use crate::{
     execution_configuration::{
-        CapabilityProfileService, SessionCreationIntent,
-        SessionCreationRequest,
+        CapabilityProfileService, SessionCreationIntent, SessionCreationRequest,
     },
     identities::{service::IdentityService, IdentityId},
     session_events::{
@@ -193,20 +192,19 @@ impl SessionInvocationDispatcher for AgentSessionEventAdapter {
             delivery_id,
             target_session,
             source,
-            prompt,
-            initial_prompt,
+            prompt_sources,
+            initial_prompt_sources,
             direct_user_options,
         } = request;
         let session_id = parse_session_reference(&target_session)
             .map_err(|error| SessionInvocationError::new(error.to_string()))?;
         let invocation_id = invocation_id_for_delivery(&delivery_id)
             .map_err(|e| SessionInvocationError::new(e.to_string()))?;
+        let content = invocation_content(&event_group_id, prompt_sources, initial_prompt_sources)?;
         let launched = self.application.deliver_profiled_message(
             session_id,
             invocation_id,
-            prompt,
-            initial_prompt,
-            event_group_id.to_string(),
+            content,
             direct_user_options,
             matches!(source, SessionEventSource::UserRequest { .. }),
         )?;
@@ -220,6 +218,66 @@ impl SessionInvocationDispatcher for AgentSessionEventAdapter {
                 .map_err(|error| SessionInvocationError::new(error.to_string()))?;
         Ok(SessionInvocationReceipt { invocation })
     }
+}
+
+fn invocation_content(
+    event_group_id: &ReferenceIdentity,
+    prompt_sources: Vec<crate::session_events::PromptSource>,
+    initial_sources: Vec<crate::session_events::PromptSource>,
+) -> Result<orchid_engine::contracts::InvocationContent, SessionInvocationError> {
+    use crate::session_events::PromptSource;
+    use orchid_engine::contracts::{InvocationContent, InvocationContextPart};
+
+    let mut primary = Vec::new();
+    let mut context = initial_sources
+        .into_iter()
+        .enumerate()
+        .map(
+            |(index, source)| InvocationContextPart::InitialInstructions {
+                source: format!("session_event:{event_group_id}:created:{index}"),
+                version: 1,
+                content: source.text().to_owned(),
+            },
+        )
+        .collect::<Vec<_>>();
+    for source in prompt_sources {
+        match source {
+            PromptSource::Literal { text } | PromptSource::UserRequestText { text, .. } => {
+                primary.push(text)
+            }
+            PromptSource::InvocationOutput { invocation, text } => {
+                context.push(InvocationContextPart::ReferencedProductContent {
+                    source: format!("invocation_output:{invocation}"),
+                    content: text,
+                })
+            }
+            PromptSource::McpArgument { call, name, text } => {
+                context.push(InvocationContextPart::ReferencedProductContent {
+                    source: format!("mcp_argument:{call}:{name}"),
+                    content: text,
+                })
+            }
+            PromptSource::ApplicationEventField { event, field, text } => {
+                context.push(InvocationContextPart::ReferencedProductContent {
+                    source: format!("application_event:{event}:{field}"),
+                    content: text,
+                })
+            }
+            PromptSource::ReferencedContent { reference, text } => {
+                context.push(InvocationContextPart::ReferencedProductContent {
+                    source: format!("reference:{reference}"),
+                    content: text,
+                })
+            }
+        }
+    }
+    if primary.is_empty() {
+        primary.push("Process the supplied Session Event content.".into());
+    }
+    Ok(InvocationContent {
+        primary_query: primary.join("\n\n"),
+        context,
+    })
 }
 
 fn validate_creation_contract(contract: &ReferenceIdentity) -> Result<(), SessionDirectoryError> {
@@ -280,5 +338,25 @@ mod tests {
             invocation_id_for_delivery(&first).unwrap(),
             invocation_id_for_delivery(&second).unwrap()
         );
+    }
+
+    #[test]
+    fn referenced_only_delivery_keeps_provenance_and_gets_a_neutral_query() {
+        let event = ReferenceIdentity::new("workflow", "event_group", "result").unwrap();
+        let source = ReferenceIdentity::new("workflow", "invocation", "producer").unwrap();
+        let content = invocation_content(
+            &event,
+            vec![crate::session_events::PromptSource::InvocationOutput {
+                invocation: source,
+                text: "Structured result".into(),
+            }],
+            Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            content.primary_query,
+            "Process the supplied Session Event content."
+        );
+        assert!(content.contains_text("Structured result"));
     }
 }

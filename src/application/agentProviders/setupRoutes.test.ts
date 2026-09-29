@@ -19,6 +19,6 @@ describe('providerSetupRoutes', () => {
     expect(route.detail).toContain('C:\\Users\\user\\.codex');
     expect(route.detail).not.toContain('\\\\?\\');
     expect(route.execution).toMatchObject({ provider: 'codex', configurationRef: 'home-one' });
-    expect(route.label).toBe('This device · selected Codex CLI');
+    expect(route.label).toBe('This device · Codex CLI · C:\\Users\\user\\.codex · selected');
   });
 });

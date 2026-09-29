@@ -9,10 +9,9 @@ use std::{error::Error, fmt, sync::Arc};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RuntimeInvocationRequest {
-    pub session_id: AgentSessionId,
+pub struct RuntimeInvocationRequest { pub session_id: AgentSessionId,
     pub invocation_id: AgentInvocationId,
-    pub submitted_text: String,
+    pub content: InvocationContent,
     #[serde(default)]
     pub attachments: Vec<RuntimeImageAttachment>,
     pub working_directory: Option<String>,
@@ -29,6 +28,79 @@ pub struct RuntimeImageAttachment {
     pub name: String,
     pub media_type: String,
     pub data_base64: String,
+}
+
+/// Provider-neutral semantic input for one invocation. Provider adapters own the final native
+/// representation; Orchid retains the primary query and every context part separately.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InvocationContent {
+    pub primary_query: String,
+    #[serde(default)]
+    pub context: Vec<InvocationContextPart>,
+}
+
+impl InvocationContent {
+    pub fn query(primary_query: impl Into<String>) -> Self {
+        Self {
+            primary_query: primary_query.into(),
+            context: Vec::new(),
+        }
+    }
+
+    pub fn contains_text(&self, needle: &str) -> bool {
+        self.primary_query.contains(needle)
+            || self.context.iter().any(|part| match part {
+                InvocationContextPart::InitialInstructions { content, .. }
+                | InvocationContextPart::ReferencedProductContent { content, .. }
+                | InvocationContextPart::MissedConversationTurn { content, .. }
+                | InvocationContextPart::SkillGuidance { content, .. } => content.contains(needle),
+            })
+    }
+
+    pub fn contains_context_source(&self, expected: &str) -> bool {
+        self.context.iter().any(|part| match part {
+            InvocationContextPart::InitialInstructions { source, .. }
+            | InvocationContextPart::ReferencedProductContent { source, .. }
+            | InvocationContextPart::SkillGuidance { source, .. } => source == expected,
+            InvocationContextPart::MissedConversationTurn { .. } => false,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InvocationParticipantRole {
+    User,
+    Agent,
+}
+
+/// One ordered, Orchid-owned context item with explicit provenance.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum InvocationContextPart {
+    InitialInstructions {
+        source: String,
+        version: u16,
+        content: String,
+    },
+    ReferencedProductContent {
+        source: String,
+        content: String,
+    },
+    MissedConversationTurn {
+        invocation_id: AgentInvocationId,
+        role: InvocationParticipantRole,
+        content: String,
+    },
+    SkillGuidance {
+        source: String,
+        content: String,
+    },
 }
 
 /// Launch data prepared by the application. Authority is established before crossing this port.
@@ -112,7 +184,10 @@ impl fmt::Debug for RuntimeManagedMcpServer {
             .debug_struct("RuntimeManagedMcpServer")
             .field("name", &self.name)
             .field("url", &self.url)
-            .field("bearer_token", &self.bearer_token.as_ref().map(|_| "<redacted>"))
+            .field(
+                "bearer_token",
+                &self.bearer_token.as_ref().map(|_| "<redacted>"),
+            )
             .field("enabled_tools", &self.enabled_tools)
             .field("required", &self.required)
             .finish()
@@ -338,20 +413,9 @@ pub trait AgentRuntime: Send + Sync {
         ))
     }
 
-    fn active_turn(
-        &self,
-        _invocation_id: &AgentInvocationId,
-    ) -> Result<RuntimeTurnTarget, RuntimePortError> {
-        Err(RuntimePortError::new(
-            RuntimePortErrorKind::NotActive,
-            "Runtime has no active steerable turn",
-        ))
-    }
-
     fn steer(
         &self,
         _invocation_id: &AgentInvocationId,
-        _target: &RuntimeTurnTarget,
         _input_id: &str,
         _text: &str,
         _attachments: &[RuntimeImageAttachment],
@@ -399,13 +463,6 @@ pub trait AgentRuntime: Send + Sync {
     fn shutdown(&self) -> Result<(), RuntimePortError> {
         Ok(())
     }
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RuntimeTurnTarget {
-    pub thread_id: String,
-    pub turn_id: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

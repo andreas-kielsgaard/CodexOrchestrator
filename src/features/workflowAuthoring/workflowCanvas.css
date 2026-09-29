@@ -30,6 +30,7 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
+  height: 100%;
 }
 .recipe-canvas.workflow-canvas {
   min-height: 620px;
@@ -38,6 +39,13 @@
 }
 .recipe-canvas .workflow-node {
   touch-action: none;
+}
+.recipe-canvas .workflow-node--placement-preview {
+  border-style: dashed;
+  background: rgb(255 253 248 / 72%);
+  box-shadow: none;
+  opacity: 0.72;
+  pointer-events: none;
 }
 .recipe-canvas .workflow-canvas__connections text {
   font-size: 12px;

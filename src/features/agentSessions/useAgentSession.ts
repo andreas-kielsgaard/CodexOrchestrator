@@ -4,7 +4,6 @@ import type {
   SessionExecutionSelectionDto,
   SessionExecutionTargetDto,
 } from '../../application/executionTargets/contracts';
-import type { DirectUserInvocationResolutionDto } from '../../application/executionConfiguration';
 import {
   isSessionPreparing,
   type SessionPreparationDto,
@@ -20,6 +19,15 @@ import type {
   RuntimeInteractionResponseDto,
   NewAgentImageAttachmentDto,
 } from '../../application/agentSessions';
+import type {
+  SessionQueueViewDto,
+  UpdateQueuedMessageInputDto,
+  UpdateTargetOperationInputDto,
+} from '../../application/agentSessions/sessionQueue';
+import {
+  presentSessionQueue,
+  type SessionQueuePresentation,
+} from '../../application/agentSessions/sessionQueuePresentation';
 import { samePreparedConfiguration } from './sessionPreparationState';
 import {
   clearCachedComposerDraft,
@@ -30,9 +38,9 @@ import {
 import {
   AgentSessionTranscriptProjectionCache,
   projectAgentSessionTranscript,
+  withoutTranscriptInvocations,
 } from './transcriptProjector';
 import type { ComposerQuickFeatures } from './composerQuickActions';
-import { effectiveSessionOptions } from './effectiveSessionOptions';
 
 const EMPTY_HISTORY_SNAPSHOT = {
   details: null,
@@ -67,8 +75,29 @@ export interface AgentSessionWorkspaceController {
   /** Submits caller-supplied text without replacing or clearing the visible composer draft. */
   sendText?(value: string): Promise<void>;
   cancel(): Promise<void>;
-  respondToRequest?(invocationId: string, requestId: string, response: RuntimeInteractionResponseDto): Promise<void>;
+  respondToRequest?(
+    invocationId: string,
+    requestId: string,
+    response: RuntimeInteractionResponseDto,
+  ): Promise<void>;
   steeringAvailable?: boolean;
+  queue?: SessionQueueViewDto | null;
+  queuePresentation?: SessionQueuePresentation;
+  reorderQueue?(entryIds: readonly string[]): Promise<void>;
+  enqueueTargetOperation?(
+    destination: SessionExecutionSelectionDto,
+    beforeEntryId?: string,
+  ): Promise<void>;
+  updateQueuedMessage?(
+    input: Omit<UpdateQueuedMessageInputDto, 'sessionId' | 'expectedRevision'>,
+  ): Promise<void>;
+  updateTargetOperation?(
+    input: Omit<UpdateTargetOperationInputDto, 'sessionId' | 'expectedRevision'>,
+  ): Promise<void>;
+  startQueueEntry?(entryId: string): Promise<void>;
+  retryQueueEntry?(entryId: string): Promise<void>;
+  cancelQueueEntry?(entryId: string): Promise<void>;
+  steer?(attachments?: readonly NewAgentImageAttachmentDto[]): Promise<void>;
 
   reload(): Promise<void>;
   toggleProcessing(invocationId: string): void;
@@ -185,6 +214,7 @@ export function useAgentSession(
   draftRef.current = draft;
   const [currentProfile, setCurrentProfile] = useState<PinnedAgentSessionProfileDto | null>(null);
   const [preparation, setPreparation] = useState<SessionPreparationDto | null>(null);
+  const [queue, setQueue] = useState<SessionQueueViewDto | null>(null);
   const acceptedOptionsRef = useRef<string | null>(null);
   const sendingRef = useRef(false);
   const [workingDirectory, setWorkingDirectory] = useState(
@@ -201,9 +231,6 @@ export function useAgentSession(
   const mountedRef = useRef(true);
   const loadGenerationRef = useRef(0);
   const subscriptionReadyRef = useRef<Promise<void>>(Promise.resolve());
-  const quickCatalogueRef = useRef<AgentSessionQuickFeatures | undefined>(
-    options.executionQuickFeatures,
-  );
 
   const loadSelected = useCallback(
     async (sessionId: string, reload = false) => {
@@ -215,14 +242,17 @@ export function useAgentSession(
         : reload
           ? await client.reloadSession({ sessionId })
           : await client.loadSession({ sessionId });
-      const prepared =
+      const [prepared, current, queued] = await Promise.all([
         options.preparedExecution && options.execution?.client.loadPreparation
-          ? await options.execution.client.loadPreparation(sessionId)
-          : null;
-      const current =
+          ? options.execution.client.loadPreparation(sessionId)
+          : Promise.resolve(null),
         options.preparedExecution && options.execution?.client.loadCurrentProfile
-          ? await options.execution.client.loadCurrentProfile(sessionId).catch(() => null)
-          : null;
+          ? options.execution.client.loadCurrentProfile(sessionId).catch(() => null)
+          : Promise.resolve(null),
+        options.preparedExecution && options.execution?.client.loadQueue
+          ? options.execution.client.loadQueue(sessionId).catch(() => null)
+          : Promise.resolve(null),
+      ]);
       if (
         mountedRef.current &&
         selectedIdRef.current === sessionId &&
@@ -231,6 +261,7 @@ export function useAgentSession(
         if (!historySource) setFallbackDetails(next);
         setPreparation(prepared);
         setCurrentProfile(current);
+        setQueue(queued);
         setWorkingDirectory(
           readCachedComposerDraft(composerCacheKeyRef.current)?.workingDirectory ??
             next.session.workingDirectory ??
@@ -249,31 +280,30 @@ export function useAgentSession(
         return;
       }
       if (historySource) {
-        if (update.kind !== 'preparation_updated') return;
+        if (update.kind !== 'preparation_updated' && update.kind !== 'queue_updated') return;
         try {
-          const prepared =
+          const [prepared, current, queued] = await Promise.all([
             options.preparedExecution && options.execution?.client.loadPreparation
-              ? await options.execution.client.loadPreparation(update.sessionId)
-              : null;
-          const current =
+              ? options.execution.client.loadPreparation(update.sessionId)
+              : Promise.resolve(null),
             options.preparedExecution && options.execution?.client.loadCurrentProfile
-              ? await options.execution.client
-                  .loadCurrentProfile(update.sessionId)
-                  .catch(() => null)
-              : null;
+              ? options.execution.client.loadCurrentProfile(update.sessionId).catch(() => null)
+              : Promise.resolve(null),
+            options.preparedExecution && options.execution?.client.loadQueue
+              ? options.execution.client.loadQueue(update.sessionId).catch(() => null)
+              : Promise.resolve(null),
+          ]);
           if (mountedRef.current && selectedIdRef.current === update.sessionId) {
             setPreparation(prepared);
             setCurrentProfile(current);
+            setQueue(queued);
           }
         } catch (caught) {
           if (mountedRef.current) setError(`Session setup refresh failed: ${errorMessage(caught)}`);
         }
         return;
       }
-      if (
-        update.kind !== 'target_transition_updated' &&
-        !invocationIdsRef.current.has(update.invocationId)
-      ) {
+      if (update.kind !== 'queue_updated' && !invocationIdsRef.current.has(update.invocationId)) {
         return;
       }
       try {
@@ -314,6 +344,7 @@ export function useAgentSession(
       if (!historySource) setFallbackDetails(null);
       setCurrentProfile(null);
       setPreparation(null);
+      setQueue(null);
       acceptedOptionsRef.current = null;
       setLoading(true);
       setError(null);
@@ -334,6 +365,7 @@ export function useAgentSession(
       selectedIdRef.current = null;
       setFallbackDetails(null);
       setPreparation(null);
+      setQueue(null);
       setCurrentProfile(null);
       acceptedOptionsRef.current = null;
       invocationIdsRef.current = new Set();
@@ -399,8 +431,6 @@ export function useAgentSession(
       const submittedText = value.trim();
       if ((!submittedText && !attachments.length) || sendingRef.current) return;
       const attachmentInput = attachments.length ? { attachments } : {};
-      const preparingNow = isSessionPreparing(preparation);
-      if (preparingNow) return;
       const sendContext = contextRef.current;
       const sendCacheKey = composerCacheKeyRef.current;
       const existingSessionId = selectedIdRef.current;
@@ -410,42 +440,6 @@ export function useAgentSession(
       setError(null);
       try {
         await subscriptionReadyRef.current;
-        const activeInvocationId =
-          details && details.session.id === existingSessionId
-            ? projectAgentSessionTranscript(details).activeInvocationId
-            : null;
-        if (existingSessionId && activeInvocationId) {
-          if (
-            options.preparedExecution &&
-            !samePreparedConfiguration(
-              options.executionSelection,
-              options.execution?.selection,
-              preparation,
-              acceptedOptionsRef.current,
-            )
-          )
-            throw new Error('These execution choices apply after the current turn finishes.');
-          if (!client.steerSession)
-            throw new Error('Turn steering is unavailable for this connection.');
-          const outcome = await client.steerSession({
-            sessionId: existingSessionId,
-            invocationId: activeInvocationId,
-            inputId: crypto.randomUUID(),
-            text: submittedText,
-            ...attachmentInput,
-          });
-          if (outcome.state === 'accepted' || outcome.state === 'uncertain') {
-            acceptedDelivery = outcome.state === 'accepted';
-          }
-          if (outcome.state !== 'accepted')
-            setError(
-              outcome.result ??
-                `Steering ${outcome.state}. It will not be sent again automatically.`,
-            );
-          if (selectedIdRef.current === existingSessionId)
-            await loadSelected(existingSessionId, true);
-          return;
-        }
         if (
           !options.preparedExecution &&
           existingSessionId &&
@@ -510,7 +504,6 @@ export function useAgentSession(
                   : await client.sendMessage({
                       ...(existingSessionId ? { sessionId: existingSessionId } : {}),
                       submittedText,
-                      ...attachmentInput,
                       ...(!existingSessionId && options.sessionTitle
                         ? { title: options.sessionTitle }
                         : {}),
@@ -520,15 +513,25 @@ export function useAgentSession(
                     });
         acceptedOptionsRef.current = preparedOptions;
         acceptedDelivery = true;
-        if (options.execution) {
-          const effective = effectiveSessionOptions(
-            quickCatalogueRef.current,
-            options.execution.selection,
-          );
+        if (!options.preparedExecution && options.execution) {
+          const effective =
+            'invocation' in acknowledgement
+              ? (
+                  acknowledgement.invocation as {
+                    effectiveOptions: {
+                      model: { id: string } | null;
+                      reasoningMode: string | null;
+                    };
+                  }
+                ).effectiveOptions
+              : { model: null, reasoningMode: null };
           const resolved =
             'invocationResolution' in acknowledgement
-              ? (acknowledgement.invocationResolution as DirectUserInvocationResolutionDto)
-                  .selections
+              ? (
+                  acknowledgement.invocationResolution as {
+                    selections: { model: string | null; reasoningMode: string | null };
+                  }
+                ).selections
               : null;
           options.execution.afterAccepted(acknowledgement.sessionId, {
             model: resolved?.model ?? effective.model?.id ?? options.execution.selection.model,
@@ -564,20 +567,177 @@ export function useAgentSession(
         if (acceptedDelivery && clearComposer && draftRef.current === value) {
           draftRef.current = '';
           setDraft('');
-          if (existingSessionId) writeCachedComposerDraft(sendCacheKey, { text: '' });
-          else clearCachedComposerDraft(sendCacheKey);
+          clearCachedComposerDraft(sendCacheKey);
         }
         sendingRef.current = false;
         if (mountedRef.current) setSending(false);
       }
     },
-    [client, details, loadSelected, options, preparation, workingDirectory],
+    [client, details, loadSelected, options, workingDirectory],
   );
 
   const send = useCallback(
     (attachments: readonly NewAgentImageAttachmentDto[] = []) =>
       sendText(draft, true, attachments),
     [draft, sendText],
+  );
+
+  const steer = useCallback(async (attachments: readonly NewAgentImageAttachmentDto[] = []) => {
+    const sessionId = selectedIdRef.current;
+    const submittedText = draftRef.current.trim();
+    const invocationId = details ? projectAgentSessionTranscript(details).activeInvocationId : null;
+    if (
+      !sessionId ||
+      !invocationId ||
+      (!submittedText && !attachments.length) ||
+      !client.steerSession
+    )
+      return;
+    setSending(true);
+    setError(null);
+    try {
+      const outcome = await client.steerSession({
+        sessionId,
+        invocationId,
+        inputId: crypto.randomUUID(),
+        text: submittedText,
+        ...(attachments.length ? { attachments } : {}),
+      });
+      if (outcome.state === 'accepted') {
+        if (draftRef.current.trim() === submittedText) {
+          draftRef.current = '';
+          setDraft('');
+          clearCachedComposerDraft(composerCacheKeyRef.current);
+        }
+      } else {
+        setError(
+          outcome.result ?? `Steering ${outcome.state}. It will not be sent again automatically.`,
+        );
+      }
+      await loadSelected(sessionId, true);
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      if (mountedRef.current) setSending(false);
+    }
+  }, [client, details, loadSelected]);
+
+  const reorderQueue = useCallback(
+    async (entryIds: readonly string[]) => {
+      const sessionId = selectedIdRef.current;
+      const queueClient = options.execution?.client;
+      if (!sessionId || !queue || !queueClient?.reorderQueue) return;
+      try {
+        setQueue(
+          await queueClient.reorderQueue({
+            sessionId,
+            expectedRevision: queue.revision,
+            entryIds,
+          }),
+        );
+      } catch (caught) {
+        setError(errorMessage(caught));
+        await loadSelected(sessionId, true);
+      }
+    },
+    [loadSelected, options.execution?.client, queue],
+  );
+
+  const enqueueTargetOperation = useCallback(
+    async (destination: SessionExecutionSelectionDto, beforeEntryId?: string) => {
+      const sessionId = selectedIdRef.current;
+      const queueClient = options.execution?.client;
+      if (!sessionId || !queueClient?.enqueueTargetOperation) return;
+      try {
+        const appended = await queueClient.enqueueTargetOperation({ sessionId, destination });
+        if (!beforeEntryId || !queueClient.reorderQueue) {
+          setQueue(appended);
+          return;
+        }
+        const unfinished = appended.entries.filter(
+          ({ entry }) => entry.state !== 'completed' && entry.state !== 'canceled',
+        );
+        const previousIds = new Set(queue?.entries.map(({ entry }) => entry.id));
+        const inserted = unfinished.find(
+          ({ entry, targetOperation }) => targetOperation && !previousIds.has(entry.id),
+        );
+        const ids = unfinished.map(({ entry }) => entry.id);
+        if (!inserted || !ids.includes(beforeEntryId)) {
+          setQueue(appended);
+          return;
+        }
+        const next = ids.filter((id) => id !== inserted.entry.id);
+        next.splice(next.indexOf(beforeEntryId), 0, inserted.entry.id);
+        setQueue(
+          await queueClient.reorderQueue({
+            sessionId,
+            expectedRevision: appended.revision,
+            entryIds: next,
+          }),
+        );
+      } catch (caught) {
+        setError(errorMessage(caught));
+      }
+    },
+    [options.execution?.client, queue],
+  );
+
+  const updateQueuedMessage = useCallback(
+    async (input: Omit<UpdateQueuedMessageInputDto, 'sessionId' | 'expectedRevision'>) => {
+      const sessionId = selectedIdRef.current;
+      const queueClient = options.execution?.client;
+      if (!sessionId || !queue || !queueClient?.updateQueuedMessage) return;
+      try {
+        setQueue(
+          await queueClient.updateQueuedMessage({
+            ...input,
+            sessionId,
+            expectedRevision: queue.revision,
+          }),
+        );
+        await loadSelected(sessionId, true);
+      } catch (caught) {
+        setError(errorMessage(caught));
+      }
+    },
+    [loadSelected, options.execution?.client, queue],
+  );
+
+  const updateTargetOperation = useCallback(
+    async (input: Omit<UpdateTargetOperationInputDto, 'sessionId' | 'expectedRevision'>) => {
+      const sessionId = selectedIdRef.current;
+      const queueClient = options.execution?.client;
+      if (!sessionId || !queue || !queueClient?.updateTargetOperation) return;
+      try {
+        setQueue(
+          await queueClient.updateTargetOperation({
+            ...input,
+            sessionId,
+            expectedRevision: queue.revision,
+          }),
+        );
+      } catch (caught) {
+        setError(errorMessage(caught));
+      }
+    },
+    [options.execution?.client, queue],
+  );
+
+  const actOnQueueEntry = useCallback(
+    async (kind: 'start' | 'retry' | 'cancel', entryId: string) => {
+      const sessionId = selectedIdRef.current;
+      const queueClient = options.execution?.client;
+      if (!sessionId || !queueClient) return;
+      try {
+        if (kind === 'start') await queueClient.startQueueEntry?.(sessionId, entryId);
+        else if (kind === 'retry') await queueClient.retryQueueEntry?.(sessionId, entryId);
+        else await queueClient.cancelQueueEntry?.(sessionId, entryId);
+        await loadSelected(sessionId, true);
+      } catch (caught) {
+        setError(errorMessage(caught));
+      }
+    },
+    [loadSelected, options.execution?.client],
   );
 
   const cancel = useCallback(async () => {
@@ -624,10 +784,14 @@ export function useAgentSession(
     });
   }, []);
 
-  const transcript = useMemo(
-    () => (details ? transcriptProjection.current.project(details, preparation) : null),
-    [details, preparation],
-  );
+  const queuePresentation = useMemo(() => presentSessionQueue(queue), [queue]);
+  const transcript = useMemo(() => {
+    if (!details) return null;
+    return withoutTranscriptInvocations(
+      transcriptProjection.current.project(details, preparation),
+      queuePresentation.queuedInvocationIds,
+    );
+  }, [details, preparation, queuePresentation]);
 
   useEffect(() => {
     if (details) {
@@ -751,7 +915,6 @@ export function useAgentSession(
         ? quickFeatureBucket(quickFeatureCaches, quickFeatureOwner).get(quickFeatureKey)
         : undefined) ?? options.executionQuickFeatures,
   );
-  quickCatalogueRef.current = quickCatalogue;
   useEffect(() => {
     let current = true;
     setQuickCatalogue(
@@ -794,11 +957,7 @@ export function useAgentSession(
     preparation,
     preparing,
     currentProfile,
-    submissionUnavailableReason: preparing
-      ? 'Waiting for setup to finish.'
-      : transcript?.activeInvocationId && !sameActiveConfiguration
-        ? 'These execution choices apply after the current turn finishes.'
-        : undefined,
+    submissionUnavailableReason: undefined,
     retryPreparation: async () => {
       if (!preparation?.canRetry || !options.execution?.client.retryPreparation) return;
       try {
@@ -833,6 +992,16 @@ export function useAgentSession(
     quickCatalogue,
     respondToRequest,
     steeringAvailable: Boolean(client.steerSession) && !preparing && sameActiveConfiguration,
+    steer,
+    queue,
+    queuePresentation,
+    enqueueTargetOperation,
+    reorderQueue,
+    updateQueuedMessage,
+    updateTargetOperation,
+    startQueueEntry: (entryId) => actOnQueueEntry('start', entryId),
+    retryQueueEntry: (entryId) => actOnQueueEntry('retry', entryId),
+    cancelQueueEntry: (entryId) => actOnQueueEntry('cancel', entryId),
     selectedSessionId,
     details,
     transcript,

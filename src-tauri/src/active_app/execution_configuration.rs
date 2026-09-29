@@ -1,8 +1,11 @@
 //! Provider registration and the Capability Profile catalogue. Product skill roots are composed here
 //! once and offered with every provider configuration.
 use crate::{
-    agent_sessions::application::SessionWorkspaces, execution_configuration::*,
-    runtime::providers::{codex::profiles::NativeProfileService, registrations::ProviderRegistrations},
+    agent_sessions::application::SessionWorkspaces,
+    execution_configuration::*,
+    runtime::providers::{
+        codex::profiles::NativeProfileService, registrations::ProviderRegistrations,
+    },
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;

@@ -5,8 +5,7 @@ import type { OtpCatalogueReader, OtpInstallationClient } from '../../applicatio
 import type { ExecutionTargetClient } from '../../application/executionTargets/contracts';
 import type { ClaudeSetupClient } from '../../infrastructure/agentProviders/claude/claudeSetupClient';
 import type { TechnicalSettingsSection } from '../../application/productNavigation';
-import { ClaudeSetupSettings } from '../agentProviders/claude/ClaudeSetupSettings';
-import { NativeProfileSettings } from '../agentProviders/codex/profiles/NativeProfileSettings';
+import { availableProviderSettings } from '../agentProviders/registrations';
 import { OtpConfigurationPanel } from './OtpConfigurationPanel';
 import { DeviceSetupOverview, InferenceSourceOverview } from './ExecutionSetupOverview';
 import './technicalSettings.css';
@@ -37,6 +36,12 @@ export function TechnicalSettingsScreen({
     executionClient ? 'devices' : 'native',
   );
   const section = controlledSection ?? localSection;
+  const providerSettings = availableProviderSettings({
+    nativeClient,
+    claudeClient,
+    selectedCodexProfileId,
+    onSelectedCodexProfileChange,
+  });
   const setSection = (next: TechnicalSettingsSection) => {
     setLocalSection(next);
     onSectionChange?.(next);
@@ -64,22 +69,16 @@ export function TechnicalSettingsScreen({
               Inference sources
             </button>
           )}
-          <button
-            type="button"
-            aria-pressed={section === 'native'}
-            onClick={() => setSection('native')}
-          >
-            Codex profiles
-          </button>
-          {claudeClient && (
+          {providerSettings.map((registration) => (
             <button
+              key={registration.provider}
               type="button"
-              aria-pressed={section === 'claude'}
-              onClick={() => setSection('claude')}
+              aria-pressed={section === registration.section}
+              onClick={() => setSection(registration.section)}
             >
-              Claude setups
+              {registration.label}
             </button>
-          )}
+          ))}
           {readOtpCatalogue && (
             <button
               type="button"
@@ -96,26 +95,22 @@ export function TechnicalSettingsScreen({
           <DeviceSetupOverview
             executionClient={executionClient}
             deviceClient={deviceClient}
-            providers={claudeClient ? ['codex', 'claude'] : ['codex']}
-            onConfigureProvider={(provider) =>
-              setSection(provider === 'claude' ? 'claude' : 'native')
-            }
+            providers={providerSettings.map((registration) => registration.provider)}
+            onConfigureProvider={(provider) => {
+              const registration = providerSettings.find((entry) => entry.provider === provider);
+              if (registration) setSection(registration.section);
+            }}
           />
         ) : section === 'inference' && executionClient ? (
           <InferenceSourceOverview executionClient={executionClient} />
-        ) : section === 'claude' && claudeClient ? (
-          <ClaudeSetupSettings client={claudeClient} />
         ) : section === 'otp' && readOtpCatalogue ? (
           <OtpConfigurationPanel
             readCatalogue={readOtpCatalogue}
             installations={otpInstallations}
           />
         ) : (
-          <NativeProfileSettings
-            client={nativeClient}
-            selectedProfileId={selectedCodexProfileId}
-            onSelectedProfileChange={onSelectedCodexProfileChange}
-          />
+          (providerSettings.find((registration) => registration.section === section)?.content ??
+          providerSettings[0]?.content)
         )}
       </div>
     </div>

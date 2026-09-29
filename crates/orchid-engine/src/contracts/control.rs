@@ -6,7 +6,7 @@
 //! The encoding is the one already stored in event history, so older records decode unchanged.
 use super::{
     domain::AgentRuntimeEventSource,
-    runtime::{RuntimeEventDraft, RuntimeTurnTarget},
+    runtime::RuntimeEventDraft,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -16,7 +16,7 @@ use serde_json::Value;
 pub enum RuntimeControlRecord {
     /// The provider started a steerable turn.
     #[serde(rename = "runtime_turn_active")]
-    TurnActive { target: RuntimeTurnTarget },
+    TurnActive,
     /// A provider request awaiting the user.
     #[serde(rename = "runtime_request_opened")]
     RequestOpened { request: super::interactions::RuntimeRequest },
@@ -37,7 +37,6 @@ pub enum RuntimeControlRecord {
     SteeringPending {
         input_id: String,
         text: String,
-        target: RuntimeTurnTarget,
     },
     #[serde(rename = "session_steering_result")]
     SteeringResult {
@@ -121,6 +120,10 @@ mod tests {
                 .unwrap_or_else(|| panic!("{payload}"));
             let reencoded = record.into_draft().raw_payload;
             for (key, value) in payload.as_object().unwrap() {
+                if key == "target" {
+                    // Provider-native handles from older records are intentionally not re-emitted.
+                    continue;
+                }
                 if key == "request" {
                     // Typed requests add their defaults; the stored fields stay as recorded.
                     for (field, stored) in value.as_object().unwrap() {

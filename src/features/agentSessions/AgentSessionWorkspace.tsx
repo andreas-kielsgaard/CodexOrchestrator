@@ -34,7 +34,9 @@ export interface AgentSessionPresentation {
 export interface AgentSessionWorkspaceProps {
   controller: AgentSessionWorkspaceController;
   readonly composerToolbar?: ReactNode;
-  readonly preparationPanel?: ReactNode;
+  readonly deviceActivityPanel?: ReactNode;
+  readonly queuePanel?: ReactNode;
+  readonly composerDialog?: ReactNode;
   readonly targetSource?: ComposerTargetSource;
   readonly sendUnavailableReason?: string;
   readonly presentation?: AgentSessionPresentation;
@@ -69,7 +71,9 @@ export function AgentSessionHeaderActionsProvider({
 export function AgentSessionWorkspace({
   controller,
   composerToolbar,
-  preparationPanel,
+  deviceActivityPanel,
+  queuePanel,
+  composerDialog,
   targetSource,
   sendUnavailableReason,
   presentation = {},
@@ -79,10 +83,13 @@ export function AgentSessionWorkspace({
 }: AgentSessionWorkspaceProps) {
   const contextualChrome = useContext(AgentSessionChromeContext);
   const active = Boolean(controller.transcript?.activeInvocationId);
+  const activeInvocation = controller.transcript?.invocations.find(
+    (invocation) => invocation.id === controller.transcript?.activeInvocationId,
+  );
   const awaitingResponse = pendingSessionRequests(controller.details?.interactions).length > 0;
   const activityStatus = active ? (
     <span className={awaitingResponse ? 'waiting-status' : 'working-status'} role="status">
-      {controller.preparing
+      {activeInvocation?.preparing
         ? 'Waiting for setup'
         : awaitingResponse
           ? pendingRequestLabel
@@ -228,7 +235,9 @@ export function AgentSessionWorkspace({
           }
           composerTarget={{
             toolbar: composerToolbar,
-            preparationPanel,
+            deviceActivityPanel,
+            queuePanel,
+            composerDialog,
             quickFeatures: controller.quickFeatures,
             targetSource,
             steeringAvailable: controller.steeringAvailable,
@@ -241,14 +250,13 @@ export function AgentSessionWorkspace({
             draft: controller.draft,
             workingDirectory: controller.workingDirectory,
             sending: controller.sending,
-            sendUnavailableReason:
-              controller.submissionUnavailableReason ??
-              (active && controller.steeringAvailable ? undefined : sendUnavailableReason),
+            sendUnavailableReason: controller.submissionUnavailableReason ?? sendUnavailableReason,
             active,
             canceling: controller.canceling,
             setDraft: controller.setDraft,
             setWorkingDirectory: controller.setWorkingDirectory,
             send: controller.send,
+            steer: controller.steer,
             cancel: controller.cancel,
           }}
         />

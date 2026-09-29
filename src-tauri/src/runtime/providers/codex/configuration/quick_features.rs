@@ -36,9 +36,9 @@ pub(super) fn project(
                 .collect(),
         });
     }
-    result.append_native_skills(&crate::runtime::providers::codex::app_server::skills::project(
-        &native.skills,
-    ));
+    result.append_native_skills(
+        &crate::runtime::providers::codex::app_server::skills::project(&native.skills),
+    );
     result
 }
 

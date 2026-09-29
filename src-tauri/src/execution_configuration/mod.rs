@@ -13,13 +13,13 @@ mod node_profile;
 mod ports;
 mod product_skills;
 pub(crate) use product_skills::ProductSkillRoots;
-pub(crate) mod skill_mentions;
 mod repository;
 mod resolution;
 mod runtime_profile;
 mod service;
 mod session_profile;
 mod setups;
+pub(crate) mod skill_mentions;
 pub(crate) use setups::{ProviderSetup, ProviderSetupState};
 mod session_skills;
 mod skill_reader;
@@ -38,8 +38,8 @@ pub(crate) use ports::{
 };
 pub(crate) use repository::{
     initialize_capability_profile_storage, migrate_route_model_catalogues,
-    InMemoryCapabilityProfileRepository,
-    SqliteCapabilityProfileRepository, CAPABILITY_PROFILE_SCHEMA,
+    InMemoryCapabilityProfileRepository, SqliteCapabilityProfileRepository,
+    CAPABILITY_PROFILE_SCHEMA,
 };
 pub(crate) use resolution::{
     DirectUserInvocationRequest, DirectUserInvocationResolution, ResolutionError,

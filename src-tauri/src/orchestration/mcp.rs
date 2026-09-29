@@ -4,7 +4,6 @@
 //! alter provider-neutral Agent Session identity or expose persistence as generic CRUD.
 use super::{
     application::OrchestrationApplication,
-    managed_mcp::{transport_denial, ManagedMcpGrant},
     confirmation::{
         InitiationConfirmationCoordinator, InitiationConfirmationError, InitiationRequestSource,
     },
@@ -12,6 +11,7 @@ use super::{
         CapabilityProfileId, EpicPlanningDraftId, PlanBuilderProposal,
         PlanningDraftAgentSessionAssociationId, SaveEpicPlanProposalCommand, SaveProposalError,
     },
+    managed_mcp::{transport_denial, ManagedMcpGrant},
 };
 #[cfg(test)]
 use axum::http::StatusCode;

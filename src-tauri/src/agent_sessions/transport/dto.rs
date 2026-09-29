@@ -129,8 +129,7 @@ pub(crate) struct SendAgentSessionMessageCommandDto {
     pub(crate) requested_options: Option<AgentRuntimeOptions>,
 }
 
-impl From<SendAgentSessionMessageCommandDto> for SendAgentSessionMessageCommand {
-    fn from(value: SendAgentSessionMessageCommandDto) -> Self {
+impl From<SendAgentSessionMessageCommandDto> for SendAgentSessionMessageCommand { fn from(value: SendAgentSessionMessageCommandDto) -> Self {
         Self {
             session_id: value.session_id,
             submitted_text: value.submitted_text,
@@ -272,7 +271,7 @@ pub(crate) enum AgentSessionUpdateDto {
         session_id: AgentSessionId,
         invocation_id: AgentInvocationId,
     },
-    TargetTransitionUpdated {
+    QueueUpdated {
         session_id: AgentSessionId,
     },
     SteeringAccepted {
@@ -307,8 +306,8 @@ impl From<AgentSessionNotification> for AgentSessionUpdateDto {
                 session_id,
                 invocation_id,
             },
-            AgentSessionNotification::TargetTransitionUpdated { session_id } => {
-                Self::TargetTransitionUpdated { session_id }
+            AgentSessionNotification::QueueUpdated { session_id } => {
+                Self::QueueUpdated { session_id }
             }
             AgentSessionNotification::SteeringAccepted {
                 session_id,
@@ -407,8 +406,7 @@ mod tests {
                 updated_at: at,
             },
             invocations: vec![AgentInvocationHistory {
-                invocation: AgentInvocation {
-                    attachments: vec![],
+                invocation: AgentInvocation { attachments: vec![],
                     id: invocation_id,
                     session_id,
                     submitted_text: "Work".into(),

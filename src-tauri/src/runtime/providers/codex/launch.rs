@@ -66,7 +66,10 @@ impl ProviderLaunchPreparation for CodexLaunchPreparation {
             .bind_session_home(codex_configuration_id(configuration)?, session_id.as_str())
     }
 
-    fn bound_configuration_ref(&self, session_id: &AgentSessionId) -> Result<Option<String>, String> {
+    fn bound_configuration_ref(
+        &self,
+        session_id: &AgentSessionId,
+    ) -> Result<Option<String>, String> {
         self.0.bound_profile_id(session_id.as_str())
     }
 }

@@ -134,28 +134,58 @@ impl WorkflowInstanceStore {
 
     pub(crate) fn create(
         &self,
-        name: String,
         recipe: WorkflowRecipeDraft,
         target: ResolvedRepoBranchWorktreeTarget,
     ) -> Result<RecipeInstance, String> {
         recipe.validate_activatable()?;
-        if name.trim().is_empty() {
-            return Err("An instance name is required".into());
-        }
         target.validate()?;
         if !Path::new(&target.worktree.path).is_absolute()
             || !Path::new(&target.worktree.path).is_dir()
         {
             return Err("Choose an existing absolute worktree folder".into());
         }
-        let record = RecipeInstance {
-            id: format!("workflow-instance-{}", Uuid::new_v4()),
-            name: name.trim().into(),
-            recipe,
-            target,
-            created_at: Utc::now().to_rfc3339(),
-        };
         self.write("create Workflow instance", |transaction| {
+            let mut query = transaction
+                .prepare("SELECT record_json FROM workflow_recipe_instances")
+                .map_err(|error| error.to_string())?;
+            let records = query
+                .query_map([], |row| row.get::<_, String>(0))
+                .map_err(|error| error.to_string())?;
+            let mut used = std::collections::BTreeSet::new();
+            for value in records {
+                let value: serde_json::Value =
+                    serde_json::from_str(&value.map_err(|error| error.to_string())?)
+                        .map_err(|error| error.to_string())?;
+                if value
+                    .pointer("/recipe/recipeId")
+                    .and_then(serde_json::Value::as_str)
+                    != Some(recipe.recipe_id.as_str())
+                {
+                    continue;
+                }
+                if let Some(number) = value
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|name| name.rsplit_once(": Instance "))
+                    .and_then(|(_, number)| number.parse::<u64>().ok())
+                {
+                    used.insert(number);
+                }
+            }
+            drop(query);
+            let number = (1..).find(|number| !used.contains(number)).unwrap();
+            let design_name = if recipe.name.trim().is_empty() {
+                "Untitled workflow"
+            } else {
+                recipe.name.trim()
+            };
+            let record = RecipeInstance {
+                id: format!("workflow-instance-{}", Uuid::new_v4()),
+                name: format!("{design_name}: Instance {number}"),
+                recipe,
+                target,
+                created_at: Utc::now().to_rfc3339(),
+            };
             transaction
                 .execute(
                     "INSERT INTO workflow_recipe_instances(id,record_json) VALUES(?1,?2)",
@@ -302,6 +332,76 @@ fn managed_error(error: ManagedOperationError<String>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn instance_recipe() -> WorkflowRecipeDraft {
+        WorkflowRecipeDraft {
+            contract_version: super::super::authoring::WORKFLOW_RECIPE_CONTRACT_VERSION,
+            recipe_id: "recipe-review".into(),
+            name: "Review".into(),
+            revision: 1,
+            entry_node_ids: vec!["author".into()],
+            nodes: vec![super::super::authoring::WorkflowAuthoringNode {
+                node_id: "author".into(),
+                name: "Author".into(),
+                position_x: 20.0,
+                position_y: 20.0,
+                capability_profile_id: "capability-default".into(),
+                node_profile: crate::execution_configuration::NodeProfile {
+                    contract_version: crate::execution_configuration::NODE_PROFILE_CONTRACT_VERSION,
+                    allowed_capabilities: Default::default(),
+                    pinned_defaults: Default::default(),
+                },
+                initial_prompt: None,
+                agent_identity_id: None,
+            }],
+            connections: Vec::new(),
+        }
+    }
+
+    fn instance_target(path: &Path) -> ResolvedRepoBranchWorktreeTarget {
+        ResolvedRepoBranchWorktreeTarget {
+            repository: super::super::instance_domain::WorkflowRepositoryTarget {
+                id: "repo".into(),
+                name: "Repo".into(),
+                git_common_directory: "git".into(),
+            },
+            branch: super::super::instance_domain::WorkflowBranchTarget {
+                id: "branch".into(),
+                name: "main".into(),
+            },
+            worktree: super::super::instance_domain::WorkflowWorktreeTarget {
+                id: "worktree".into(),
+                path: path.to_string_lossy().into_owned(),
+            },
+        }
+    }
+
+    #[test]
+    fn instance_names_use_the_lowest_available_design_number() {
+        let folder = tempfile::tempdir().unwrap();
+        let store = WorkflowInstanceStore::in_memory();
+        let recipe = instance_recipe();
+        let target = instance_target(folder.path());
+
+        let first = store.create(recipe.clone(), target.clone()).unwrap();
+        let second = store.create(recipe.clone(), target.clone()).unwrap();
+        assert_eq!(first.name, "Review: Instance 1");
+        assert_eq!(second.name, "Review: Instance 2");
+
+        store
+            .write("remove test Workflow instance", |transaction| {
+                transaction
+                    .execute(
+                        "DELETE FROM workflow_recipe_instances WHERE id = ?1",
+                        params![first.id],
+                    )
+                    .map_err(|error| error.to_string())?;
+                Ok(())
+            })
+            .unwrap();
+        let replacement = store.create(recipe, target).unwrap();
+        assert_eq!(replacement.name, "Review: Instance 1");
+    }
 
     #[test]
     fn older_attempt_records_load_with_a_safe_legacy_context() {

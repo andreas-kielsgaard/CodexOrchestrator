@@ -22,8 +22,9 @@ use std::{
 };
 
 /// Reads a setup's models from Claude. Replaced in tests.
-pub(crate) type ModelReader =
-    Arc<dyn Fn(&ClaudeSetup, &[(String, String)]) -> Result<Vec<ClaudeModel>, String> + Send + Sync>;
+pub(crate) type ModelReader = Arc<
+    dyn Fn(&ClaudeSetup, &[(String, String)]) -> Result<Vec<ClaudeModel>, String> + Send + Sync,
+>;
 
 pub(crate) struct ClaudeConfigurationSource {
     setups: Arc<ClaudeSetups>,
@@ -255,18 +256,34 @@ mod tests {
 
         let profile = source.profile_for_configuration(&setup.id, None).unwrap();
         profile.validate().unwrap();
-        assert_eq!(profile.configuration, ProviderConfigurationRef::new("claude", &setup.id));
-        assert_eq!(profile.exposure.models, ["haiku", "sonnet"].map(String::from).into());
-        assert_eq!(profile.exposure.reasoning_modes, ["high", "low"].map(String::from).into());
-        assert_eq!(profile.exposure.sandbox_modes, [SandboxMode::DangerFullAccess].into());
+        assert_eq!(
+            profile.configuration,
+            ProviderConfigurationRef::new("claude", &setup.id)
+        );
+        assert_eq!(
+            profile.exposure.models,
+            ["haiku", "sonnet"].map(String::from).into()
+        );
+        assert_eq!(
+            profile.exposure.reasoning_modes,
+            ["high", "low"].map(String::from).into()
+        );
+        assert_eq!(
+            profile.exposure.sandbox_modes,
+            [SandboxMode::DangerFullAccess].into()
+        );
         assert_eq!(profile.exposure.skills, ["review".to_string()].into());
 
-        let features = source.quick_features_for_configuration(&setup.id, None).unwrap();
+        let features = source
+            .quick_features_for_configuration(&setup.id, None)
+            .unwrap();
         assert_eq!(features.models[0].label, "SONNET");
         assert_eq!(features.models[0].reasoning_modes.len(), 2);
         assert_eq!(features.skills[0].invocation_text, "$review");
         assert_eq!(*reads.lock().unwrap(), 1);
-        source.refresh_quick_features_for_configuration(&setup.id, None).unwrap();
+        source
+            .refresh_quick_features_for_configuration(&setup.id, None)
+            .unwrap();
         assert_eq!(*reads.lock().unwrap(), 2);
         assert!(source.profile_for_configuration("unknown", None).is_err());
     }

@@ -141,8 +141,7 @@ pub(super) fn map_session_row(row: SessionRow) -> Result<AgentSession, Repositor
 }
 
 pub(super) fn map_invocation_row(row: InvocationRow) -> Result<AgentInvocation, RepositoryError> {
-    Ok(AgentInvocation {
-        id: AgentInvocationId::new(row.0).map_err(contract_error)?,
+    Ok(AgentInvocation { id: AgentInvocationId::new(row.0).map_err(contract_error)?,
         session_id: AgentSessionId::new(row.1).map_err(contract_error)?,
         submitted_text: row.2,
         attachments: from_json(&row.14, "invocation image attachments")?,
@@ -349,7 +348,14 @@ pub(super) fn active_invocation(
     conn: &Connection,
     session_id: &AgentSessionId,
 ) -> Result<Option<AgentInvocation>, RepositoryError> {
-    let row = conn.query_row(&format!("{INVOCATION_SELECT} WHERE session_id = ?1 AND status IN ('pending', 'running') LIMIT 1"), params![session_id.as_str()], invocation_row).optional().map_err(sql_unavailable("load active invocation"))?;
+    let row = conn
+        .query_row(
+            &format!("{INVOCATION_SELECT} WHERE session_id = ?1 AND status = 'running' LIMIT 1"),
+            params![session_id.as_str()],
+            invocation_row,
+        )
+        .optional()
+        .map_err(sql_unavailable("load active invocation"))?;
     row.map(map_invocation_row).transpose()
 }
 

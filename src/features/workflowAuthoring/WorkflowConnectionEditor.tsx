@@ -119,11 +119,7 @@ export function WorkflowConnectionEditor({
             </label>
           </CollapsibleSection>
         )}
-      <CollapsibleSection
-        title="Destination action"
-        description="Choose what to do with Sessions of the output node."
-        className="execution-configuration__section"
-      >
+      <CollapsibleSection title="Destination action" className="execution-configuration__section">
         <WorkflowDestinationActionPicker
           action={connection.action}
           configuration={connection.configuration}

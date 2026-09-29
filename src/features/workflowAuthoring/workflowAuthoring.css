@@ -1,22 +1,29 @@
 .workflow-authoring-screen {
   display: grid;
-  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  grid-template-columns: 288px minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   background: #f4f6f2;
 }
 
+.workflow-authoring-screen__recipes > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .workflow-authoring-screen__recipes {
-  display: grid;
-  grid-template-rows: auto auto minmax(80px, 1fr) minmax(100px, 0.6fr);
+  display: flex;
+  flex-direction: column;
   gap: 12px;
+  box-sizing: border-box;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
   padding: 16px;
   border-right: 1px solid #d7ddd6;
   background: #fbfaf6;
 }
 
-.workflow-authoring-screen__recipes header,
 .workflow-authoring-screen__toolbar,
 .workflow-authoring-screen__toolbar > div:last-child {
   display: flex;
@@ -52,25 +59,7 @@
   opacity: 0.5;
 }
 
-.workflow-authoring-screen__recipes header button {
-  display: inline-flex;
-  min-height: 32px;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  border: 1px solid #ccd4cd;
-  border-radius: 7px;
-  background: #fff;
-  color: #33453a;
-}
-
-.workflow-authoring-screen__create {
-  display: grid;
-  gap: 6px;
-}
-
-.workflow-authoring-screen__create input,
-.workflow-authoring-screen__create button,
+.workflow-navigation__create,
 .workflow-authoring-screen__toolbar input,
 .workflow-authoring-screen__toolbar button,
 .workflow-connection-editor input:not([type='checkbox']),
@@ -86,7 +75,7 @@
   font: inherit;
 }
 
-.workflow-authoring-screen__create button,
+.workflow-navigation__create,
 .workflow-authoring-screen__toolbar button {
   display: inline-flex;
   align-items: center;
@@ -98,6 +87,7 @@
 
 .workflow-authoring-screen__recipes nav {
   display: grid;
+  flex: 1;
   min-height: 0;
   align-content: start;
   gap: 7px;
@@ -113,6 +103,9 @@
   background: #fff;
   color: #293a31;
   text-align: left;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .workflow-authoring-screen__recipes nav button.is-selected {
@@ -249,21 +242,80 @@
   resize: vertical;
 }
 
-.workflow-entry-destination {
-  flex-shrink: 0;
-  max-height: 42vh;
-  padding: 10px 18px;
-  overflow: auto;
-  border-bottom: 1px solid #d5ddd6;
-  background: #fffdf9;
+.workflow-connection-editor .prompt-source-list__header {
+  justify-content: flex-end;
 }
 
-.workflow-entry-destination label {
+.workflow-destination-action__configuration {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #d4ddd6;
+  border-radius: 9px;
+  background: #fafbf8;
+}
+
+.workflow-prompt-agent-configuration {
   display: grid;
-  gap: 6px;
+  gap: 12px;
 }
 
-.workflow-entry-destination select,
+.workflow-prompt-agent-configuration small {
+  color: #66736c;
+  font-weight: 500;
+}
+
+.workflow-prompt-agent-configuration .session-event-editor__field > label {
+  display: grid;
+  gap: 5px;
+}
+
+.workflow-session-filter__header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.workflow-session-filter__header > button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid #c9d2ca;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.workflow-session-filter__operation {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  margin: 8px 0;
+  padding: 3px;
+  border-radius: 8px;
+  background: #e9eee9;
+}
+
+.workflow-session-filter__operation button {
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+}
+
+.workflow-session-filter__operation button[aria-pressed='true'] {
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(20 39 29 / 16%);
+  color: #1f382c;
+  font-weight: 750;
+}
+
+.workflow-session-filter__add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
 .otp-selection > button,
 .workflow-connection-editor__grid input,
 .workflow-connection-editor__grid select {
@@ -276,16 +328,6 @@
   font: inherit;
 }
 
-.workflow-node-otp-configuration { margin-top: 20px; }
-.workflow-node-otp-configuration article {
-  margin-top: 12px;
-  padding: 12px;
-  border: 1px solid #ccd7d0;
-  border-radius: 8px;
-}
-.workflow-node-otp-configuration h3,
-.workflow-node-otp-configuration h4 { margin: 0 0 6px; }
-
 @media (max-width: 900px) {
   .workflow-authoring-screen {
     grid-template-columns: 1fr;
@@ -293,8 +335,6 @@
   }
 
   .workflow-authoring-screen__recipes {
-    grid-template-columns: 1fr 1fr;
-    grid-template-rows: auto minmax(60px, 120px);
     max-height: 220px;
     padding: 8px;
   }
@@ -322,17 +362,80 @@
   border-radius: 7px;
 }
 .workflow-instance-list {
-  display: grid;
-  align-content: start;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   gap: 7px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.workflow-navigation__tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 9px;
+  background: #e9eee9;
+}
+.workflow-navigation__tabs button {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #405148;
+}
+.workflow-navigation__tabs button[aria-selected='true'] {
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(20 39 29 / 16%);
+  color: #1f382c;
+  font-weight: 750;
+}
+.workflow-navigation__create {
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  padding: 9px;
+  border: 1px solid #cbd4cd;
+  border-radius: 8px;
+  background: #fff;
+}
+.workflow-instance-list__groups {
+  min-width: 0;
   min-height: 0;
   overflow: auto;
 }
-.workflow-instance-list h2 {
-  font-size: 0.9rem;
-  margin: 0;
+.workflow-instance-list details {
+  min-width: 0;
+  border-bottom: 1px solid #d9dfda;
 }
-.workflow-instance-list button {
+.workflow-instance-list summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 4px;
+  cursor: pointer;
+}
+.workflow-instance-list summary span,
+.workflow-instance-list button strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-instance-list details > div {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 9px;
+}
+.workflow-instance-list__groups button {
   display: grid;
   gap: 4px;
   padding: 8px;
@@ -340,6 +443,8 @@
   border: 1px solid #cbd4cd;
   border-radius: 7px;
   background: #fff;
+  min-width: 0;
+  max-width: 100%;
 }
 .workflow-instance-list button[aria-pressed='true'] {
   background: #dfeee4;

@@ -200,10 +200,12 @@ impl AgentRuntimeUpdateSink for PersistedRuntimeUpdateSink {
                     .map_err(repository_delivery_error("append runtime event"))?;
                 state.next_sequence = Some(sequence.saturating_add(1));
 
-                if let Some(orchid_engine::contracts::RuntimeControlRecord::WorkingDirectoryResolved {
-                    cwd: path,
-                    ..
-                }) = &control
+                if let Some(
+                    orchid_engine::contracts::RuntimeControlRecord::WorkingDirectoryResolved {
+                        cwd: path,
+                        ..
+                    },
+                ) = &control
                 {
                     self.repository
                         .resolve_working_directory(
