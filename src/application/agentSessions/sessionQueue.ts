@@ -55,6 +55,7 @@ export interface SessionQueueEntryDto {
   readonly state: SessionQueueEntryStateDto;
   readonly item:
     | { readonly kind: 'message'; readonly invocationId: string }
+    | { readonly kind: 'compaction'; readonly invocationId: string }
     | { readonly kind: 'target_operation'; readonly operationId: string };
   readonly blockedReason: string | null;
   readonly createdAt: string;
@@ -100,6 +101,7 @@ export interface SessionQueueClient {
     readonly sessionId: string;
     readonly destination: SessionExecutionSelectionDto;
   }): Promise<SessionQueueViewDto>;
+  enqueueCompaction(sessionId: string): Promise<SessionQueueViewDto>;
   reorderQueue(input: {
     readonly sessionId: string;
     readonly expectedRevision: number;

@@ -56,6 +56,12 @@ pub(crate) struct EnqueueTargetOperationCommand {
     destination: SessionExecutionSelection,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct EnqueueCompactionCommand {
+    session_id: AgentSessionId,
+}
+
 #[tauri::command]
 pub(crate) fn load_agent_session_queue(
     state: State<'_, AgentSessionTauriState>,
@@ -76,6 +82,19 @@ pub(crate) fn enqueue_agent_session_target_operation(
     state
         .application
         .enqueue_session_target_operation(&input.session_id, input.destination)
+        .and_then(|_| state.application.load_session_queue_view(&session_id))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn enqueue_agent_session_compaction(
+    state: State<'_, AgentSessionTauriState>,
+    input: EnqueueCompactionCommand,
+) -> Result<SessionQueueView, String> {
+    let session_id = input.session_id.clone();
+    state
+        .application
+        .enqueue_session_compaction(&input.session_id)
         .and_then(|_| state.application.load_session_queue_view(&session_id))
         .map_err(|error| error.to_string())
 }

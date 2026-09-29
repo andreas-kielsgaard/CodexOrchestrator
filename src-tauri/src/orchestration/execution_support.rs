@@ -1707,6 +1707,7 @@ mod tests {
             .start_invocation(
                 RuntimeInvocationRequest { attachments: vec![], session_id: AgentSessionId::new("pip01w-live-session").unwrap(),
                     invocation_id: AgentInvocationId::new("pip01w-live-invocation").unwrap(),
+                    kind: Default::default(),
                     content: InvocationContent::query("Use only the file-editing tool to append exactly PIP01W_PRODUCT_LIVE followed by a newline to file.txt in the current workspace. Do not use shell or command tools. Do not access any path outside the current workspace. Stop after the edit."),
                     working_directory: Some(reference.working_directory.clone()),
                     options: effective,

@@ -14,6 +14,11 @@ import type {
 import { sessionDetails, sessionSummary } from './testFixtures';
 import { useAgentSession, type UseAgentSessionOptions } from './useAgentSession';
 import { useAgentSessionCollection } from './useAgentSessionCollection';
+import {
+  composerDraftCacheKey,
+  readCachedComposerDraft,
+  writeCachedComposerDraft,
+} from './composerDraftCache';
 
 beforeEach(() => window.localStorage.clear());
 
@@ -139,8 +144,8 @@ describe('conversation state', () => {
         }),
       {
         initialProps: {
-          folderTarget:
-            repository as import('../../application/agentSessions/organization').SessionFolderTarget | null,
+          folderTarget: repository as
+            import('../../application/agentSessions/organization').SessionFolderTarget | null,
         },
       },
     );
@@ -230,6 +235,42 @@ describe('extracted Agent Session boundaries', () => {
     });
     expect(client.sent).toEqual([]);
     expect(client.calls).toContain('reload:session-1');
+  });
+
+  it('clears submitted text without deleting the accepted conversation model and effort', async () => {
+    const client = new FakeAgentSessionClient();
+    const key = composerDraftCacheKey('session-1');
+    writeCachedComposerDraft(key, {
+      text: 'Use Sol',
+      runtimeSelection: { model: 'gpt-5.6-sol', reasoningMode: 'high' },
+    });
+    const { result } = renderHook(() =>
+      useAgentSession(client, {
+        selectedSessionId: 'session-1',
+        sendExistingMessage: vi.fn().mockResolvedValue({
+          sessionId: 'session-1',
+          invocationId: 'profiled-invocation-1',
+        }),
+        execution: {
+          client: client as never,
+          selection: { model: 'gpt-5.6-sol', reasoningMode: 'high' },
+          afterAccepted: (sessionId, selection) =>
+            writeCachedComposerDraft(composerDraftCacheKey(sessionId), {
+              runtimeSelection: selection,
+            }),
+        },
+      }),
+    );
+    await waitFor(() => expect(result.current.details).not.toBeNull());
+    act(() => result.current.setDraft('Use Sol'));
+
+    await act(() => result.current.send());
+
+    expect(readCachedComposerDraft(key)?.runtimeSelection).toEqual({
+      model: 'gpt-5.6-sol',
+      reasoningMode: 'high',
+    });
+    expect(readCachedComposerDraft(key)?.text ?? '').toBe('');
   });
 
   it('attributes collection reload failures to the collection without session work', async () => {

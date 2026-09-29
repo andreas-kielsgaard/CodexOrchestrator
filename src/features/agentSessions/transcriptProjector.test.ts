@@ -23,6 +23,16 @@ describe('projectAgentSessionTranscript', () => {
     });
   });
 
+  it('keeps application compaction in the queue instead of rendering it as chat', () => {
+    const source = details('running', []);
+    source.invocations[0].invocation.inputProvenance = 'application';
+    source.invocations[0].invocation.submittedText = '/compact';
+    const projected = projectAgentSessionTranscript(source);
+
+    expect(projectedTranscriptContent(projected)).toEqual([]);
+    expect(projected.activeInvocationId).toBe('invocation-1');
+  });
+
   it('keeps live processing, tools, and intermediate messages visible while running', () => {
     const projected = projectAgentSessionTranscript(
       details('running', [

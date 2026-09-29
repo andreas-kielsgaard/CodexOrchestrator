@@ -968,6 +968,22 @@ fn queued_preparations_accept_multiple_pending_messages_and_reorder_them_atomica
         reordered.entries[0].id,
         format!("message:{}", second.id.as_str())
     );
+    let mut compact = test_invocation("queued-compact", &session.id, at(4));
+    compact.input_provenance = AgentInvocationInputProvenance::Application;
+    compact.submitted_text = "/compact".into();
+    let compacted = repository
+        .accept_queued_preparation(
+            None,
+            compact.clone(),
+            preparation(compact.id.clone()),
+            None,
+            at(4),
+        )
+        .unwrap();
+    assert!(matches!(
+        compacted.entries.last().unwrap().item,
+        crate::agent_sessions::queue::SessionQueueEntryItem::Compaction { .. }
+    ));
 }
 
 #[test]

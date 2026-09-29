@@ -653,6 +653,7 @@ impl AgentSessionApplication {
         );
         let request = RuntimeInvocationRequest { attachments: invocation.attachments.clone(), session_id: session.id.clone(),
             invocation_id: invocation.id.clone(),
+            kind: invocation_kind(&invocation),
             content: InvocationContent {
                 primary_query: invocation.submitted_text.clone(),
                 context,
@@ -881,5 +882,15 @@ impl AgentSessionApplication {
             Some(json!({"repositoryError": error.message.clone()})),
         );
         Ok(())
+    }
+}
+
+fn invocation_kind(invocation: &AgentInvocation) -> crate::agent_sessions::ports::RuntimeInvocationKind {
+    if invocation.input_provenance == AgentInvocationInputProvenance::Application
+        && invocation.submitted_text == "/compact"
+    {
+        crate::agent_sessions::ports::RuntimeInvocationKind::Compact
+    } else {
+        crate::agent_sessions::ports::RuntimeInvocationKind::Turn
     }
 }

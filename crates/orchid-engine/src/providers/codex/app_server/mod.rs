@@ -49,7 +49,12 @@ struct Invocation {
     target: Mutex<Option<CodexTurnTarget>>,
     requests: Mutex<HashMap<String, requests::PendingRequest>>,
     finished: AtomicBool,
-    prepared_turn: Mutex<Option<Value>>,
+    prepared_turn: Mutex<Option<NativeInvocation>>,
+}
+
+struct NativeInvocation {
+    method: &'static str,
+    params: Value,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -369,7 +374,7 @@ impl CodexAppServerRuntime {
                         }
                     }
                     (Ok((_, turn)), None) => {
-                        if let Err(error) = invocation.connection.call("turn/start", turn) {
+                        if let Err(error) = invocation.connection.call(turn.method, turn.params) {
                             invocation.finish(AgentInvocationTerminalStatus::Failed, Some(error));
                         }
                     }
@@ -421,7 +426,7 @@ fn initialize_turn(
     invocation: &Invocation,
     mut request: RuntimeInvocationRequest,
     external: Option<ExternalRuntimeContextId>,
-) -> Result<(RuntimeInvocationReady, Value), RuntimePortError> {
+) -> Result<(RuntimeInvocationReady, NativeInvocation), RuntimePortError> {
     let rpc = &invocation.connection;
     rpc.call("initialize", json!({"clientInfo":{"name":"codex_orchestrator","version":"1"},"capabilities":{"experimentalApi":true}}))?;
     rpc.write(json!({"method":"initialized","params":{}}))?;
@@ -554,6 +559,19 @@ fn initialize_turn(
         .or(request.working_directory.as_deref())
         .ok_or_else(|| unavailable("App-server did not return a working directory"))?
         .to_owned();
+    if request.kind == RuntimeInvocationKind::Compact {
+        return Ok((
+            RuntimeInvocationReady {
+                external_context_id: ExternalRuntimeContextId::new(thread_id)
+                    .map_err(|error| unavailable(error.to_string()))?,
+                working_directory,
+            },
+            NativeInvocation {
+                method: "thread/compact/start",
+                params: json!({"threadId":thread_id}),
+            },
+        ));
+    }
     let rendered = render_invocation_content(&request.content)?;
     let mut input = Vec::new();
     if !rendered.is_empty() {
@@ -588,7 +606,10 @@ fn initialize_turn(
                 .map_err(|error| unavailable(error.to_string()))?,
             working_directory,
         },
-        turn,
+        NativeInvocation {
+            method: "turn/start",
+            params: turn,
+        },
     ))
 }
 
@@ -692,7 +713,7 @@ impl AgentRuntime for CodexAppServerRuntime {
             .ok_or_else(|| {
                 unavailable("Prepared prompt is unavailable or was already delivered")
             })?;
-        if let Err(error) = invocation.connection.call("turn/start", turn) {
+        if let Err(error) = invocation.connection.call(turn.method, turn.params) {
             invocation.finish(AgentInvocationTerminalStatus::Failed, Some(error.clone()));
             return Err(error);
         }

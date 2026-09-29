@@ -282,6 +282,7 @@ fn invocation_id() -> AgentInvocationId {
 
 fn request(extension: Option<RuntimeLaunchExtension>) -> RuntimeInvocationRequest { RuntimeInvocationRequest { attachments: vec![], session_id: AgentSessionId::new("session").unwrap(),
         invocation_id: invocation_id(),
+        kind: Default::default(),
         content: InvocationContent::query("Reply with exactly the word: ok"),
         working_directory: Some("/work".into()),
         options: AgentRuntimeOptions {

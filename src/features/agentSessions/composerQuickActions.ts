@@ -10,6 +10,7 @@ export interface ComposerQuickFeatures {
   readonly refresh?: () => Promise<AgentSessionQuickFeatures>;
   readonly selection: PerMessageRuntimeSelection;
   readonly setSelection: (selection: PerMessageRuntimeSelection) => void;
+  readonly compact?: () => Promise<void>;
 }
 
 export function sessionQuickActions(
@@ -38,6 +39,20 @@ export function sessionQuickActions(
     }),
   }));
   return [
+    ...(source.compact
+      ? [
+          {
+            id: 'compact',
+            label: 'Compact conversation',
+            description: 'Queue Codex context compaction',
+            keywords: ['summarize', 'context'],
+            run: () => {
+              void source.compact?.();
+              return { replacement: '', notice: 'Compaction added to the queue' };
+            },
+          } satisfies ComposerQuickAction,
+        ]
+      : []),
     {
       id: 'model',
       label: 'Model',

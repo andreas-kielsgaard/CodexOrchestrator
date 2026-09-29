@@ -123,4 +123,24 @@ describe('presentSessionQueue', () => {
     expect(result.futureEntries[0].item.entry.id).toBe('target');
     expect(result.deviceActivities.map(({ entry }) => entry.id)).toEqual(['target']);
   });
+
+  it('keeps an executing compaction visible as its own queue element', () => {
+    const source = queue();
+    const [running, ...rest] = source.entries;
+    const result = presentSessionQueue({
+      ...source,
+      entries: [
+        {
+          ...running,
+          entry: {
+            ...running.entry,
+            item: { kind: 'compaction', invocationId: 'running' },
+          },
+        },
+        ...rest,
+      ],
+    });
+
+    expect(result.futureEntries.map(({ item }) => item.entry.id)).toContain('entry-running');
+  });
 });

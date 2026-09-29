@@ -58,6 +58,59 @@ import { useAgentSessionCollection } from './useAgentSessionCollection';
 import { useProfiledAgentSession } from './useProfiledAgentSession';
 import { ResizableSplitSurface } from '../orchestrations/components/ResizableSplitSurface';
 import './agentSession.css';
+
+type RouteModelCatalogueCacheEntry =
+  | { readonly state: 'loading'; readonly promise: Promise<ProfileModelCatalogueDto> }
+  | { readonly state: 'ready'; readonly value: ProfileModelCatalogueDto };
+
+const routeModelCatalogueCaches = new WeakMap<
+  ExecutionConfigurationClient,
+  Map<string, RouteModelCatalogueCacheEntry>
+>();
+
+function cachedRouteModelCatalogue(
+  client: ExecutionConfigurationClient,
+  reference: Parameters<NonNullable<ExecutionConfigurationClient['loadProfileModelCatalogue']>>[0],
+): Promise<ProfileModelCatalogueDto> {
+  let cache = routeModelCatalogueCaches.get(client);
+  if (!cache) {
+    cache = new Map();
+    routeModelCatalogueCaches.set(client, cache);
+  }
+  const key = executionRouteKey(reference);
+  const existing = cache.get(key);
+  if (existing?.state === 'ready') return Promise.resolve(existing.value);
+  if (existing?.state === 'loading') return existing.promise;
+  const promise = client.loadProfileModelCatalogue!(reference).then(
+    (value) => {
+      cache!.set(key, { state: 'ready', value });
+      return value;
+    },
+    (cause) => {
+      cache!.delete(key);
+      throw cause;
+    },
+  );
+  cache.set(key, { state: 'loading', promise });
+  return promise;
+}
+
+function readyRouteModelCatalogues(
+  client: ExecutionConfigurationClient | undefined,
+  references: readonly Parameters<
+    NonNullable<ExecutionConfigurationClient['loadProfileModelCatalogue']>
+  >[0][],
+): Readonly<Record<string, ProfileModelCatalogueDto>> {
+  if (!client) return {};
+  const cache = routeModelCatalogueCaches.get(client);
+  return Object.fromEntries(
+    references.flatMap((reference) => {
+      const key = executionRouteKey(reference);
+      const entry = cache?.get(key);
+      return entry?.state === 'ready' ? [[key, entry.value] as const] : [];
+    }),
+  );
+}
 export interface AgentSessionScreenProps {
   readonly importClient?: AgentSessionImportClient;
   readonly executionTargetClient?: ExecutionTargetClient;
@@ -333,9 +386,12 @@ export function StandaloneAgentSessionScreen({
           limitations: [],
         }
       : undefined);
-  const [routeModelCatalogues, setRouteModelCatalogues] = useState<
-    Readonly<Record<string, ProfileModelCatalogueDto>>
-  >({});
+  const [routeModelCatalogueState, setRouteModelCatalogueState] = useState<{
+    readonly key: string;
+    readonly client?: ExecutionConfigurationClient;
+    readonly values: Readonly<Record<string, ProfileModelCatalogueDto>>;
+    readonly settled: boolean;
+  }>({ key: '[]', values: {}, settled: true });
   const modelCatalogueRoutes = useMemo(
     () =>
       (targetDraft.profile?.routePolicies ?? [])
@@ -352,25 +408,62 @@ export function StandaloneAgentSessionScreen({
     ],
   );
   const profileRouteKey = JSON.stringify(modelCatalogueRoutes);
+  const modelCatalogueRoutesRef = useRef(modelCatalogueRoutes);
+  modelCatalogueRoutesRef.current = modelCatalogueRoutes;
   useEffect(() => {
     let active = true;
-    const load = executionConfigurationClient?.loadProfileModelCatalogue;
-    if (!load || modelCatalogueRoutes.length === 0) {
-      setRouteModelCatalogues({});
+    const routes = modelCatalogueRoutesRef.current;
+    const client = executionConfigurationClient;
+    const load = client?.loadProfileModelCatalogue;
+    if (!client || !load || routes.length === 0) {
+      setRouteModelCatalogueState({ key: profileRouteKey, client, values: {}, settled: true });
       return;
     }
+    const cached = readyRouteModelCatalogues(client, routes);
+    const settled = Object.keys(cached).length === routes.length;
+    setRouteModelCatalogueState({ key: profileRouteKey, client, values: cached, settled });
+    if (settled) return;
     void Promise.all(
-      modelCatalogueRoutes.map(async (reference) => {
-        return [executionRouteKey(reference), await load(reference)] as const;
+      routes.map(async (reference) => {
+        return [
+          executionRouteKey(reference),
+          await cachedRouteModelCatalogue(client, reference),
+        ] as const;
       }),
     ).then(
-      (entries) => active && setRouteModelCatalogues(Object.fromEntries(entries)),
-      () => active && setRouteModelCatalogues({}),
+      (entries) =>
+        active &&
+        setRouteModelCatalogueState({
+          key: profileRouteKey,
+          client,
+          values: Object.fromEntries(entries),
+          settled: true,
+        }),
+      () =>
+        active &&
+        setRouteModelCatalogueState({
+          key: profileRouteKey,
+          client,
+          values: cached,
+          settled: false,
+        }),
     );
     return () => {
       active = false;
     };
-  }, [executionConfigurationClient, modelCatalogueRoutes, profileRouteKey]);
+  }, [executionConfigurationClient, profileRouteKey]);
+  const routeModelCatalogues =
+    routeModelCatalogueState.key === profileRouteKey &&
+    routeModelCatalogueState.client === executionConfigurationClient
+      ? routeModelCatalogueState.values
+      : readyRouteModelCatalogues(executionConfigurationClient, modelCatalogueRoutes);
+  const routeModelsLoading =
+    modelCatalogueRoutes.length > 0 &&
+    !(
+      routeModelCatalogueState.key === profileRouteKey &&
+      routeModelCatalogueState.client === executionConfigurationClient &&
+      routeModelCatalogueState.settled
+    );
   const capabilities = withCapabilityProfileDeviceModels(
     routeCapabilities,
     capabilityProfileDeviceModels(
@@ -382,7 +475,7 @@ export function StandaloneAgentSessionScreen({
   const messageSelection = view.selection;
   const setMessageSelection = view.setSelection;
   useEffect(() => {
-    if (!capabilities || targetDraft.loading) return;
+    if (!capabilities || targetDraft.loading || routeModelsLoading) return;
     if (!messageSelection.model && !messageSelection.reasoningMode) return;
     if (
       messageSelection.model &&
@@ -397,7 +490,13 @@ export function StandaloneAgentSessionScreen({
         model: messageSelection.model,
         reasoningMode: effective.reasoningMode,
       });
-  }, [capabilities, targetDraft.loading, messageSelection, setMessageSelection]);
+  }, [
+    capabilities,
+    targetDraft.loading,
+    routeModelsLoading,
+    messageSelection,
+    setMessageSelection,
+  ]);
   const models = capabilities?.models.map((model) => model.id) ?? [];
   const effectiveOptions = effectiveSessionOptions(capabilities, messageSelection);
   const hasRuntimeFacts = Boolean(capabilities);

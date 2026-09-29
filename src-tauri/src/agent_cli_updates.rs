@@ -3,6 +3,7 @@ use chrono::Utc;
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
+    fs::{File, OpenOptions},
     io,
     process::{Command, Stdio},
     sync::{Arc, Condvar, Mutex},
@@ -171,6 +172,20 @@ impl AgentCliUpdateService {
     }
 
     fn update_one(&self, spec: CliSpec) {
+        let _update_lock = match provider_update_lock(spec.provider) {
+            Ok(file) => file,
+            Err(error) => {
+                self.finish(
+                    &spec,
+                    CliUpdatePhase::Failed,
+                    None,
+                    None,
+                    format!("{} update coordination failed: {error}", spec.label),
+                    Vec::new(),
+                );
+                return;
+            }
+        };
         let before = match self.runner.version(&spec) {
             Ok(version) => version,
             Err(error) => {
@@ -260,6 +275,19 @@ impl AgentCliUpdateService {
             status.notes = notes;
         });
     }
+}
+
+fn provider_update_lock(provider: &str) -> Result<File, String> {
+    let path = std::env::temp_dir().join(format!("orchid-{provider}-cli-update.lock"));
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .map_err(|error| format!("unable to open {}: {error}", path.display()))?;
+    file.lock()
+        .map_err(|error| format!("unable to lock {}: {error}", path.display()))?;
+    Ok(file)
 }
 
 impl crate::agent_sessions::application::ProviderUpdateReadiness for AgentCliUpdateService {

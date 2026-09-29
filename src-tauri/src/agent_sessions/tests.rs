@@ -309,6 +309,7 @@ fn fake_runtime_requires_external_identity_only_for_resume_and_streams_updates()
     let request = RuntimeInvocationRequest { attachments: vec![],
         session_id: session_id("session-local"),
         invocation_id: invocation_id("invocation-1"),
+        kind: Default::default(),
         content: InvocationContent::query("Continue the work"),
         working_directory: Some("C:/work/session-local".to_string()),
         options: runtime_options(),

@@ -95,6 +95,50 @@ pub(crate) struct UpdateTargetOperationInput {
 }
 
 impl AgentSessionApplication {
+    pub(crate) fn enqueue_session_compaction(
+        &self,
+        session_id: &AgentSessionId,
+    ) -> Result<SessionQueueSnapshot, AgentSessionApplicationError> {
+        let session = self.load_session(session_id)?.session;
+        if session.runtime_binding.external_context_id.is_none() {
+            return Err(AgentSessionApplicationError::conflict(
+                "This conversation has no Codex context to compact",
+            ));
+        }
+        let current_profile = self
+            .load_current_session_profile(session_id)
+            .map_err(|error| AgentSessionApplicationError::invalid(error.to_string()))?;
+        let provider = &current_profile
+            .creation_resolution
+            .session_profile()
+            .configuration()
+            .provider;
+        if provider != "codex" {
+            return Err(AgentSessionApplicationError::invalid(
+                "Conversation compaction is available only for Codex sessions",
+            ));
+        }
+        let submission_id = self.allocate_application_invocation_id();
+        self.accept_prepared_inner(
+            super::preparation::PreparedMessageInput {
+                session_id: Some(session.id.clone()),
+                submission_id,
+                submitted_text: "/compact".into(),
+                attachments: Vec::new(),
+                context: Vec::new(),
+                title: None,
+                working_directory: session.working_directory,
+                execution_selection: None,
+                model: None,
+                reasoning_mode: None,
+                sandbox_mode: None,
+                folder_target: None,
+            },
+            crate::agent_sessions::domain::AgentInvocationInputProvenance::Application,
+        )?;
+        self.load_session_queue(session_id)
+    }
+
     pub(crate) fn load_session_queue_view(
         &self,
         session_id: &AgentSessionId,
@@ -104,7 +148,8 @@ impl AgentSessionApplication {
         let mut entries = Vec::with_capacity(snapshot.entries.len());
         for entry in snapshot.entries {
             let (message, target_operation) = match &entry.item {
-                SessionQueueEntryItem::Message { invocation_id } => {
+                SessionQueueEntryItem::Message { invocation_id }
+                | SessionQueueEntryItem::Compaction { invocation_id } => {
                     let invocation = self
                         .repository
                         .get_invocation(invocation_id)
@@ -197,6 +242,19 @@ impl AgentSessionApplication {
         &self,
         input: UpdateQueuedMessageInput,
     ) -> Result<SessionQueueSnapshot, AgentSessionApplicationError> {
+        if self
+            .load_session_queue(&input.session_id)?
+            .entries
+            .iter()
+            .any(|entry| {
+                entry.id == input.entry_id
+                    && matches!(entry.item, SessionQueueEntryItem::Compaction { .. })
+            })
+        {
+            return Err(AgentSessionApplicationError::invalid(
+                "Compaction queue entries cannot be edited as messages",
+            ));
+        }
         let snapshot = self
             .repository
             .update_queued_message(
@@ -235,7 +293,8 @@ impl AgentSessionApplication {
                 SessionQueueEntryItem::TargetOperation { operation_id } => {
                     Some(operation_id.clone())
                 }
-                SessionQueueEntryItem::Message { .. } => None,
+                SessionQueueEntryItem::Message { .. }
+                | SessionQueueEntryItem::Compaction { .. } => None,
             })?
         }) {
             self.start_target_operation_early(operation_id)?;
@@ -275,7 +334,8 @@ impl AgentSessionApplication {
             .find(|entry| entry.id == entry_id)
             .ok_or_else(|| AgentSessionApplicationError::not_found("Queue entry not found"))?;
         match &entry.item {
-            SessionQueueEntryItem::Message { .. } => {
+            SessionQueueEntryItem::Message { .. }
+            | SessionQueueEntryItem::Compaction { .. } => {
                 self.repository
                     .retry_queue_entry(entry_id, self.clock.now())
                     .map_err(AgentSessionApplicationError::repository)?;
@@ -309,7 +369,8 @@ impl AgentSessionApplication {
             ));
         }
         match &entry.item {
-            SessionQueueEntryItem::Message { invocation_id } => {
+            SessionQueueEntryItem::Message { invocation_id }
+            | SessionQueueEntryItem::Compaction { invocation_id } => {
                 if let Some(invocation) = self
                     .repository
                     .get_invocation(invocation_id)
@@ -504,7 +565,8 @@ impl AgentSessionApplication {
                         }
                     }
                 }
-                SessionQueueEntryItem::Message { invocation_id } => {
+                SessionQueueEntryItem::Message { invocation_id }
+                | SessionQueueEntryItem::Compaction { invocation_id } => {
                     let history = self.load_session(session_id)?;
                     if history
                         .invocations
