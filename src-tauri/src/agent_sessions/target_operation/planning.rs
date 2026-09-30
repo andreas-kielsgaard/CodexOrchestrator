@@ -10,6 +10,16 @@ pub(crate) enum SelectionTargetRelation {
     Different,
 }
 
+pub(crate) fn same_workspace_identity(
+    left: &SessionExecutionTarget,
+    right: &SessionExecutionTarget,
+) -> bool {
+    left.repository_id == right.repository_id
+        && left.branch_ref == right.branch_ref
+        && left.worktree_id == right.worktree_id
+        && left.path == right.path
+}
+
 pub(crate) fn selection_target_relation(
     selection: &SessionExecutionSelection,
     target: Option<&SessionExecutionTarget>,
@@ -24,7 +34,9 @@ pub(crate) fn selection_target_relation(
         return SelectionTargetRelation::Different;
     }
     match &selection.workspace {
-        SessionWorkspaceSelection::Existing { target: selected } if selected == target => {
+        SessionWorkspaceSelection::Existing { target: selected }
+            if same_workspace_identity(selected, target) =>
+        {
             SelectionTargetRelation::Exact
         }
         SessionWorkspaceSelection::Auxiliary if target.repository_id.is_empty() => {
@@ -33,12 +45,8 @@ pub(crate) fn selection_target_relation(
         SessionWorkspaceSelection::Create {
             repository_id,
             branch_ref,
-            commit,
             ..
-        } if repository_id == &target.repository_id
-            && branch_ref == &target.branch_ref
-            && (commit.trim().is_empty() || target.head.as_deref() == Some(commit.as_str())) =>
-        {
+        } if repository_id == &target.repository_id && branch_ref == &target.branch_ref => {
             SelectionTargetRelation::SatisfiedByResolvedWorkspace
         }
         _ => SelectionTargetRelation::Different,
@@ -176,6 +184,63 @@ mod tests {
             selection_target_relation(&create_selection("local"), Some(&target("local"))),
             SelectionTargetRelation::SatisfiedByResolvedWorkspace
         );
+    }
+
+    #[test]
+    fn moving_head_does_not_change_the_selected_workspace() {
+        let current = target("local");
+        let mut selected = current.clone();
+        selected.head = None;
+        let selection = SessionExecutionSelection {
+            capability_profile_id: current.capability_profile_id.clone(),
+            capability_profile_revision: current.capability_profile_revision,
+            execution: current.execution.clone(),
+            workspace: SessionWorkspaceSelection::Existing { target: selected },
+        };
+        assert_eq!(
+            selection_target_relation(&selection, Some(&current)),
+            SelectionTargetRelation::Exact
+        );
+
+        let mut moved = current.clone();
+        moved.head = Some("b".repeat(40));
+        assert_eq!(
+            selection_target_relation(&selection, Some(&moved)),
+            SelectionTargetRelation::Exact
+        );
+        assert_eq!(
+            selection_target_relation(&create_selection("local"), Some(&moved)),
+            SelectionTargetRelation::SatisfiedByResolvedWorkspace
+        );
+    }
+
+    #[test]
+    fn changing_worktree_branch_or_device_remains_a_target_change() {
+        let current = target("local");
+        let selection = SessionExecutionSelection {
+            capability_profile_id: current.capability_profile_id.clone(),
+            capability_profile_revision: current.capability_profile_revision,
+            execution: current.execution.clone(),
+            workspace: SessionWorkspaceSelection::Existing {
+                target: current.clone(),
+            },
+        };
+        for changed in [
+            SessionExecutionTarget {
+                worktree_id: "another-tree".into(),
+                ..current.clone()
+            },
+            SessionExecutionTarget {
+                branch_ref: "refs/heads/another".into(),
+                ..current.clone()
+            },
+            target("another-device"),
+        ] {
+            assert_eq!(
+                selection_target_relation(&selection, Some(&changed)),
+                SelectionTargetRelation::Different
+            );
+        }
     }
 
     #[test]

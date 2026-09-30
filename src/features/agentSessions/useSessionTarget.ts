@@ -42,12 +42,16 @@ export function selectionSatisfiedByTarget(
   )
     return false;
   if (selection.workspace.kind === 'existing')
-    return selection.workspace.target.worktreeId === target.worktreeId;
+    return (
+      selection.workspace.target.repositoryId === target.repositoryId &&
+      selection.workspace.target.branchRef === target.branchRef &&
+      selection.workspace.target.worktreeId === target.worktreeId &&
+      selection.workspace.target.path === target.path
+    );
   if (selection.workspace.kind === 'auxiliary') return !target.repositoryId;
   return (
     selection.workspace.repositoryId === target.repositoryId &&
-    selection.workspace.branchRef === target.branchRef &&
-    (!selection.workspace.commit || selection.workspace.commit === target.head)
+    selection.workspace.branchRef === target.branchRef
   );
 }
 

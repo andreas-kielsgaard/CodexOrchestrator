@@ -710,11 +710,17 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
     let sister_worktree_schema_is_present: bool = connection.query_row("SELECT COUNT(*)=2 FROM sqlite_master WHERE type='table' AND name IN ('sister_worktree_groups','sister_worktree_instances')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
     let legacy_target_transition_schema_is_absent: bool = connection.query_row("SELECT NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_session_target_transitions')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
     let session_queue_schema_is_present: bool = connection.query_row("SELECT COUNT(*)=3 FROM sqlite_master WHERE type='table' AND name IN ('agent_session_queue_state','agent_session_target_operations','agent_session_queue_entries')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
+    let invocation_attachments_schema_is_present: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('agent_session_invocations') WHERE name='attachments_json')",
+        [],
+        |row| row.get(0),
+    ).map_err(|e|e.to_string())?;
     Ok(execution_device_schema_is_present
         && preparation_schema_is_present
         && sister_worktree_schema_is_present
         && legacy_target_transition_schema_is_absent
         && session_queue_schema_is_present
+        && invocation_attachments_schema_is_present
         && import_schema_is_present
         && native_profile_schema_is_present
         && epic_settlement_schema_is_present

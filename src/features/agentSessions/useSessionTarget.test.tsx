@@ -58,9 +58,26 @@ it('recognizes a create-worktree intent resolved to the active target without co
   };
   expect(selectionSatisfiedByTarget(create, remoteTarget)).toBe(true);
   expect(
+    selectionSatisfiedByTarget(create, { ...remoteTarget, head: 'newer-commit' }),
+  ).toBe(true);
+  expect(
     selectionSatisfiedByTarget(
       { ...create, workspace: { ...create.workspace, branchRef: 'refs/heads/another' } },
       remoteTarget,
     ),
+  ).toBe(false);
+});
+
+it('keeps an existing worktree selected as its HEAD changes', () => {
+  const selection = selectionForTarget(remoteTarget);
+  expect(selectionSatisfiedByTarget(selection, { ...remoteTarget, head: null })).toBe(true);
+  expect(
+    selectionSatisfiedByTarget(selection, { ...remoteTarget, head: 'newer-commit' }),
+  ).toBe(true);
+  expect(
+    selectionSatisfiedByTarget(selection, { ...remoteTarget, branchRef: 'refs/heads/other' }),
+  ).toBe(false);
+  expect(
+    selectionSatisfiedByTarget(selection, { ...remoteTarget, worktreeId: 'other-tree' }),
   ).toBe(false);
 });

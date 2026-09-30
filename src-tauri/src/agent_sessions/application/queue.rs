@@ -6,9 +6,9 @@ use crate::agent_sessions::{
     },
     queue::{SessionQueueEntryItem, SessionQueueEntryState, SessionQueueSnapshot},
     target_operation::{
-        planned_actions, replan_actions, selection_target_relation, SelectionTargetRelation,
-        SessionTargetOperation, TargetOperationActionKind, TargetOperationActionStatus,
-        TargetOperationPhase,
+        planned_actions, replan_actions, same_workspace_identity, selection_target_relation,
+        SelectionTargetRelation, SessionTargetOperation, TargetOperationActionKind,
+        TargetOperationActionStatus, TargetOperationPhase,
     },
 };
 use crate::execution_targets::domain::{SessionExecutionSelection, SessionWorkspaceSelection};
@@ -1243,7 +1243,7 @@ fn same_selection_intent(
         (
             SessionWorkspaceSelection::Existing { target: left },
             SessionWorkspaceSelection::Existing { target: right },
-        ) => left == right,
+        ) => same_workspace_identity(left, right),
         (
             SessionWorkspaceSelection::Create {
                 repository_id: left_repository,

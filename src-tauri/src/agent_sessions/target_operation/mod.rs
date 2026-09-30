@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 mod planning;
 
 pub(crate) use planning::{
-    planned_actions, replan_actions, selection_target_relation, SelectionTargetRelation,
+    planned_actions, replan_actions, same_workspace_identity, selection_target_relation,
+    SelectionTargetRelation,
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

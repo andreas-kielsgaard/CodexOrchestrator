@@ -3,6 +3,34 @@ use crate::harness_engine::{domain::binding_digest, exposure::HarnessExposurePol
 use rusqlite::params;
 
 #[test]
+fn current_version_database_adds_missing_invocation_attachments_column() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("missing-attachments.sqlite");
+    let connection = open_active_database(&path).unwrap();
+    connection
+        .execute_batch(
+            "ALTER TABLE agent_session_invocations DROP COLUMN attachments_json;
+             INSERT INTO agent_sessions(id,title,availability,requested_options_json,created_at,updated_at)
+             VALUES('session','Existing session','available','{}','before','before');
+             INSERT INTO agent_session_invocations(id,session_id,submitted_text,input_provenance,status,requested_options_json,created_at,updated_at)
+             VALUES('invocation','session','Retained prompt','user','completed','{}','before','before');",
+        )
+        .unwrap();
+    drop(connection);
+
+    let reopened = open_active_database(&path).unwrap();
+    let (text, attachments): (String, String) = reopened
+        .query_row(
+            "SELECT submitted_text,attachments_json FROM agent_session_invocations WHERE id='invocation'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(text, "Retained prompt");
+    assert_eq!(attachments, "[]");
+}
+
+#[test]
 fn main_v47_sessions_upgrade_without_moving_context_or_losing_history() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("main-v47.sqlite");
