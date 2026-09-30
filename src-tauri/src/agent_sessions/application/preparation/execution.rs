@@ -64,6 +64,24 @@ impl AgentSessionApplication {
                 }
             },
         };
+        if let Some(profile) = &p.requested_capability_profile {
+            selection.capability_profile_id = profile.id.clone();
+            selection.capability_profile_revision = profile.revision;
+            let capability = profiles
+                .read(&profile.id)
+                .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
+            let device_id = &selection.execution.device_id;
+            let execution = capability
+                .default_route()
+                .map(|route| &route.execution)
+                .unwrap_or(&capability.execution);
+            selection.execution = if execution.device_id == *device_id {
+                execution.clone()
+            } else {
+                capability.route_policies.iter().find(|route| route.execution.device_id == *device_id)
+                    .map(|route| route.execution.clone()).ok_or_else(|| AgentSessionApplicationError::conflict("Selected Capability Profile has no route on the current queue destination"))?
+            };
+        }
         let workspace_label = if matches!(
             selection.workspace,
             SessionWorkspaceSelection::Create { .. }
@@ -92,11 +110,19 @@ impl AgentSessionApplication {
         selection.execution = endpoints
             .freeze_binding(selection.execution.clone())
             .map_err(AgentSessionApplicationError::invalid)?;
+        let binding_owner = self
+            .repository
+            .current_provider_binding_owner(&session.id)
+            .map_err(AgentSessionApplicationError::repository)?;
         let source = if p.source_binding.external_context_id.is_some() {
-            let mut source = p
-                .source_target
+            let mut source = binding_owner
                 .as_ref()
-                .map(|target| target.execution.clone())
+                .map(|owner| owner.execution.clone())
+                .or_else(|| {
+                    p.source_target
+                        .as_ref()
+                        .map(|target| target.execution.clone())
+                })
                 .unwrap_or_default();
             if p.source_target.is_none() {
                 if let Some(preparation) = self.launch_preparation(&source.provider) {
@@ -112,9 +138,14 @@ impl AgentSessionApplication {
                 endpoints
                     .freeze_binding(source)
                     .map_err(AgentSessionApplicationError::invalid)?,
-                p.source_target
+                binding_owner
                     .as_ref()
-                    .map(crate::agent_sessions::domain::ProviderWorkspaceIdentity::from),
+                    .and_then(|owner| owner.workspace.clone())
+                    .or_else(|| {
+                        p.source_target
+                            .as_ref()
+                            .map(crate::agent_sessions::domain::ProviderWorkspaceIdentity::from)
+                    }),
             ))
         } else {
             None
@@ -549,10 +580,6 @@ impl AgentSessionApplication {
                 .acquire_activity(device_id, "agent_invocation", id.as_str())
                 .map_err(AgentSessionApplicationError::invalid)?;
         }
-        if let Err(error) = sink.open() {
-            self.release_invocation_activity(remote_activity.as_deref(), id);
-            return Err(AgentSessionApplicationError::runtime(error));
-        }
         // Persist the boundary before transport write. A lost response never authorizes replay.
         let delivery_gate = self.preparation_workers.slots.lock().map_err(|_| {
             AgentSessionApplicationError::conflict("Preparation supervisor unavailable")
@@ -583,6 +610,11 @@ impl AgentSessionApplication {
             self.release_invocation_activity(remote_activity.as_deref(), id);
             return Err(AgentSessionApplicationError::repository(error));
         }
+        if let Err(error) = sink.open() {
+            self.release_invocation_activity(remote_activity.as_deref(), id);
+            return Err(AgentSessionApplicationError::runtime(error));
+        }
+        self.notify_queue(&p.session_id);
         self.step(
             &mut p,
             "delivery",

@@ -43,6 +43,20 @@ export function reduceAgentSessionHistory(
   update: AgentSessionUpdateDto,
 ): AgentSessionHistoryReduction {
   if (update.sessionId !== details.session.id) return { kind: 'unchanged', details };
+  if (update.kind === 'queue_updated') {
+    if (!update.timeline && !update.session && !update.removedInvocationIds?.length)
+      return { kind: 'unchanged', details };
+    const removed = new Set(update.removedInvocationIds);
+    return {
+      kind: 'changed',
+      details: {
+        ...details,
+        session: update.session ?? details.session,
+        timeline: update.timeline ?? details.timeline,
+        invocations: details.invocations.filter((entry) => !removed.has(entry.invocation.id)),
+      },
+    };
+  }
   if (update.kind === 'event_persisted') {
     const entry = details.invocations.find(
       (candidate) => candidate.invocation.id === update.invocationId,
@@ -67,10 +81,7 @@ export function reduceAgentSessionHistory(
     }));
     return next ? { kind: 'changed', details: next } : { kind: 'reconcile' };
   }
-  if (
-    update.kind === 'preparation_updated' ||
-    update.kind === 'queue_updated'
-  ) {
+  if (update.kind === 'preparation_updated') {
     return { kind: 'unchanged', details };
   }
   return { kind: 'reconcile' };

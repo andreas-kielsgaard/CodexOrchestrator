@@ -306,7 +306,8 @@ fn fake_repository_allows_queued_messages_but_only_one_running_invocation() {
 fn fake_runtime_requires_external_identity_only_for_resume_and_streams_updates() {
     let runtime = FakeRuntime::default();
     let sink = Arc::new(CollectingUpdateSink::default());
-    let request = RuntimeInvocationRequest { attachments: vec![],
+    let request = RuntimeInvocationRequest {
+        attachments: vec![],
         session_id: session_id("session-local"),
         invocation_id: invocation_id("invocation-1"),
         kind: Default::default(),
@@ -462,6 +463,7 @@ impl AgentSessionRepository for FakeRepository {
                 .then_with(|| left.invocation.id.cmp(&right.invocation.id))
         });
         Ok(Some(AgentSessionHistory {
+            timeline: Default::default(),
             session,
             invocations,
         }))
@@ -956,7 +958,9 @@ fn binding(external_context_id_value: Option<&str>) -> AgentRuntimeBinding {
     }
 }
 
-fn invocation(id: &str, session: &str, status: AgentInvocationStatus) -> AgentInvocation { AgentInvocation { attachments: vec![],
+fn invocation(id: &str, session: &str, status: AgentInvocationStatus) -> AgentInvocation {
+    AgentInvocation {
+        attachments: vec![],
         id: invocation_id(id),
         session_id: session_id(session),
         submitted_text: "Do the work".to_string(),

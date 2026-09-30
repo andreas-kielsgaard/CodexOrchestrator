@@ -1,3 +1,4 @@
+import type { SessionHistoryItem } from './sessionHistoryProjector';
 import type { ReactNode } from 'react';
 import { AlertCircle, X } from 'lucide-react';
 import { AgentSessionComposer } from './AgentSessionComposer';
@@ -24,6 +25,7 @@ export interface ConversationViewportSegment {
   id: string;
   transcript: ProjectedTranscript;
   range?: TranscriptAnchorRange;
+  history?: readonly SessionHistoryItem[];
 }
 
 export interface ConversationViewportComposerTarget {
@@ -149,6 +151,7 @@ export function ConversationViewport({
                 : undefined
             }
             transcript={segment.transcript}
+            history={segment.range ? undefined : segment.history}
             content={
               segment.range
                 ? selectTranscriptRange(segment.transcript, segment.range)

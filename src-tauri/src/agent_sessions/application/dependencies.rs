@@ -16,6 +16,9 @@ pub(crate) enum AgentSessionNotification {
     },
     QueueUpdated {
         session_id: AgentSessionId,
+        session: crate::agent_sessions::domain::AgentSession,
+        timeline: crate::agent_sessions::history::SessionTimeline,
+        removed_invocation_ids: Vec<String>,
     },
     SteeringAccepted {
         session_id: AgentSessionId,

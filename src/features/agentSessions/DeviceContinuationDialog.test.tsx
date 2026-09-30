@@ -36,7 +36,7 @@ it('keeps the conversation branch fixed while comparing its worktrees on a selec
   expect(await screen.findByRole('group', { name: 'Repository branch graph' })).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Use branch' })).not.toBeInTheDocument();
   expect(screen.getByRole('radio', { name: /review/i })).toBeVisible();
-  expect(screen.getByRole('radio', { name: /Create a new sister worktree/i })).toBeVisible();
+  expect(screen.getByRole('radio', { name: /Create a new worktree/i })).toBeVisible();
   expect(fixture.source.branchGraph).toHaveBeenCalledWith(
     sourceTarget.repositoryId,
     expect.any(Number),
@@ -79,13 +79,16 @@ it('queues a selected device and worktree as one target operation', async () => 
 
   expect(queued).toHaveBeenCalledWith(
     expect.objectContaining({
-      execution: remoteTarget.execution,
-      workspace: expect.objectContaining({ kind: 'existing', target: remoteTarget }),
+      intent: 'change_conversation_target',
+      destination: expect.objectContaining({
+        execution: remoteTarget.execution,
+        workspace: expect.objectContaining({ kind: 'existing', target: remoteTarget }),
+      }),
     }),
   );
 });
 
-it('keeps an existing sister fixed while still showing other branch worktrees', async () => {
+it('allows retargeting to unlinked worktrees and explicit migration choices', async () => {
   const user = userEvent.setup();
   const fixture = sessionTargetFixtures();
   const sourceTarget = {
@@ -146,6 +149,6 @@ it('keeps an existing sister fixed while still showing other branch worktrees', 
 
   const worktreeRadios = await screen.findAllByRole('radio');
   expect(worktreeRadios[0]).toBeChecked();
-  expect(screen.getByRole('radio', { name: /other-review/i })).toBeDisabled();
-  expect(screen.getByRole('radio', { name: /Create a new sister worktree/i })).toBeDisabled();
+  expect(screen.getByRole('radio', { name: /other-review/i })).toBeEnabled();
+  expect(screen.getByRole('radio', { name: /Create a new worktree/i })).toBeEnabled();
 });

@@ -1,10 +1,10 @@
 use super::*;
+use crate::agent_sessions::target_operation::TargetSwitchRequest;
 use crate::agent_sessions::{
     application::queue::{SessionQueueView, UpdateQueuedMessageInput, UpdateTargetOperationInput},
     domain::AgentSessionId,
 };
 use crate::execution_configuration::SandboxMode;
-use crate::execution_targets::domain::SessionExecutionSelection;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -39,7 +39,7 @@ pub(crate) struct UpdateTargetOperationCommand {
     session_id: AgentSessionId,
     entry_id: String,
     expected_revision: u64,
-    destination: SessionExecutionSelection,
+    request: TargetSwitchRequest,
 }
 
 #[derive(Deserialize)]
@@ -53,7 +53,8 @@ pub(crate) struct QueueEntryAction {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct EnqueueTargetOperationCommand {
     session_id: AgentSessionId,
-    destination: SessionExecutionSelection,
+    request: TargetSwitchRequest,
+    before_entry_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -81,7 +82,11 @@ pub(crate) fn enqueue_agent_session_target_operation(
     let session_id = input.session_id.clone();
     state
         .application
-        .enqueue_session_target_operation(&input.session_id, input.destination)
+        .enqueue_session_target_operation(
+            &input.session_id,
+            input.request,
+            input.before_entry_id.as_deref(),
+        )
         .and_then(|_| state.application.load_session_queue_view(&session_id))
         .map_err(|error| error.to_string())
 }
@@ -144,20 +149,9 @@ pub(crate) fn update_agent_session_target_operation(
             session_id: input.session_id,
             entry_id: input.entry_id,
             expected_revision: input.expected_revision,
-            destination: input.destination,
+            request: input.request,
         })
         .and_then(|_| state.application.load_session_queue_view(&session_id))
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-pub(crate) fn start_agent_session_queue_entry(
-    state: State<'_, AgentSessionTauriState>,
-    input: QueueEntryAction,
-) -> Result<(), String> {
-    state
-        .application
-        .start_queue_entry(&input.session_id, &input.entry_id)
         .map_err(|error| error.to_string())
 }
 
@@ -181,4 +175,27 @@ pub(crate) fn cancel_agent_session_queue_entry(
         .application
         .cancel_queue_entry(&input.session_id, &input.entry_id)
         .map_err(|error| error.to_string())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct RecalculateTargetProjectionCommand {
+    session_id: AgentSessionId,
+    entry_id: String,
+    expected_revision: u64,
+}
+#[tauri::command]
+pub(crate) fn recalculate_agent_session_target_projection(
+    state: State<'_, AgentSessionTauriState>,
+    input: RecalculateTargetProjectionCommand,
+) -> Result<SessionQueueView, String> {
+    state
+        .application
+        .recalculate_target_operation_projection(
+            &input.session_id,
+            &input.entry_id,
+            input.expected_revision,
+        )
+        .and_then(|_| state.application.load_session_queue_view(&input.session_id))
+        .map_err(|e| e.to_string())
 }

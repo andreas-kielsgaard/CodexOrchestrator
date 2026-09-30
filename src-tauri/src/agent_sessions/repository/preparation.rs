@@ -184,6 +184,7 @@ impl SqliteAgentSessionRepository {
                 ],
             )
             .map_err(sql_write("commit ready target"))?;
+            tx.execute("UPDATE agent_sessions SET binding_owner_json=?2 WHERE id=?1", params![p.session_id.as_str(), p.resolved_target.as_ref().map(|target|to_json(&crate::agent_sessions::domain::ProviderBindingOwner::from(target))).transpose()?]).map_err(sql_write("commit provider binding owner"))?;
             super::native_conversations::retain_source_provider_binding(
                 tx,
                 &p.session_id,

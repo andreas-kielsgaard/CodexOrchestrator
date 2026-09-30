@@ -23,6 +23,21 @@ pub(crate) struct AgentRuntimeBinding {
     pub(crate) runtime_version: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ProviderBindingOwner {
+    pub(crate) execution: crate::execution_targets::domain::ExecutionBinding,
+    pub(crate) workspace: Option<ProviderWorkspaceIdentity>,
+}
+impl From<&crate::execution_targets::domain::SessionExecutionTarget> for ProviderBindingOwner {
+    fn from(target: &crate::execution_targets::domain::SessionExecutionTarget) -> Self {
+        Self {
+            execution: target.execution.clone(),
+            workspace: Some(ProviderWorkspaceIdentity::from(target)),
+        }
+    }
+}
+
 /// One provider-owned conversation cached at its exact execution route. Orchid may resume this
 /// instance later, but never moves its native handle to another provider, configuration, or device.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -117,7 +132,8 @@ pub(crate) struct AgentDiagnostic {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct AgentInvocation { pub(crate) id: AgentInvocationId,
+pub(crate) struct AgentInvocation {
+    pub(crate) id: AgentInvocationId,
     pub(crate) session_id: AgentSessionId,
     pub(crate) submitted_text: String,
     #[serde(default)]
@@ -145,7 +161,8 @@ pub(crate) struct InvocationCompletion {
     pub(crate) runtime_error: Option<AgentRuntimeFailure>,
 }
 
-impl AgentInvocation { pub(crate) fn mark_running(
+impl AgentInvocation {
+    pub(crate) fn mark_running(
         &self,
         started_at: DateTime<Utc>,
         effective_options: AgentRuntimeOptions,

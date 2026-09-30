@@ -1,3 +1,10 @@
+import { TargetSwitchChoice } from './TargetSwitchChoice';
+import { targetSwitchRequest } from './targetSwitchRequest';
+import type {
+  TargetSwitchRequestDto,
+  TargetSwitchIntentDto,
+  MigrationStrategyDto,
+} from '../../application/agentSessions/sessionQueue';
 import { Monitor, Server, Check, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { ModalDialog } from '../../components/ModalDialog';
@@ -32,6 +39,9 @@ export function SessionTargetDialog({
   onSelectSelection,
   initialRepositoryId,
   initialBranchRef,
+  sourceTarget = null,
+  initialRequest,
+  onSelectRequest,
 }: {
   readonly deviceId?: string | null;
   readonly capabilityProfileId?: string | null;
@@ -44,7 +54,19 @@ export function SessionTargetDialog({
   readonly onSelect: (target: SessionExecutionTargetDto | null) => void;
   readonly initialRepositoryId?: string;
   readonly initialBranchRef?: string;
+  readonly sourceTarget?: SessionExecutionTargetDto | null;
+  readonly initialRequest?: TargetSwitchRequestDto;
+  readonly onSelectRequest?: (request: TargetSwitchRequestDto) => void;
 }) {
+  const [intent, setIntent] = useState<TargetSwitchIntentDto>(
+    initialRequest?.intent ?? 'change_conversation_target',
+  );
+  const [strategy, setStrategy] = useState<MigrationStrategyDto | ''>(
+    initialRequest?.migrationResolution?.strategy ?? '',
+  );
+  const [creation, setCreation] = useState<SessionExecutionSelectionDto | null>(
+    initialRequest?.destination.workspace.kind === 'create' ? initialRequest.destination : null,
+  );
   const [repositories, setRepositories] = useState<readonly RegisteredRepository[]>([]);
   const [loadingRepositories, setLoadingRepositories] = useState(true);
   const [repositoryId, setRepositoryId] = useState(
@@ -159,7 +181,7 @@ export function SessionTargetDialog({
     };
   }, [client, repositoryId, branchRef, refresh]);
   useEffect(() => {
-    if (candidate || loadingDevices || !branchRef) return;
+    if (candidate || creation || loadingDevices || !branchRef) return;
     const matches = devices
       .filter((device) => !deviceId || device.deviceId === deviceId)
       .flatMap((device) => device.profiles)
@@ -173,7 +195,17 @@ export function SessionTargetDialog({
       );
     if (matches.length === 1)
       setCandidate(toSessionExecutionTarget(repositoryId, matches[0].profile, matches[0].instance));
-  }, [branchRef, candidate, capabilityProfileId, deviceId, devices, loadingDevices, repositoryId, sessionId]);
+  }, [
+    branchRef,
+    candidate,
+    creation,
+    capabilityProfileId,
+    deviceId,
+    devices,
+    loadingDevices,
+    repositoryId,
+    sessionId,
+  ]);
   const selectedBranch = useMemo<ReviewTarget | null>(
     () => (branchRef ? { kind: 'branch', repositoryId, branchRef } : null),
     [repositoryId, branchRef],
@@ -205,8 +237,32 @@ export function SessionTargetDialog({
       ),
     );
 
+  const destination: SessionExecutionSelectionDto | null =
+    !creation && candidateAvailable && candidate
+      ? {
+          capabilityProfileId: candidate.capabilityProfileId,
+          capabilityProfileRevision: candidate.capabilityProfileRevision,
+          execution: candidate.execution,
+          workspace: { kind: 'existing', target: candidate },
+        }
+      : creation;
+  const request = destination
+    ? targetSwitchRequest(destination, sourceTarget, intent, strategy)
+    : null;
+  const isLinked = (target: SessionExecutionTargetDto | null) =>
+    devices.some(
+      (device) =>
+        device.deviceId === target?.execution.deviceId &&
+        device.profiles.some((profile) =>
+          profile.instances.some(
+            (instance) => instance.worktreeId === target?.worktreeId && instance.isSister,
+          ),
+        ),
+    );
+  const isSister = isLinked(candidate) && isLinked(sourceTarget);
   function chooseBranch(target: ReviewTarget) {
     if (target.kind !== 'branch') return;
+    setCreation(null);
     setBranchRef(target.branchRef);
     setCandidate(null);
     setGraphOpen(false);
@@ -220,7 +276,7 @@ export function SessionTargetDialog({
       >
         <header className="session-target-dialog__header">
           <div>
-            <p className="worktree-review__step">Next message</p>
+            <p className="worktree-review__step">Workspace target</p>
             <h2 id="session-target-title">Target worktree</h2>
             <p>Choose where the next prompt will run.</p>
           </div>
@@ -234,6 +290,7 @@ export function SessionTargetDialog({
             aria-label="Target repository"
             value={repositoryId}
             onChange={(event) => {
+              setCreation(null);
               setRepositoryId(event.target.value);
               setBranchRef('');
               setCandidate(null);
@@ -354,11 +411,11 @@ export function SessionTargetDialog({
                                 Locked to a Session on {profile.sisterLock.activeDeviceId}.
                               </p>
                             ) : (
-                              onSelectSelection && (
+                              (onSelectRequest || onSelectSelection) && (
                                 <button
                                   type="button"
                                   onClick={() =>
-                                    onSelectSelection({
+                                    setCreation({
                                       capabilityProfileId: profile.capabilityProfileId,
                                       capabilityProfileRevision: profile.capabilityProfileRevision,
                                       execution: profile.execution,
@@ -392,11 +449,13 @@ export function SessionTargetDialog({
                                 className={`session-target-instance${!candidate && branchRef ? ' is-branch-match' : ''}`}
                                 aria-pressed={active}
                                 disabled={Boolean(locked)}
-                                onClick={() =>
+                                onClick={() => {
+                                  setCreation(null);
+                                  setStrategy('');
                                   setCandidate(
                                     toSessionExecutionTarget(repositoryId, profile, instance),
-                                  )
-                                }
+                                  );
+                                }}
                               >
                                 <span>
                                   <strong>{instance.path}</strong>
@@ -415,6 +474,17 @@ export function SessionTargetDialog({
             </section>
           </div>
         )}
+        {onSelectRequest && (
+          <TargetSwitchChoice
+            destination={destination}
+            source={sourceTarget}
+            intent={intent}
+            strategy={strategy}
+            isSister={isSister}
+            onIntent={setIntent}
+            onStrategy={setStrategy}
+          />
+        )}
         <footer className="session-target-dialog__footer">
           <div>
             {selected && (
@@ -431,9 +501,17 @@ export function SessionTargetDialog({
             type="button"
             className="worktree-review__primary"
             disabled={
-              !candidateAvailable || Boolean(candidateLocked) || loadingDevices || graphOpen
+              !destination ||
+              (onSelectRequest && !request) ||
+              Boolean(candidateLocked) ||
+              loadingDevices ||
+              graphOpen
             }
-            onClick={() => candidateAvailable && candidate && onSelect(candidate)}
+            onClick={() => {
+              if (onSelectRequest && request) onSelectRequest(request);
+              else if (creation) onSelectSelection?.(creation);
+              else if (candidateAvailable && candidate) onSelect(candidate);
+            }}
           >
             Use worktree
           </button>

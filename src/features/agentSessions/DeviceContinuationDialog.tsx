@@ -1,3 +1,10 @@
+import { TargetSwitchChoice } from './TargetSwitchChoice';
+import { targetSwitchRequest } from './targetSwitchRequest';
+import type {
+  TargetSwitchRequestDto,
+  TargetSwitchIntentDto,
+  MigrationStrategyDto,
+} from '../../application/agentSessions/sessionQueue';
 import type { RepositoryBranchSource, ReviewTarget } from '../../application/branches';
 import type {
   ExecutionTargetClient,
@@ -19,7 +26,7 @@ export interface DeviceContinuationDialogProps {
   /** The fixed source worktree of the conversation being continued. */
   readonly sourceTarget: SessionExecutionTargetDto | null;
   readonly onChooseDevice?: (deviceId: string) => void;
-  readonly onQueueSelection?: (selection: SessionExecutionSelectionDto) => Promise<void> | void;
+  readonly onQueueSelection?: (request: TargetSwitchRequestDto) => Promise<void> | void;
   onClose(): void;
 }
 
@@ -79,6 +86,8 @@ export function DeviceContinuationDialog({
   onQueueSelection,
   onClose,
 }: DeviceContinuationDialogProps) {
+  const [intent, setIntent] = useState<TargetSwitchIntentDto>('change_conversation_target');
+  const [strategy, setStrategy] = useState<MigrationStrategyDto | ''>('');
   const [devices, setDevices] = useState<readonly ExecutionTargetDeviceDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
@@ -176,7 +185,7 @@ export function DeviceContinuationDialog({
         },
       };
     }
-    if (selectedWorktreeKey === 'create' && sourceTarget.head) {
+    if (selectedWorktreeKey === 'create') {
       const profile = selectedDevice.profiles[0];
       if (!profile) return null;
       return {
@@ -187,7 +196,7 @@ export function DeviceContinuationDialog({
           kind: 'create',
           repositoryId: sourceTarget.repositoryId,
           branchRef: sourceTarget.branchRef,
-          commit: sourceTarget.head,
+          commit: sourceTarget.head ?? '',
           attachment: 'branch',
         },
       };
@@ -334,7 +343,7 @@ export function DeviceContinuationDialog({
                   const lockedElsewhere =
                     instance.sisterLock && instance.sisterLock.ownerSessionId !== sessionId;
                   const differentFromSibling = Boolean(sibling && !instance.isSister);
-                  const disabled = Boolean(lockedElsewhere || differentFromSibling);
+                  const disabled = Boolean(lockedElsewhere);
                   return (
                     <button
                       key={key}
@@ -357,7 +366,7 @@ export function DeviceContinuationDialog({
                         <p>Locked to a Session on {instance.sisterLock?.activeDeviceId}</p>
                       )}
                       {differentFromSibling && (
-                        <p>Another sister worktree is already selected for this branch.</p>
+                        <p>This worktree can be linked explicitly when continuing work.</p>
                       )}
                     </button>
                   );
@@ -367,16 +376,16 @@ export function DeviceContinuationDialog({
                   role="radio"
                   aria-checked={selectedWorktreeKey === 'create'}
                   className={`device-continuation__worktree device-continuation__worktree--create ${selectedWorktreeKey === 'create' ? 'is-selected' : ''}`}
-                  disabled={!sourceTarget.head || Boolean(sibling) || targetBranchLockedElsewhere}
+                  disabled={targetBranchLockedElsewhere}
                   onClick={() => setSelectedWorktreeKey('create')}
                 >
-                  <strong>Create a new sister worktree</strong>
+                  <strong>Create a new worktree</strong>
                   <span>
                     {sibling
                       ? 'A sister worktree already exists on this device.'
                       : targetBranchLockedElsewhere
                         ? 'This branch is locked to another Session.'
-                        : `Start from source HEAD ${shortCommit(sourceTarget.head)} and include its state in the transition plan.`}
+                        : `Start from source HEAD ${shortCommit(sourceTarget.head)}. Continuing work also links and migrates its state.`}
                   </span>
                 </button>
               </div>
@@ -385,10 +394,33 @@ export function DeviceContinuationDialog({
         </section>
       ) : null}
 
+      {step === 'worktrees' && (
+        <TargetSwitchChoice
+          destination={destination}
+          source={sourceTarget}
+          intent={intent}
+          strategy={strategy}
+          isSister={Boolean(
+            chosen?.instance.isSister &&
+            devices.some(
+              (device) =>
+                device.deviceId === sourceTarget?.execution.deviceId &&
+                device.profiles.some((profile) =>
+                  profile.instances.some(
+                    (instance) =>
+                      instance.worktreeId === sourceTarget?.worktreeId && instance.isSister,
+                  ),
+                ),
+            ),
+          )}
+          onIntent={setIntent}
+          onStrategy={setStrategy}
+        />
+      )}
       <footer className="device-continuation__footer">
         <p>
           {onQueueSelection
-            ? 'The switch is added to the Session queue. Its preparation can run before it reaches the front.'
+            ? 'The switch is added to the Session queue. It is evaluated and prepared when it reaches the front.'
             : 'Choose the device for this conversation target.'}
         </p>
         {step === 'device' ? (
@@ -410,10 +442,14 @@ export function DeviceContinuationDialog({
           <button
             type="button"
             className="worktree-review__primary"
-            disabled={!destination}
+            disabled={
+              !destination || !targetSwitchRequest(destination, sourceTarget, intent, strategy)
+            }
             onClick={() => {
               if (onQueueSelection && destination) {
-                void onQueueSelection(destination);
+                const request = targetSwitchRequest(destination, sourceTarget, intent, strategy);
+                if (!request) return;
+                void onQueueSelection(request);
                 onClose();
               } else if (selectedDeviceId) {
                 onChooseDevice?.(selectedDeviceId);

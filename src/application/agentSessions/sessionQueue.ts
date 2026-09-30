@@ -24,7 +24,6 @@ export type TargetOperationActionKindDto =
   | 'apply_snapshot'
   | 'verify_migrated_state'
   | 'activate_sister'
-  | 'select_provider_context'
   | 'activate_target';
 
 export interface TargetOperationActionDto {
@@ -34,11 +33,48 @@ export interface TargetOperationActionDto {
   readonly error: string | null;
 }
 
+export type TargetSwitchIntentDto = 'change_conversation_target' | 'continue_work';
+export type MigrationStrategyDto = 'existing_sister' | 'link_existing' | 'create_linked';
+export interface MigrationResolutionDto {
+  readonly strategy: MigrationStrategyDto;
+  readonly repositoryId: string;
+  readonly branchRef: string;
+}
+export interface TargetSwitchRequestDto {
+  readonly destination: SessionExecutionSelectionDto;
+  readonly intent: TargetSwitchIntentDto;
+  readonly migrationResolution: MigrationResolutionDto | null;
+}
+export interface TargetSwitchFactsDto {
+  readonly destination: SessionExecutionTargetDto | null;
+  readonly destinationReady: boolean | null;
+  readonly unknown: readonly string[];
+  readonly blockers: readonly string[];
+}
+export interface TargetSwitchProjectionDto {
+  readonly calculatedAt: string;
+  readonly requestRevision: number;
+  readonly stale: boolean;
+  readonly source: SessionExecutionTargetDto | null;
+  readonly facts: TargetSwitchFactsDto;
+  readonly steps: readonly TargetOperationActionDto[];
+}
+export const retargetRequest = (
+  destination: SessionExecutionSelectionDto,
+): TargetSwitchRequestDto => ({
+  destination,
+  intent: 'change_conversation_target',
+  migrationResolution: null,
+});
+
 export interface SessionTargetOperationDto {
   readonly id: string;
   readonly sessionId: string;
   readonly sourceTarget: SessionExecutionTargetDto | null;
-  readonly destinationSelection: SessionExecutionSelectionDto;
+  readonly request: TargetSwitchRequestDto;
+  readonly needsResolution: boolean;
+  readonly receipt: import('./sessionHistory').WorkspaceTransitionReceiptDto | null;
+  readonly projectedPlan: TargetSwitchProjectionDto;
   readonly phase: TargetOperationPhaseDto;
   readonly actions: readonly TargetOperationActionDto[];
   readonly stagedTarget: SessionExecutionTargetDto | null;
@@ -92,14 +128,15 @@ export interface UpdateTargetOperationInputDto {
   readonly sessionId: string;
   readonly entryId: string;
   readonly expectedRevision: number;
-  readonly destination: SessionExecutionSelectionDto;
+  readonly request: TargetSwitchRequestDto;
 }
 
 export interface SessionQueueClient {
   loadQueue(sessionId: string): Promise<SessionQueueViewDto>;
   enqueueTargetOperation(input: {
     readonly sessionId: string;
-    readonly destination: SessionExecutionSelectionDto;
+    readonly request: TargetSwitchRequestDto;
+    readonly beforeEntryId?: string;
   }): Promise<SessionQueueViewDto>;
   enqueueCompaction(sessionId: string): Promise<SessionQueueViewDto>;
   reorderQueue(input: {
@@ -109,7 +146,11 @@ export interface SessionQueueClient {
   }): Promise<SessionQueueViewDto>;
   updateQueuedMessage(input: UpdateQueuedMessageInputDto): Promise<SessionQueueViewDto>;
   updateTargetOperation(input: UpdateTargetOperationInputDto): Promise<SessionQueueViewDto>;
-  startQueueEntry(sessionId: string, entryId: string): Promise<void>;
+  recalculateTargetProjection(input: {
+    sessionId: string;
+    entryId: string;
+    expectedRevision: number;
+  }): Promise<SessionQueueViewDto>;
   retryQueueEntry(sessionId: string, entryId: string): Promise<void>;
   cancelQueueEntry(sessionId: string, entryId: string): Promise<void>;
 }
@@ -125,7 +166,31 @@ export function projectSessionQueueTargets(
   let target: SessionExecutionSelectionDto | SessionExecutionTargetDto | null = queue.activeTarget;
   return queue.entries.map((item) => {
     if (item.targetOperation && item.entry.state !== 'completed' && item.entry.state !== 'canceled')
-      target = item.targetOperation.destinationSelection;
+      target = item.targetOperation.request.destination;
     return { item, target };
   });
+}
+
+export function projectedQueueSource(
+  queue: SessionQueueViewDto | null | undefined,
+  beforeEntryId?: string,
+): SessionExecutionTargetDto | null {
+  if (!queue) return null;
+  let source = queue.activeTarget;
+  for (const item of queue.entries) {
+    if (item.entry.id === beforeEntryId) break;
+    if (
+      !item.targetOperation ||
+      item.entry.state === 'completed' ||
+      item.entry.state === 'canceled'
+    )
+      continue;
+    const operation = item.targetOperation;
+    source =
+      operation.stagedTarget ??
+      (operation.request.destination.workspace.kind === 'existing'
+        ? operation.request.destination.workspace.target
+        : null);
+  }
+  return source;
 }

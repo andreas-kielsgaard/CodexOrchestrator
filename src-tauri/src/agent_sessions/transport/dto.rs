@@ -129,7 +129,8 @@ pub(crate) struct SendAgentSessionMessageCommandDto {
     pub(crate) requested_options: Option<AgentRuntimeOptions>,
 }
 
-impl From<SendAgentSessionMessageCommandDto> for SendAgentSessionMessageCommand { fn from(value: SendAgentSessionMessageCommandDto) -> Self {
+impl From<SendAgentSessionMessageCommandDto> for SendAgentSessionMessageCommand {
+    fn from(value: SendAgentSessionMessageCommandDto) -> Self {
         Self {
             session_id: value.session_id,
             submitted_text: value.submitted_text,
@@ -208,6 +209,7 @@ pub(crate) struct AgentSessionDetailsDto {
     pub(crate) interactions: Vec<crate::agent_sessions::application::SessionInteraction>,
     pub(crate) session: AgentSessionDto,
     pub(crate) invocations: Vec<AgentInvocationDetailsDto>,
+    pub(crate) timeline: crate::agent_sessions::history::SessionTimeline,
 }
 
 impl AgentSessionDetailsDto {
@@ -215,6 +217,7 @@ impl AgentSessionDetailsDto {
         Self {
             interactions: crate::agent_sessions::application::project_interactions(&history),
             session: history.session,
+            timeline: history.timeline,
             invocations: history
                 .invocations
                 .into_iter()
@@ -273,6 +276,9 @@ pub(crate) enum AgentSessionUpdateDto {
     },
     QueueUpdated {
         session_id: AgentSessionId,
+        session: crate::agent_sessions::domain::AgentSession,
+        timeline: crate::agent_sessions::history::SessionTimeline,
+        removed_invocation_ids: Vec<String>,
     },
     SteeringAccepted {
         session_id: AgentSessionId,
@@ -306,9 +312,17 @@ impl From<AgentSessionNotification> for AgentSessionUpdateDto {
                 session_id,
                 invocation_id,
             },
-            AgentSessionNotification::QueueUpdated { session_id } => {
-                Self::QueueUpdated { session_id }
-            }
+            AgentSessionNotification::QueueUpdated {
+                session_id,
+                session,
+                timeline,
+                removed_invocation_ids,
+            } => Self::QueueUpdated {
+                session_id,
+                session,
+                timeline,
+                removed_invocation_ids,
+            },
             AgentSessionNotification::SteeringAccepted {
                 session_id,
                 invocation_id,
@@ -387,6 +401,7 @@ mod tests {
         let session_id = AgentSessionId::new("session").unwrap();
         let invocation_id = AgentInvocationId::new("invocation").unwrap();
         let dto = AgentSessionDetailsDto::from_history(AgentSessionHistory {
+            timeline: Default::default(),
             session: AgentSession {
                 execution_target: None,
                 workspace_origin: None,
@@ -406,7 +421,8 @@ mod tests {
                 updated_at: at,
             },
             invocations: vec![AgentInvocationHistory {
-                invocation: AgentInvocation { attachments: vec![],
+                invocation: AgentInvocation {
+                    attachments: vec![],
                     id: invocation_id,
                     session_id,
                     submitted_text: "Work".into(),

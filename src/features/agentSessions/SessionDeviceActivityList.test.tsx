@@ -19,17 +19,31 @@ const activity = {
     id: 'operation',
     sessionId: 'session',
     sourceTarget: null,
-    destinationSelection: {
-      capabilityProfileId: 'profile',
-      capabilityProfileRevision: 1,
-      execution: {
-        deviceId: 'remote',
-        deviceName: 'Remote device',
-        provider: 'codex',
-        configurationRef: 'default',
-        connection: { kind: 'local' },
+    needsResolution: false,
+    receipt: null,
+    projectedPlan: {
+      calculatedAt: '2026-09-30T10:00:00Z',
+      requestRevision: 0,
+      stale: false,
+      source: null,
+      facts: { destination: null, destinationReady: null, unknown: [], blockers: [] },
+      steps: [],
+    },
+    request: {
+      intent: 'change_conversation_target' as const,
+      migrationResolution: null,
+      destination: {
+        capabilityProfileId: 'profile',
+        capabilityProfileRevision: 1,
+        execution: {
+          deviceId: 'remote',
+          deviceName: 'Remote device',
+          provider: 'codex',
+          configurationRef: 'default',
+          connection: { kind: 'local' },
+        },
+        workspace: { kind: 'auxiliary' },
       },
-      workspace: { kind: 'auxiliary' },
     },
     phase: 'staging',
     actions: [
@@ -47,7 +61,7 @@ const activity = {
 it('shows only compact active device action progress', () => {
   render(<SessionDeviceActivityList activities={[activity]} />);
   expect(screen.getByRole('complementary', { name: 'Device activity' })).toHaveTextContent(
-    'Switch to Remote device',
+    'Change conversation target to Remote device',
   );
   expect(screen.getByText('Verify worktree')).toBeVisible();
   expect(screen.getByLabelText('1 of 2 actions complete')).toBeVisible();

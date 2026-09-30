@@ -93,3 +93,62 @@ describe('AgentSessionHistorySource', () => {
     await Promise.resolve();
   });
 });
+
+it('keeps discarded messages absent when an initial stale load and late notifications arrive', async () => {
+  const initial = sessionDetails('pending');
+  let finish!: (value: typeof initial) => void;
+  let updates!: AgentSessionUpdateListener;
+  const source = createAgentSessionHistorySource({
+    load: () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    subscribe: async (listener) => {
+      updates = listener;
+      return () => {};
+    },
+    schedule: (publish) => publish(),
+  });
+  source.subscribe('session-1', () => {});
+  const pending = source.ensure('session-1');
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  updates({
+    kind: 'queue_updated',
+    sessionId: 'session-1',
+    removedInvocationIds: ['invocation-1'],
+  });
+  finish(initial);
+  await pending;
+  expect(source.getSnapshot('session-1').details?.invocations).toEqual([]);
+  updates({
+    kind: 'invocation_terminal',
+    sessionId: 'session-1',
+    invocationId: 'invocation-1',
+    invocation: sessionDetails('canceled').invocations[0].invocation,
+  });
+  expect(source.getSnapshot('session-1').details?.invocations).toEqual([]);
+});
+
+it('publishes queue outcomes immediately without waiting for a foreground animation frame', async () => {
+  const initial = sessionDetails();
+  let updates!: AgentSessionUpdateListener;
+  const frames: (() => void)[] = [];
+  const source = createAgentSessionHistorySource({
+    load: async () => initial,
+    subscribe: async (listener) => {
+      updates = listener;
+      return () => {};
+    },
+    schedule: (publish) => frames.push(publish),
+  });
+  source.subscribe('session-1', () => {});
+  await source.ensure('session-1');
+  const timeline = {
+    positions: [{ ordinal: 0, invocationId: null, operationId: 'completed-switch' }],
+    transitions: [],
+    providers: [],
+  };
+  updates({ kind: 'queue_updated', sessionId: 'session-1', timeline });
+  expect(source.getSnapshot('session-1').details?.timeline).toEqual(timeline);
+  expect(frames).toHaveLength(0);
+});

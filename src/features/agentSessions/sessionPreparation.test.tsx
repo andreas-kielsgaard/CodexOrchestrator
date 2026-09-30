@@ -31,6 +31,8 @@ it('queues missing-worktree intent without resolving the branch before selection
   expect(fixture.client.loadRuntime).not.toHaveBeenCalled();
   expect(onSelectSelection).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Queue worktree creation' }));
+  expect(onSelectSelection).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Use worktree' }));
   expect(onSelectSelection).toHaveBeenCalledWith({
     capabilityProfileId: 'local-profile',
     capabilityProfileRevision: 1,

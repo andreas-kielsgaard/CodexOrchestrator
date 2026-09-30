@@ -33,6 +33,7 @@ export function selectionForTarget(
 export function selectionSatisfiedByTarget(
   selection: SessionExecutionSelectionDto | null,
   target: SessionExecutionTargetDto | null,
+  resolved?: { selection: SessionExecutionSelectionDto; target: SessionExecutionTargetDto } | null,
 ) {
   if (!selection || !target) return false;
   if (
@@ -49,9 +50,12 @@ export function selectionSatisfiedByTarget(
       selection.workspace.target.path === target.path
     );
   if (selection.workspace.kind === 'auxiliary') return !target.repositoryId;
-  return (
-    selection.workspace.repositoryId === target.repositoryId &&
-    selection.workspace.branchRef === target.branchRef
+  return Boolean(
+    resolved &&
+    JSON.stringify(resolved.selection.workspace) === JSON.stringify(selection.workspace) &&
+    resolved.target.execution.deviceId === target.execution.deviceId &&
+    resolved.target.worktreeId === target.worktreeId &&
+    resolved.target.path === target.path,
   );
 }
 
@@ -272,8 +276,16 @@ export function useSessionTarget(
     [setSelection],
   );
   const adoptCurrent = useCallback(
-    (target: SessionExecutionTargetDto | null, accepted?: SessionExecutionSelectionDto | null) => {
-      if (dirty.current && !selectionSatisfiedByTarget(selectionRef.current, target)) return;
+    (
+      target: SessionExecutionTargetDto | null,
+      accepted?: SessionExecutionSelectionDto | null,
+      resolved?: {
+        selection: SessionExecutionSelectionDto;
+        target: SessionExecutionTargetDto;
+      } | null,
+    ) => {
+      if (dirty.current && !selectionSatisfiedByTarget(selectionRef.current, target, resolved))
+        return;
       const next = target ? selectionForTarget(target) : accepted;
       if (next) {
         dirty.current = false;

@@ -8,7 +8,7 @@ import type {
 } from '../../application/agentSessions/sessionQueue';
 import type { AgentSessionWorkspaceController } from './useAgentSession';
 import { SessionQueueItemDialog } from './SessionQueueItemDialog';
-import { queueEntryState, queueEntryTitle, queueTargetLabel } from './sessionQueueLabels';
+import { queueEntryState, queueEntryTitle } from './sessionQueueLabels';
 import './sessionQueue.css';
 
 const terminalStates = new Set(['completed', 'canceled']);
@@ -101,7 +101,6 @@ function QueueLine({
 }) {
   const item = projection.item;
   const blocked = item.entry.state === 'blocked' || item.targetOperation?.phase === 'blocked';
-  const target = queueTargetLabel(projection.target);
   return (
     <li
       draggable
@@ -125,9 +124,7 @@ function QueueLine({
           )}
         </span>
         <strong>{queueEntryTitle(item)}</strong>
-        <small>
-          {item.message ? `${target.device} · ${target.workspace}` : queueEntryState(item)}
-        </small>
+        <small>{queueEntryState(item)}</small>
       </button>
     </li>
   );

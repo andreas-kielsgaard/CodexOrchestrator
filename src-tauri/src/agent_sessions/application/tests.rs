@@ -1542,7 +1542,9 @@ fn startup_reconciliation_interrupts_pending_and_running_once() {
         })
         .expect("pending session");
     let created_at = Utc.with_ymd_and_hms(2026, 7, 10, 12, 0, 0).unwrap();
-    let pending = AgentInvocation { attachments: vec![], id: AgentInvocationId::new("pending-manual").expect("ID"),
+    let pending = AgentInvocation {
+        attachments: vec![],
+        id: AgentInvocationId::new("pending-manual").expect("ID"),
         session_id: pending_session.id,
         submitted_text: "Pending".to_string(),
         input_provenance: AgentInvocationInputProvenance::User,
@@ -1880,7 +1882,10 @@ impl Harness {
     }
 }
 
-fn message(session_id: &AgentSessionId, text: &str) -> SendAgentSessionMessageCommand { SendAgentSessionMessageCommand { attachments: vec![], session_id: Some(session_id.clone()),
+fn message(session_id: &AgentSessionId, text: &str) -> SendAgentSessionMessageCommand {
+    SendAgentSessionMessageCommand {
+        attachments: vec![],
+        session_id: Some(session_id.clone()),
         submitted_text: text.to_string(),
         title: None,
         working_directory: None,
@@ -2391,7 +2396,7 @@ impl AgentSessionNotifier for RecordingNotifier {
                 .repository
                 .preparation(invocation_id)
                 .is_ok_and(|p| p.is_some()),
-            AgentSessionNotification::QueueUpdated { session_id } => {
+            AgentSessionNotification::QueueUpdated { session_id, .. } => {
                 self.repository.session_queue(session_id).is_ok()
             }
             AgentSessionNotification::SteeringAccepted {

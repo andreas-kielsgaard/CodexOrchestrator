@@ -7,8 +7,8 @@ use crate::agent_sessions::{
         SessionQueueSnapshot,
     },
     target_operation::{
-        planned_actions, replan_actions, validate_target_operation, SessionTargetOperation,
-        TargetOperationActionStatus, TargetOperationPhase,
+        validate_target_operation, SessionTargetOperation, TargetOperationPhase,
+        TargetSwitchRequest,
     },
 };
 use crate::execution_targets::domain::{SessionExecutionSelection, SessionExecutionTarget};
@@ -141,54 +141,21 @@ pub(crate) fn migrate_legacy_target_transitions(connection: &Connection) -> Resu
         ensure_state(connection, &session).map_err(|error| error.to_string())?;
         let now = transition.updated_at;
         let operation_id = format!("legacy-transition:{}", transition.session_id.as_str());
-        let actions = planned_actions(
-            Some(&transition.source_target),
-            &transition.destination_selection,
+        let mut operation = SessionTargetOperation::new(
+            operation_id.clone(),
+            transition.session_id.clone(),
+            Some(transition.source_target),
+            TargetSwitchRequest::retarget(transition.destination_selection),
+            transition.created_at,
         );
-        let mut operation = SessionTargetOperation {
-            id: operation_id.clone(),
-            session_id: transition.session_id.clone(),
-            source_target: Some(transition.source_target),
-            destination_selection: transition.destination_selection,
-            phase: TargetOperationPhase::Pending,
-            actions,
-            staged_target: None,
-            activated_binding: None,
-            error: None,
-            generation: 0,
-            created_at: transition.created_at,
-            updated_at: now,
-        };
-        let entry_state = match transition.phase {
-            LegacyTargetTransitionPhase::Pending => SessionQueueEntryState::Pending,
-            LegacyTargetTransitionPhase::Ready => {
-                operation.phase = TargetOperationPhase::Staged;
-                operation.staged_target = transition.resolved_target;
-                for action in operation.actions.iter_mut().take(4) {
-                    action.status = TargetOperationActionStatus::Completed;
-                    action.detail = Some("Recovered from the previous target transition".into());
-                }
-                SessionQueueEntryState::Pending
-            }
-            LegacyTargetTransitionPhase::Running => {
-                operation.phase = TargetOperationPhase::Blocked;
-                operation.error = Some(
-                    "Application restarted during the previous target transition. Retry continues from this queue entry."
-                        .into(),
-                );
-                SessionQueueEntryState::Blocked
-            }
-            LegacyTargetTransitionPhase::Failed => {
-                operation.phase = TargetOperationPhase::Blocked;
-                operation.error = Some(
-                    transition
-                        .error
-                        .unwrap_or_else(|| "The previous target transition failed".into()),
-                );
-                SessionQueueEntryState::Blocked
-            }
-            LegacyTargetTransitionPhase::Canceled => unreachable!(),
-        };
+        operation.updated_at = now;
+        operation.needs_resolution = true;
+        operation.phase = TargetOperationPhase::Blocked;
+        operation.staged_target = transition.resolved_target;
+        operation.error =
+            Some("Choose the intent and migration resolution for this older switch".into());
+        operation.projected_plan.stale = true;
+        let entry_state = SessionQueueEntryState::Blocked;
         insert_operation(connection, &operation).map_err(|error| error.to_string())?;
         let operation_entry = SessionQueueEntry {
             id: format!("target:{operation_id}"),
@@ -212,7 +179,9 @@ pub(crate) fn migrate_legacy_target_transitions(connection: &Connection) -> Resu
             if let (Some(text), Some(id)) = (text, id) {
                 let invocation_id =
                     AgentInvocationId::new(id.to_string()).map_err(|error| error.to_string())?;
-                let invocation = AgentInvocation { attachments: vec![], id: invocation_id.clone(),
+                let invocation = AgentInvocation {
+                    attachments: vec![],
+                    id: invocation_id.clone(),
                     session_id: session.id.clone(),
                     submitted_text: text.to_string(),
                     input_provenance: AgentInvocationInputProvenance::User,
@@ -251,6 +220,7 @@ pub(crate) fn migrate_legacy_target_transitions(connection: &Connection) -> Resu
                     error: None,
                     can_retry: false,
                     selection: None,
+                    requested_capability_profile: None,
                     source_target: session.execution_target.clone(),
                     source_binding: session.runtime_binding.clone(),
                     prepared_binding: None,
@@ -334,7 +304,7 @@ fn ensure_state(connection: &Connection, session: &AgentSession) -> Result<(), R
     Ok(())
 }
 
-fn increment_revision(
+pub(super) fn increment_revision(
     connection: &Connection,
     session_id: &AgentSessionId,
     at: DateTime<Utc>,
@@ -346,6 +316,15 @@ fn increment_revision(
         )
         .map_err(sql_write("advance Session queue revision"))?;
     touch_session(connection, session_id, at)
+}
+
+pub(super) fn mark_projections_stale(
+    connection: &Connection,
+    session_id: &AgentSessionId,
+    from_ordinal: i64,
+) -> Result<(), RepositoryError> {
+    connection.execute("UPDATE agent_session_target_operations SET payload_json=json_set(payload_json,'$.projectedPlan.stale',json('true')) WHERE id IN (SELECT operation_id FROM agent_session_queue_entries WHERE session_id=?1 AND ordinal>=?2 AND state IN ('pending','blocked') AND kind='target_operation')",params![session_id.as_str(),from_ordinal]).map_err(sql_write("mark projected plans stale"))?;
+    Ok(())
 }
 
 fn next_ordinal(
@@ -442,8 +421,19 @@ fn read_entries(
         })
         .map_err(sql_unavailable("read Session queue"))?;
     rows.map(|row| {
-        let (id, ordinal, kind, state, invocation, operation, blocked_reason, created, updated, provenance, submitted_text) =
-            row.map_err(sql_unavailable("read Session queue entry"))?;
+        let (
+            id,
+            ordinal,
+            kind,
+            state,
+            invocation,
+            operation,
+            blocked_reason,
+            created,
+            updated,
+            provenance,
+            submitted_text,
+        ) = row.map_err(sql_unavailable("read Session queue entry"))?;
         let item = match kind.as_str() {
             "message" => {
                 let invocation_id = AgentInvocationId::new(
@@ -478,7 +468,7 @@ fn read_entries(
     .collect()
 }
 
-fn read_snapshot(
+pub(super) fn read_snapshot(
     connection: &Connection,
     session_id: &AgentSessionId,
 ) -> Result<SessionQueueSnapshot, RepositoryError> {
@@ -499,7 +489,7 @@ fn read_snapshot(
     })
 }
 
-fn require_revision(
+pub(super) fn require_revision(
     connection: &Connection,
     session_id: &AgentSessionId,
     expected: u64,
@@ -611,11 +601,14 @@ impl SqliteAgentSessionRepository {
     pub(super) fn enqueue_target_operation_record(
         &self,
         operation: SessionTargetOperation,
+        before_entry_id: Option<&str>,
         at: DateTime<Utc>,
     ) -> Result<SessionQueueSnapshot, RepositoryError> {
         self.write("enqueue Session target operation", |tx| {
             let session = required_session(tx, &operation.session_id)?;
             ensure_state(tx, &session)?;
+            let before_ordinal: Option<i64> = before_entry_id.map(|id|tx.query_row("SELECT ordinal FROM agent_session_queue_entries WHERE id=?1 AND session_id=?2 AND state IN ('pending','blocked')",params![id,session.id.as_str()],|row|row.get(0)).map_err(sql_unavailable("load insertion position"))).transpose()?;
+            let inserted_id = format!("target:{}",operation.id);
             let ordinal = next_ordinal(tx, &session.id)?;
             insert_operation(tx, &operation)?;
             insert_entry(
@@ -633,47 +626,14 @@ impl SqliteAgentSessionRepository {
                     updated_at: at,
                 },
             )?;
+            if let Some(before) = before_ordinal {
+                tx.execute("UPDATE agent_session_queue_entries SET ordinal=-ordinal-1 WHERE session_id=?1 AND ordinal>=?2",params![session.id.as_str(),before]).map_err(sql_write("reserve insertion position"))?;
+                tx.execute("UPDATE agent_session_queue_entries SET ordinal=-ordinal WHERE session_id=?1 AND ordinal<0",[session.id.as_str()]).map_err(sql_write("move following queue entries"))?;
+                tx.execute("UPDATE agent_session_queue_entries SET ordinal=?2 WHERE id=?1",params![inserted_id,before]).map_err(sql_write("insert before queued message"))?;
+                mark_projections_stale(tx, &session.id, before + 1)?;
+            }
             increment_revision(tx, &session.id, at)?;
             read_snapshot(tx, &session.id)
-        })
-    }
-
-    pub(super) fn read_target_operation_record(
-        &self,
-        operation_id: &str,
-    ) -> Result<Option<SessionTargetOperation>, RepositoryError> {
-        self.read("read target operation", |connection| {
-            let json: Option<String> = connection
-                .query_row(
-                    "SELECT payload_json FROM agent_session_target_operations WHERE id=?1",
-                    [operation_id],
-                    |row| row.get(0),
-                )
-                .optional()
-                .map_err(sql_unavailable("read target operation"))?;
-            json.map(|value| from_json(&value, "target operation"))
-                .transpose()
-        })
-    }
-
-    pub(super) fn save_target_operation_record(
-        &self,
-        operation: &SessionTargetOperation,
-    ) -> Result<SessionQueueSnapshot, RepositoryError> {
-        validate_target_operation(operation)
-            .map_err(|error| RepositoryError::new(RepositoryErrorKind::InvalidState, error))?;
-        self.write("save target operation", |tx| {
-            let changed = tx
-                .execute(
-                    "UPDATE agent_session_target_operations SET payload_json=?2 WHERE id=?1 AND session_id=?3",
-                    params![operation.id,to_json(operation)?,operation.session_id.as_str()],
-                )
-                .map_err(sql_write("save target operation"))?;
-            if changed != 1 {
-                return Err(not_found("Target operation not found"));
-            }
-            increment_revision(tx, &operation.session_id, operation.updated_at)?;
-            read_snapshot(tx, &operation.session_id)
         })
     }
 
@@ -788,11 +748,7 @@ impl SqliteAgentSessionRepository {
                     operation.phase = TargetOperationPhase::Pending;
                     operation.error = None;
                     operation.updated_at = at;
-                    operation.actions = replan_actions(
-                        &operation.actions,
-                        operation.source_target.as_ref(),
-                        &operation.destination_selection,
-                    );
+                    operation.actions.clear();
                     tx.execute(
                         "UPDATE agent_session_target_operations SET payload_json=?2 WHERE id=?1",
                         params![operation_id, to_json(&operation)?],
@@ -910,6 +866,7 @@ impl SqliteAgentSessionRepository {
                 )
                 .map_err(sql_write("apply Session queue reorder"))?;
             }
+            mark_projections_stale(tx, session_id, 0)?;
             increment_revision(tx, session_id, at)?;
             read_snapshot(tx, session_id)
         })
@@ -994,137 +951,27 @@ impl SqliteAgentSessionRepository {
         })
     }
 
-    pub(super) fn replace_target_operation_record(
+    pub(super) fn discard_queue_entry_record(
         &self,
         session_id: &AgentSessionId,
         entry_id: &str,
-        expected_revision: u64,
-        destination: crate::execution_targets::domain::SessionExecutionSelection,
         at: DateTime<Utc>,
     ) -> Result<SessionQueueSnapshot, RepositoryError> {
-        self.write("edit queued target operation", |tx| {
-            require_revision(tx, session_id, expected_revision)?;
-            let (operation_id, state): (String, String) = tx
-                .query_row(
-                    "SELECT operation_id,state FROM agent_session_queue_entries WHERE id=?1 AND session_id=?2 AND kind='target_operation'",
-                    params![entry_id,session_id.as_str()],
-                    |row| Ok((row.get(0)?,row.get(1)?)),
-                )
-                .map_err(sql_unavailable("load queued target operation"))?;
-            if !matches!(state.as_str(), "pending" | "blocked") {
-                return Err(RepositoryError::new(
-                    RepositoryErrorKind::Conflict,
-                    "Target activation has already started",
-                ));
+        self.write("discard queued item", |tx| {
+            let entry = read_entries(tx, session_id)?.into_iter().find(|e| e.id == entry_id).ok_or_else(|| not_found("Queue entry not found"))?;
+            if !matches!(entry.state, SessionQueueEntryState::Pending | SessionQueueEntryState::Blocked) { return Err(RepositoryError::new(RepositoryErrorKind::Conflict, "Only queued or blocked items can be removed")) }
+            match entry.item {
+                SessionQueueEntryItem::Message { invocation_id } | SessionQueueEntryItem::Compaction { invocation_id } => {
+                    let launched: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM agent_session_invocation_launch_acceptances WHERE invocation_id=?1)", [invocation_id.as_str()], |r| r.get(0)).map_err(sql_unavailable("inspect launch acceptance"))?;
+                    if launched { return Err(RepositoryError::new(RepositoryErrorKind::Conflict, "Delivered turns belong to session history")) }
+                    tx.execute("DELETE FROM agent_session_invocations WHERE id=?1", [invocation_id.as_str()]).map_err(sql_write("discard queued message"))?;
+                    let remaining: i64 = tx.query_row("SELECT COUNT(*) FROM agent_session_queue_entries WHERE session_id=?1 AND kind='message' AND state IN ('pending','blocked')", [session_id.as_str()], |r| r.get(0)).map_err(sql_unavailable("count queued messages"))?;
+                    if remaining == 0 { tx.execute("DELETE FROM agent_session_target_operations WHERE id IN (SELECT operation_id FROM agent_session_queue_entries WHERE session_id=?1 AND kind='target_operation' AND state IN ('pending','blocked'))", [session_id.as_str()]).map_err(sql_write("remove unused switches"))?; }
+                }
+                SessionQueueEntryItem::TargetOperation { operation_id } => { tx.execute("DELETE FROM agent_session_target_operations WHERE id=?1", [operation_id]).map_err(sql_write("discard target switch"))?; mark_projections_stale(tx, session_id, entry.ordinal)?; }
             }
-            let json: String = tx
-                .query_row(
-                    "SELECT payload_json FROM agent_session_target_operations WHERE id=?1",
-                    [&operation_id],
-                    |row| row.get(0),
-                )
-                .map_err(sql_unavailable("read target operation"))?;
-            let mut operation: SessionTargetOperation = from_json(&json, "target operation")?;
-            operation.destination_selection = destination;
-            operation.phase = crate::agent_sessions::target_operation::TargetOperationPhase::Pending;
-            operation.actions = crate::agent_sessions::target_operation::planned_actions(
-                operation.source_target.as_ref(),
-                &operation.destination_selection,
-            );
-            operation.staged_target = None;
-            operation.activated_binding = None;
-            operation.error = None;
-            operation.generation = operation.generation.saturating_add(1);
-            operation.updated_at = at;
-            validate_target_operation(&operation)
-                .map_err(|error| RepositoryError::new(RepositoryErrorKind::InvalidState, error))?;
-            tx.execute(
-                "UPDATE agent_session_target_operations SET payload_json=?2 WHERE id=?1",
-                params![operation_id,to_json(&operation)?],
-            )
-            .map_err(sql_write("edit target operation"))?;
-            tx.execute(
-                "UPDATE agent_session_queue_entries SET state='pending',blocked_reason=NULL,updated_at=?2 WHERE id=?1",
-                params![entry_id,timestamp(at)],
-            )
-            .map_err(sql_write("reset target operation queue entry"))?;
             increment_revision(tx, session_id, at)?;
             read_snapshot(tx, session_id)
-        })
-    }
-
-    pub(super) fn activate_target_operation_record(
-        &self,
-        operation_id: &str,
-        at: DateTime<Utc>,
-    ) -> Result<SessionQueueSnapshot, RepositoryError> {
-        self.write("activate queued target", |tx| {
-            let json: String = tx
-                .query_row(
-                    "SELECT payload_json FROM agent_session_target_operations WHERE id=?1",
-                    [operation_id],
-                    |row| row.get(0),
-                )
-                .map_err(sql_unavailable("read target operation"))?;
-            let mut operation: SessionTargetOperation = from_json(&json, "target operation")?;
-            if !matches!(operation.phase, crate::agent_sessions::target_operation::TargetOperationPhase::Staged | crate::agent_sessions::target_operation::TargetOperationPhase::Activating) {
-                return Err(RepositoryError::new(
-                    RepositoryErrorKind::Conflict,
-                    "Target operation is not staged",
-                ));
-            }
-            let target = operation
-                .staged_target
-                .clone()
-                .ok_or_else(|| not_found("Staged target unavailable"))?;
-            let session = required_session(tx, &operation.session_id)?;
-            if let (Some(source), Some(external_context_id)) = (
-                session.execution_target.as_ref(),
-                session.runtime_binding.external_context_id.clone(),
-            ) {
-                super::native_conversations::retain_source_provider_binding(
-                    tx,
-                    &operation.session_id,
-                    Some(&crate::agent_sessions::domain::ProviderSessionBinding {
-                        external_context_id,
-                        runtime_version: session.runtime_binding.runtime_version.clone(),
-                        location: source.execution.clone(),
-                        workspace: Some(crate::agent_sessions::domain::ProviderWorkspaceIdentity::from(source)),
-                        last_invocation_id: None,
-                    }),
-                    at,
-                )?;
-            }
-            tx.execute(
-                "UPDATE agent_sessions SET execution_target_json=?2,working_directory=?3,workspace_origin='explicit',external_context_id=NULL,runtime_version=NULL,updated_at=?4 WHERE id=?1",
-                params![operation.session_id.as_str(),to_json(&target)?,target.path,timestamp(at)],
-            )
-            .map_err(sql_write("activate Session target"))?;
-            operation.phase = crate::agent_sessions::target_operation::TargetOperationPhase::Completed;
-            operation.error = None;
-            operation.updated_at = at;
-            for action in &mut operation.actions {
-                if matches!(
-                    action.kind,
-                    crate::agent_sessions::target_operation::TargetOperationActionKind::SelectProviderContext
-                        | crate::agent_sessions::target_operation::TargetOperationActionKind::ActivateTarget
-                ) {
-                    action.status = crate::agent_sessions::target_operation::TargetOperationActionStatus::Completed;
-                    action.error = None;
-                }
-            }
-            tx.execute(
-                "UPDATE agent_session_target_operations SET payload_json=?2 WHERE id=?1",
-                params![operation_id,to_json(&operation)?],
-            )
-            .map_err(sql_write("complete target operation"))?;
-            tx.execute(
-                "UPDATE agent_session_queue_entries SET state='completed',blocked_reason=NULL,updated_at=?2 WHERE operation_id=?1",
-                params![operation_id,timestamp(at)],
-            )
-            .map_err(sql_write("complete target operation queue entry"))?;
-            increment_revision(tx, &operation.session_id, at)?;
-            read_snapshot(tx, &operation.session_id)
         })
     }
 }

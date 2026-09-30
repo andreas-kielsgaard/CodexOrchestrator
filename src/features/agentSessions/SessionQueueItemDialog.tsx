@@ -67,7 +67,7 @@ export function SessionQueueItemDialog({
           onClose={onClose}
         />
       ) : (
-        <TargetDetails item={item} />
+        <TargetDetails item={item} controller={controller} />
       )}
       <div className="session-queue-editor__controls" aria-label="Queue item controls">
         <button
@@ -84,11 +84,6 @@ export function SessionQueueItemDialog({
         >
           Move down
         </button>
-        {item.targetOperation?.phase === 'pending' && (
-          <button type="button" onClick={() => void controller.startQueueEntry?.(item.entry.id)}>
-            Start now
-          </button>
-        )}
         {blocked && (
           <button type="button" onClick={() => void controller.retryQueueEntry?.(item.entry.id)}>
             Retry
@@ -234,9 +229,15 @@ function MessageDetails({
   );
 }
 
-function TargetDetails({ item }: { readonly item: SessionQueueEntryViewDto }) {
+function TargetDetails({
+  item,
+  controller,
+}: {
+  readonly item: SessionQueueEntryViewDto;
+  readonly controller: AgentSessionWorkspaceController;
+}) {
   const operation = item.targetOperation!;
-  const target = queueTargetLabel(operation.destinationSelection);
+  const target = queueTargetLabel(operation.request.destination);
   const error = item.entry.blockedReason ?? operation.error;
   return (
     <div className="session-queue-editor__target">
@@ -254,6 +255,36 @@ function TargetDetails({ item }: { readonly item: SessionQueueEntryViewDto }) {
           {error}
         </p>
       )}
+      <section aria-label="Projected execution plan">
+        <h3>Projected when queued</h3>
+        <p>
+          {new Date(operation.projectedPlan.calculatedAt).toLocaleString()}
+          {operation.projectedPlan.stale ? ' · Stale after editing or reordering' : ''}
+        </p>
+        <button
+          type="button"
+          className="session-queue-editor__recalculate"
+          onClick={() => void controller.recalculateTargetProjection?.(item.entry.id)}
+        >
+          Recalculate
+        </button>
+        {[...operation.projectedPlan.facts.blockers, ...operation.projectedPlan.facts.unknown].map(
+          (fact, index) => (
+            <p key={index}>{fact}</p>
+          ),
+        )}
+        {operation.projectedPlan.steps.length ? (
+          <ol>
+            {operation.projectedPlan.steps.map((step) => (
+              <li key={step.kind}>{targetActionLabel(step.kind)}</li>
+            ))}
+          </ol>
+        ) : (
+          <p>No action projected.</p>
+        )}
+      </section>
+      <h3>Actual execution</h3>
+      {!operation.actions.length && <p>Evaluated when this entry reaches the front.</p>}
       <ol className="session-queue-editor__steps">
         {operation.actions.map((action) => (
           <li key={action.kind} className={`is-${action.status}`}>

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 63;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 64;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 #[cfg(test)]
@@ -521,6 +521,10 @@ fn initialize_session_navigation_schema(connection: &Connection) -> Result<(), S
         .execute_batch(crate::agent_sessions::repository::QUEUE_SCHEMA)
         .map_err(|e| e.to_string())?;
     crate::agent_sessions::repository::migrate_legacy_target_transitions(connection)?;
+    crate::agent_sessions::repository::upgrade_target_switches(connection)?;
+    connection
+        .execute_batch(crate::agent_sessions::repository::HISTORY_SCHEMA)
+        .map_err(|e| e.to_string())?;
     connection
         .execute_batch(crate::agent_sessions::repository::SESSION_ORGANIZATION_SCHEMA)
         .map_err(|e| e.to_string())?;
@@ -715,7 +719,9 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         [],
         |row| row.get(0),
     ).map_err(|e|e.to_string())?;
-    Ok(execution_device_schema_is_present
+    let transition_schema_present: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='agent_session_history_positions') AND EXISTS(SELECT 1 FROM pragma_table_info('agent_sessions') WHERE name='binding_owner_json')",[],|r|r.get(0)).map_err(|e|e.to_string())?;
+    Ok(transition_schema_present
+        && execution_device_schema_is_present
         && preparation_schema_is_present
         && sister_worktree_schema_is_present
         && legacy_target_transition_schema_is_absent
@@ -887,6 +893,7 @@ mod tests {
                 "agent_session_addresses",
                 "agent_session_current_execution",
                 "agent_session_file_changes",
+                "agent_session_history_positions",
                 "agent_session_imported_turns",
                 "agent_session_imports",
                 "agent_session_initial_prompt_prefixes",

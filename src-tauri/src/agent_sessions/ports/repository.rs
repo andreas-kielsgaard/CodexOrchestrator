@@ -11,6 +11,7 @@ use std::{error::Error, fmt};
 pub(crate) struct AgentSessionHistory {
     pub(crate) session: AgentSession,
     pub(crate) invocations: Vec<AgentInvocationHistory>,
+    pub(crate) timeline: crate::agent_sessions::history::SessionTimeline,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -150,6 +151,12 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
         ))
     }
     /// A provider-owned conversation cached at this exact execution route.
+    fn current_provider_binding_owner(
+        &self,
+        _session_id: &AgentSessionId,
+    ) -> Result<Option<crate::agent_sessions::domain::ProviderBindingOwner>, RepositoryError> {
+        Ok(None)
+    }
     fn provider_session_binding(
         &self,
         _session_id: &AgentSessionId,
@@ -225,6 +232,7 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
     fn enqueue_target_operation(
         &self,
         _operation: crate::agent_sessions::target_operation::SessionTargetOperation,
+        _before_entry_id: Option<&str>,
         _at: DateTime<Utc>,
     ) -> Result<crate::agent_sessions::queue::SessionQueueSnapshot, RepositoryError> {
         Err(RepositoryError::new(
@@ -326,7 +334,7 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
         _session_id: &AgentSessionId,
         _entry_id: &str,
         _expected_revision: u64,
-        _destination: crate::execution_targets::domain::SessionExecutionSelection,
+        _request: crate::agent_sessions::target_operation::TargetSwitchRequest,
         _at: DateTime<Utc>,
     ) -> Result<crate::agent_sessions::queue::SessionQueueSnapshot, RepositoryError> {
         Err(RepositoryError::new(
@@ -335,6 +343,37 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
         ))
     }
 
+    fn save_target_projection(
+        &self,
+        _operation: &super::super::target_operation::SessionTargetOperation,
+        _revision: u64,
+    ) -> Result<super::super::queue::SessionQueueSnapshot, RepositoryError> {
+        Err(RepositoryError::new(
+            RepositoryErrorKind::Unavailable,
+            "Target projection storage unavailable",
+        ))
+    }
+    fn discard_target_operation(
+        &self,
+        _id: &str,
+        _at: DateTime<Utc>,
+    ) -> Result<(), RepositoryError> {
+        Err(RepositoryError::new(
+            RepositoryErrorKind::Unavailable,
+            "Target discard unavailable",
+        ))
+    }
+    fn discard_queue_entry(
+        &self,
+        _session_id: &AgentSessionId,
+        _entry_id: &str,
+        _at: DateTime<Utc>,
+    ) -> Result<super::super::queue::SessionQueueSnapshot, RepositoryError> {
+        Err(RepositoryError::new(
+            RepositoryErrorKind::Unavailable,
+            "Queue discard unavailable",
+        ))
+    }
     fn activate_target_operation(
         &self,
         _operation_id: &str,

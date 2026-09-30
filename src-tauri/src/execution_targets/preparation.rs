@@ -199,8 +199,16 @@ impl ExecutionTargetService {
         selection: &SessionExecutionSelection,
         workspace_id: &str,
     ) -> Result<SessionExecutionTarget, String> {
-        let execution = self.endpoints.freeze_binding(selection.execution.clone())?;
-        self.ensure_ready(&execution)?;
+        self.ensure_ready(&selection.execution)?;
+        self.materialize_ready_selection(selection, workspace_id)
+    }
+
+    pub(crate) fn materialize_ready_selection(
+        &self,
+        selection: &SessionExecutionSelection,
+        workspace_id: &str,
+    ) -> Result<SessionExecutionTarget, String> {
+        let execution = selection.execution.clone();
         let (repository_id, instance) = match &selection.workspace {
             SessionWorkspaceSelection::Existing { target } => {
                 if target.repository_id.is_empty() {
@@ -214,9 +222,13 @@ impl ExecutionTargetService {
                 let root = self.repository_root(&target.repository_id, &execution)?;
                 let instance = self
                     .endpoints
-                    .worktrees(&execution, &root, Some(&target.branch_ref))?
+                    .worktrees(&execution, &root, None)?
                     .into_iter()
-                    .find(|i| i.handle == target.worktree_id && i.path == target.path)
+                    .find(|i| {
+                        i.handle == target.worktree_id
+                            && i.path == target.path
+                            && i.branch_ref.as_deref().unwrap_or_default() == target.branch_ref
+                    })
                     .ok_or("Selected worktree is no longer available on this device")?;
                 (target.repository_id.clone(), instance)
             }

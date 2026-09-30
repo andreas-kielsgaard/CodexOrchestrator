@@ -19,6 +19,7 @@ pub(crate) mod observation;
 pub(crate) mod preparation;
 pub(crate) mod queue;
 mod quick_features;
+mod target_operations;
 mod targets;
 mod update_sink;
 mod workspaces;

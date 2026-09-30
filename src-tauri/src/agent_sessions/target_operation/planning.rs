@@ -1,4 +1,7 @@
-use super::{TargetOperationAction, TargetOperationActionKind, TargetOperationActionStatus};
+use super::{
+    TargetOperationAction, TargetOperationActionKind, TargetOperationActionStatus,
+    TargetSwitchFacts, TargetSwitchIntent, TargetSwitchRequest,
+};
 use crate::execution_targets::domain::{
     SessionExecutionSelection, SessionExecutionTarget, SessionWorkspaceSelection,
 };
@@ -6,7 +9,6 @@ use crate::execution_targets::domain::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SelectionTargetRelation {
     Exact,
-    SatisfiedByResolvedWorkspace,
     Different,
 }
 
@@ -14,7 +16,8 @@ pub(crate) fn same_workspace_identity(
     left: &SessionExecutionTarget,
     right: &SessionExecutionTarget,
 ) -> bool {
-    left.repository_id == right.repository_id
+    left.execution.device_id == right.execution.device_id
+        && left.repository_id == right.repository_id
         && left.branch_ref == right.branch_ref
         && left.worktree_id == right.worktree_id
         && left.path == right.path
@@ -27,10 +30,7 @@ pub(crate) fn selection_target_relation(
     let Some(target) = target else {
         return SelectionTargetRelation::Different;
     };
-    if selection.capability_profile_id != target.capability_profile_id
-        || selection.capability_profile_revision != target.capability_profile_revision
-        || selection.execution != target.execution
-    {
+    if selection.execution.device_id != target.execution.device_id {
         return SelectionTargetRelation::Different;
     }
     match &selection.workspace {
@@ -42,49 +42,54 @@ pub(crate) fn selection_target_relation(
         SessionWorkspaceSelection::Auxiliary if target.repository_id.is_empty() => {
             SelectionTargetRelation::Exact
         }
-        SessionWorkspaceSelection::Create {
-            repository_id,
-            branch_ref,
-            ..
-        } if repository_id == &target.repository_id && branch_ref == &target.branch_ref => {
-            SelectionTargetRelation::SatisfiedByResolvedWorkspace
-        }
         _ => SelectionTargetRelation::Different,
     }
 }
 
-pub(crate) fn planned_actions(
+/// The same rules project future work and calculate the work at the queue head.
+pub(crate) fn plan_target_switch(
     source: Option<&SessionExecutionTarget>,
-    destination: &SessionExecutionSelection,
+    request: &TargetSwitchRequest,
+    facts: &TargetSwitchFacts,
 ) -> Vec<TargetOperationAction> {
-    use TargetOperationActionKind as Action;
-
-    let mut kinds = vec![Action::PrepareDevice];
-    match &destination.workspace {
-        SessionWorkspaceSelection::Create { .. } => {
-            kinds.extend([
-                Action::ResolveRevision,
-                Action::MaterializeWorktree,
-                Action::VerifyWorktree,
-            ]);
-        }
-        SessionWorkspaceSelection::Existing { .. } | SessionWorkspaceSelection::Auxiliary => {
-            kinds.push(Action::VerifyWorktree);
-        }
+    use TargetOperationActionKind as A;
+    if facts.destination_ready == Some(true)
+        && selection_target_relation(&request.destination, source) == SelectionTargetRelation::Exact
+    {
+        return vec![];
     }
-
-    if requires_sister_migration(source, destination) {
+    let mut kinds = vec![];
+    if request.destination.execution.is_remote() && facts.destination_ready != Some(true) {
+        kinds.push(A::PrepareDevice);
+    }
+    match &request.destination.workspace {
+        SessionWorkspaceSelection::Create { commit, .. } if facts.destination.is_none() => {
+            if commit.len() != 40 || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
+                kinds.push(A::ResolveRevision);
+            }
+            kinds.push(A::MaterializeWorktree);
+        }
+        SessionWorkspaceSelection::Auxiliary
+            if selection_target_relation(&request.destination, source)
+                == SelectionTargetRelation::Different =>
+        {
+            kinds.push(A::MaterializeWorktree)
+        }
+        _ => (),
+    }
+    kinds.push(A::VerifyWorktree);
+    if request.intent == TargetSwitchIntent::ContinueWork {
         kinds.extend([
-            Action::InspectSource,
-            Action::InspectDestination,
-            Action::CaptureSnapshot,
-            Action::TransferSnapshot,
-            Action::ApplySnapshot,
-            Action::VerifyMigratedState,
-            Action::ActivateSister,
+            A::InspectSource,
+            A::InspectDestination,
+            A::CaptureSnapshot,
+            A::TransferSnapshot,
+            A::ApplySnapshot,
+            A::VerifyMigratedState,
+            A::ActivateSister,
         ]);
     }
-    kinds.extend([Action::SelectProviderContext, Action::ActivateTarget]);
+    kinds.push(A::ActivateTarget);
     kinds
         .into_iter()
         .map(|kind| TargetOperationAction {
@@ -94,181 +99,4 @@ pub(crate) fn planned_actions(
             error: None,
         })
         .collect()
-}
-
-pub(crate) fn replan_actions(
-    existing: &[TargetOperationAction],
-    source: Option<&SessionExecutionTarget>,
-    destination: &SessionExecutionSelection,
-) -> Vec<TargetOperationAction> {
-    let mut replanned = planned_actions(source, destination);
-    for action in &mut replanned {
-        if let Some(previous) = existing.iter().find(|candidate| {
-            candidate.kind == action.kind
-                && candidate.status == TargetOperationActionStatus::Completed
-        }) {
-            action.status = previous.status;
-            action.detail = previous.detail.clone();
-        }
-    }
-    replanned
-}
-
-fn requires_sister_migration(
-    source: Option<&SessionExecutionTarget>,
-    destination: &SessionExecutionSelection,
-) -> bool {
-    let Some(source) = source else { return false };
-    let (repository_id, branch_ref) = match &destination.workspace {
-        SessionWorkspaceSelection::Existing { target } => {
-            (&target.repository_id, &target.branch_ref)
-        }
-        SessionWorkspaceSelection::Create {
-            repository_id,
-            branch_ref,
-            ..
-        } => (repository_id, branch_ref),
-        SessionWorkspaceSelection::Auxiliary => return false,
-    };
-    !source.repository_id.is_empty()
-        && &source.repository_id == repository_id
-        && &source.branch_ref == branch_ref
-        && source.execution.device_id != destination.execution.device_id
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::execution_targets::domain::{ExecutionBinding, ExecutionConnection};
-
-    fn execution(device: &str) -> ExecutionBinding {
-        ExecutionBinding {
-            device_id: device.into(),
-            device_name: device.into(),
-            provider: "codex".into(),
-            configuration_ref: "default".into(),
-            connection: ExecutionConnection::Local,
-        }
-    }
-
-    fn target(device: &str) -> SessionExecutionTarget {
-        SessionExecutionTarget {
-            capability_profile_id: "profile".into(),
-            capability_profile_revision: 1,
-            execution: execution(device),
-            repository_id: "repo".into(),
-            branch_ref: "refs/heads/main".into(),
-            worktree_id: "tree".into(),
-            path: "C:/repo".into(),
-            head: Some("a".repeat(40)),
-        }
-    }
-
-    fn create_selection(device: &str) -> SessionExecutionSelection {
-        SessionExecutionSelection {
-            capability_profile_id: "profile".into(),
-            capability_profile_revision: 1,
-            execution: execution(device),
-            workspace: SessionWorkspaceSelection::Create {
-                repository_id: "repo".into(),
-                branch_ref: "refs/heads/main".into(),
-                commit: "a".repeat(40),
-                attachment: "existing_branch".into(),
-            },
-        }
-    }
-
-    #[test]
-    fn resolved_create_selection_is_satisfied_by_active_target() {
-        assert_eq!(
-            selection_target_relation(&create_selection("local"), Some(&target("local"))),
-            SelectionTargetRelation::SatisfiedByResolvedWorkspace
-        );
-    }
-
-    #[test]
-    fn moving_head_does_not_change_the_selected_workspace() {
-        let current = target("local");
-        let mut selected = current.clone();
-        selected.head = None;
-        let selection = SessionExecutionSelection {
-            capability_profile_id: current.capability_profile_id.clone(),
-            capability_profile_revision: current.capability_profile_revision,
-            execution: current.execution.clone(),
-            workspace: SessionWorkspaceSelection::Existing { target: selected },
-        };
-        assert_eq!(
-            selection_target_relation(&selection, Some(&current)),
-            SelectionTargetRelation::Exact
-        );
-
-        let mut moved = current.clone();
-        moved.head = Some("b".repeat(40));
-        assert_eq!(
-            selection_target_relation(&selection, Some(&moved)),
-            SelectionTargetRelation::Exact
-        );
-        assert_eq!(
-            selection_target_relation(&create_selection("local"), Some(&moved)),
-            SelectionTargetRelation::SatisfiedByResolvedWorkspace
-        );
-    }
-
-    #[test]
-    fn changing_worktree_branch_or_device_remains_a_target_change() {
-        let current = target("local");
-        let selection = SessionExecutionSelection {
-            capability_profile_id: current.capability_profile_id.clone(),
-            capability_profile_revision: current.capability_profile_revision,
-            execution: current.execution.clone(),
-            workspace: SessionWorkspaceSelection::Existing {
-                target: current.clone(),
-            },
-        };
-        for changed in [
-            SessionExecutionTarget {
-                worktree_id: "another-tree".into(),
-                ..current.clone()
-            },
-            SessionExecutionTarget {
-                branch_ref: "refs/heads/another".into(),
-                ..current.clone()
-            },
-            target("another-device"),
-        ] {
-            assert_eq!(
-                selection_target_relation(&selection, Some(&changed)),
-                SelectionTargetRelation::Different
-            );
-        }
-    }
-
-    #[test]
-    fn same_device_creation_plans_only_workspace_and_activation_actions() {
-        let kinds = planned_actions(Some(&target("local")), &create_selection("local"))
-            .into_iter()
-            .map(|action| action.kind)
-            .collect::<Vec<_>>();
-        assert_eq!(
-            kinds,
-            vec![
-                TargetOperationActionKind::PrepareDevice,
-                TargetOperationActionKind::ResolveRevision,
-                TargetOperationActionKind::MaterializeWorktree,
-                TargetOperationActionKind::VerifyWorktree,
-                TargetOperationActionKind::SelectProviderContext,
-                TargetOperationActionKind::ActivateTarget,
-            ]
-        );
-    }
-
-    #[test]
-    fn remote_same_branch_adds_sister_migration_actions() {
-        let kinds = planned_actions(Some(&target("source")), &create_selection("destination"))
-            .into_iter()
-            .map(|action| action.kind)
-            .collect::<Vec<_>>();
-        assert!(kinds.contains(&TargetOperationActionKind::CaptureSnapshot));
-        assert!(kinds.contains(&TargetOperationActionKind::ActivateSister));
-    }
 }

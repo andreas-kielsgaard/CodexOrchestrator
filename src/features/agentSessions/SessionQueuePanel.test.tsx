@@ -26,11 +26,25 @@ function fixture(): SessionQueueViewDto {
     id: 'operation',
     sessionId: 'session',
     sourceTarget: target,
-    destinationSelection: {
-      capabilityProfileId: 'profile',
-      capabilityProfileRevision: 1,
-      execution,
-      workspace: { kind: 'existing' as const, target },
+    needsResolution: false,
+    receipt: null,
+    projectedPlan: {
+      calculatedAt: '2026-09-30T10:00:00Z',
+      requestRevision: 0,
+      stale: false,
+      source: null,
+      facts: { destination: null, destinationReady: null, unknown: [], blockers: [] },
+      steps: [],
+    },
+    request: {
+      intent: 'change_conversation_target' as const,
+      migrationResolution: null,
+      destination: {
+        capabilityProfileId: 'profile',
+        capabilityProfileRevision: 1,
+        execution,
+        workspace: { kind: 'existing' as const, target },
+      },
     },
     phase: 'staged' as const,
     actions: [
@@ -219,7 +233,9 @@ describe('SessionQueuePanel', () => {
     render(
       <SessionQueuePanel queue={queue} controller={controller()} onChooseTarget={onChooseTarget} />,
     );
-    fireEvent.click(screen.getByRole('button', { name: /Ready: Switch to Laptop/ }));
+    fireEvent.click(
+      screen.getByRole('button', { name: /Ready: Change conversation target to Laptop/ }),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Choose destination…' }));
     expect(onChooseTarget).toHaveBeenCalledWith(queue.entries[0]);
   });

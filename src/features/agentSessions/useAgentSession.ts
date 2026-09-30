@@ -1,3 +1,5 @@
+import { useSessionQueue } from './useSessionQueue';
+import type { TargetSwitchRequestDto } from '../../application/agentSessions/sessionQueue';
 import type { AgentSessionQuickFeatures } from '../../application/agentSessions/quickFeatures';
 import { mergeSelectedQuickFeatures } from './selectedTargetQuickFeatures';
 import type {
@@ -85,10 +87,7 @@ export interface AgentSessionWorkspaceController {
   queue?: SessionQueueViewDto | null;
   queuePresentation?: SessionQueuePresentation;
   reorderQueue?(entryIds: readonly string[]): Promise<void>;
-  enqueueTargetOperation?(
-    destination: SessionExecutionSelectionDto,
-    beforeEntryId?: string,
-  ): Promise<void>;
+  enqueueTargetOperation?(request: TargetSwitchRequestDto, beforeEntryId?: string): Promise<void>;
   compact?(): Promise<void>;
   updateQueuedMessage?(
     input: Omit<UpdateQueuedMessageInputDto, 'sessionId' | 'expectedRevision'>,
@@ -96,7 +95,7 @@ export interface AgentSessionWorkspaceController {
   updateTargetOperation?(
     input: Omit<UpdateTargetOperationInputDto, 'sessionId' | 'expectedRevision'>,
   ): Promise<void>;
-  startQueueEntry?(entryId: string): Promise<void>;
+  recalculateTargetProjection?(entryId: string): Promise<void>;
   retryQueueEntry?(entryId: string): Promise<void>;
   cancelQueueEntry?(entryId: string): Promise<void>;
   steer?(attachments?: readonly NewAgentImageAttachmentDto[]): Promise<void>;
@@ -216,7 +215,6 @@ export function useAgentSession(
   draftRef.current = draft;
   const [currentProfile, setCurrentProfile] = useState<PinnedAgentSessionProfileDto | null>(null);
   const [preparation, setPreparation] = useState<SessionPreparationDto | null>(null);
-  const [queue, setQueue] = useState<SessionQueueViewDto | null>(null);
   const acceptedOptionsRef = useRef<string | null>(null);
   const sendingRef = useRef(false);
   const [workingDirectory, setWorkingDirectory] = useState(
@@ -236,6 +234,27 @@ export function useAgentSession(
   const loadGenerationRef = useRef(0);
   const subscriptionReadyRef = useRef<Promise<void>>(Promise.resolve());
 
+  const reloadHistoryRef = useRef<(sessionId: string, reload?: boolean) => Promise<unknown>>(
+    async () => undefined,
+  );
+  const reloadQueueHistory = useCallback(
+    (sessionId: string, reload?: boolean) => reloadHistoryRef.current(sessionId, reload),
+    [],
+  );
+  const {
+    queue,
+    setQueue,
+    reloadQueue,
+    controls: queueControls,
+  } = useSessionQueue({
+    client,
+    queueClient: options.execution?.client,
+    selectedIdRef,
+    enabled: Boolean(options.preparedExecution),
+    reloadHistory: reloadQueueHistory,
+    setError,
+  });
+  const { compact } = queueControls;
   const loadSelected = useCallback(
     async (sessionId: string, reload = false) => {
       const generation = ++loadGenerationRef.current;
@@ -246,16 +265,14 @@ export function useAgentSession(
         : reload
           ? await client.reloadSession({ sessionId })
           : await client.loadSession({ sessionId });
-      const [prepared, current, queued] = await Promise.all([
+      const [prepared, current] = await Promise.all([
         options.preparedExecution && options.execution?.client.loadPreparation
           ? options.execution.client.loadPreparation(sessionId)
           : Promise.resolve(null),
         options.preparedExecution && options.execution?.client.loadCurrentProfile
           ? options.execution.client.loadCurrentProfile(sessionId).catch(() => null)
           : Promise.resolve(null),
-        options.preparedExecution && options.execution?.client.loadQueue
-          ? options.execution.client.loadQueue(sessionId).catch(() => null)
-          : Promise.resolve(null),
+        reloadQueue(sessionId).catch(() => null),
       ]);
       if (
         mountedRef.current &&
@@ -265,7 +282,6 @@ export function useAgentSession(
         if (!historySource) setFallbackDetails(next);
         setPreparation(prepared);
         setCurrentProfile(current);
-        setQueue(queued);
         setWorkingDirectory(
           readCachedComposerDraft(composerCacheKeyRef.current)?.workingDirectory ??
             next.session.workingDirectory ??
@@ -275,8 +291,10 @@ export function useAgentSession(
       }
       return next;
     },
-    [client, historySource, options.preparedExecution, options.execution?.client],
+    [client, historySource, options.preparedExecution, options.execution?.client, reloadQueue],
   );
+
+  reloadHistoryRef.current = loadSelected;
 
   const reconcileUpdate = useCallback(
     async (update: AgentSessionUpdateDto) => {
@@ -286,21 +304,18 @@ export function useAgentSession(
       if (historySource) {
         if (update.kind !== 'preparation_updated' && update.kind !== 'queue_updated') return;
         try {
-          const [prepared, current, queued] = await Promise.all([
+          const [prepared, current] = await Promise.all([
             options.preparedExecution && options.execution?.client.loadPreparation
               ? options.execution.client.loadPreparation(update.sessionId)
               : Promise.resolve(null),
             options.preparedExecution && options.execution?.client.loadCurrentProfile
               ? options.execution.client.loadCurrentProfile(update.sessionId).catch(() => null)
               : Promise.resolve(null),
-            options.preparedExecution && options.execution?.client.loadQueue
-              ? options.execution.client.loadQueue(update.sessionId).catch(() => null)
-              : Promise.resolve(null),
+            Promise.resolve(null),
           ]);
           if (mountedRef.current && selectedIdRef.current === update.sessionId) {
             setPreparation(prepared);
             setCurrentProfile(current);
-            setQueue(queued);
           }
         } catch (caught) {
           if (mountedRef.current) setError(`Session setup refresh failed: ${errorMessage(caught)}`);
@@ -360,7 +375,7 @@ export function useAgentSession(
         if (mountedRef.current && selectedIdRef.current === sessionId) setLoading(false);
       }
     },
-    [historySource, loadSelected],
+    [historySource, loadSelected, setQueue],
   );
 
   const startNewSession = useCallback(
@@ -380,7 +395,7 @@ export function useAgentSession(
       setError(null);
       setLoading(false);
     },
-    [],
+    [setQueue],
   );
 
   const draftKey = options.draftId ?? 'new';
@@ -632,136 +647,6 @@ export function useAgentSession(
       }
     },
     [client, details, loadSelected],
-  );
-
-  const reorderQueue = useCallback(
-    async (entryIds: readonly string[]) => {
-      const sessionId = selectedIdRef.current;
-      const queueClient = options.execution?.client;
-      if (!sessionId || !queue || !queueClient?.reorderQueue) return;
-      try {
-        setQueue(
-          await queueClient.reorderQueue({
-            sessionId,
-            expectedRevision: queue.revision,
-            entryIds,
-          }),
-        );
-      } catch (caught) {
-        setError(errorMessage(caught));
-        await loadSelected(sessionId, true);
-      }
-    },
-    [loadSelected, options.execution?.client, queue],
-  );
-
-  const enqueueTargetOperation = useCallback(
-    async (destination: SessionExecutionSelectionDto, beforeEntryId?: string) => {
-      const sessionId = selectedIdRef.current;
-      const queueClient = options.execution?.client;
-      if (!sessionId || !queueClient?.enqueueTargetOperation) return;
-      try {
-        const appended = await queueClient.enqueueTargetOperation({ sessionId, destination });
-        if (!beforeEntryId || !queueClient.reorderQueue) {
-          setQueue(appended);
-          return;
-        }
-        const unfinished = appended.entries.filter(
-          ({ entry }) => entry.state !== 'completed' && entry.state !== 'canceled',
-        );
-        const previousIds = new Set(queue?.entries.map(({ entry }) => entry.id));
-        const inserted = unfinished.find(
-          ({ entry, targetOperation }) => targetOperation && !previousIds.has(entry.id),
-        );
-        const ids = unfinished.map(({ entry }) => entry.id);
-        if (!inserted || !ids.includes(beforeEntryId)) {
-          setQueue(appended);
-          return;
-        }
-        const next = ids.filter((id) => id !== inserted.entry.id);
-        next.splice(next.indexOf(beforeEntryId), 0, inserted.entry.id);
-        setQueue(
-          await queueClient.reorderQueue({
-            sessionId,
-            expectedRevision: appended.revision,
-            entryIds: next,
-          }),
-        );
-      } catch (caught) {
-        setError(errorMessage(caught));
-      }
-    },
-    [options.execution?.client, queue],
-  );
-
-  const compact = useCallback(async () => {
-    const sessionId = selectedIdRef.current;
-    const queueClient = options.execution?.client;
-    if (!sessionId || !queueClient?.enqueueCompaction) return;
-    try {
-      setQueue(await queueClient.enqueueCompaction(sessionId));
-      await loadSelected(sessionId, true);
-    } catch (caught) {
-      setError(errorMessage(caught));
-    }
-  }, [loadSelected, options.execution?.client]);
-
-  const updateQueuedMessage = useCallback(
-    async (input: Omit<UpdateQueuedMessageInputDto, 'sessionId' | 'expectedRevision'>) => {
-      const sessionId = selectedIdRef.current;
-      const queueClient = options.execution?.client;
-      if (!sessionId || !queue || !queueClient?.updateQueuedMessage) return;
-      try {
-        setQueue(
-          await queueClient.updateQueuedMessage({
-            ...input,
-            sessionId,
-            expectedRevision: queue.revision,
-          }),
-        );
-        await loadSelected(sessionId, true);
-      } catch (caught) {
-        setError(errorMessage(caught));
-      }
-    },
-    [loadSelected, options.execution?.client, queue],
-  );
-
-  const updateTargetOperation = useCallback(
-    async (input: Omit<UpdateTargetOperationInputDto, 'sessionId' | 'expectedRevision'>) => {
-      const sessionId = selectedIdRef.current;
-      const queueClient = options.execution?.client;
-      if (!sessionId || !queue || !queueClient?.updateTargetOperation) return;
-      try {
-        setQueue(
-          await queueClient.updateTargetOperation({
-            ...input,
-            sessionId,
-            expectedRevision: queue.revision,
-          }),
-        );
-      } catch (caught) {
-        setError(errorMessage(caught));
-      }
-    },
-    [options.execution?.client, queue],
-  );
-
-  const actOnQueueEntry = useCallback(
-    async (kind: 'start' | 'retry' | 'cancel', entryId: string) => {
-      const sessionId = selectedIdRef.current;
-      const queueClient = options.execution?.client;
-      if (!sessionId || !queueClient) return;
-      try {
-        if (kind === 'start') await queueClient.startQueueEntry?.(sessionId, entryId);
-        else if (kind === 'retry') await queueClient.retryQueueEntry?.(sessionId, entryId);
-        else await queueClient.cancelQueueEntry?.(sessionId, entryId);
-        await loadSelected(sessionId, true);
-      } catch (caught) {
-        setError(errorMessage(caught));
-      }
-    },
-    [loadSelected, options.execution?.client],
   );
 
   const cancel = useCallback(async () => {
@@ -1022,14 +907,7 @@ export function useAgentSession(
     steer,
     queue,
     queuePresentation,
-    enqueueTargetOperation,
-    compact,
-    reorderQueue,
-    updateQueuedMessage,
-    updateTargetOperation,
-    startQueueEntry: (entryId) => actOnQueueEntry('start', entryId),
-    retryQueueEntry: (entryId) => actOnQueueEntry('retry', entryId),
-    cancelQueueEntry: (entryId) => actOnQueueEntry('cancel', entryId),
+    ...queueControls,
     selectedSessionId,
     details,
     transcript,

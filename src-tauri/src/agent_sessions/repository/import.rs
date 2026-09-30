@@ -80,6 +80,7 @@ impl AgentSessionImportStore for SqliteAgentSessionRepository {
                 };
                 // Imported records have no Orchid execution timestamps. Source times live in provenance.
                 insert_invocation(tx, &invocation)?;
+                super::history::allocate_position(tx,&session.id,Some(id.as_str()),None)?;
                 tx.execute("INSERT INTO agent_session_imported_turns VALUES (?1,?2,?3,?4,?5,?6)",
                     params![id.as_str(),session.id.as_str(),turn.id,ordinal as i64,turn.started_at,turn.completed_at])
                     .map_err(sql_write("import turn provenance"))?;

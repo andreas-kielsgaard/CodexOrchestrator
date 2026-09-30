@@ -81,6 +81,37 @@ impl SisterWorktreeStore {
         session_id: &str,
         at: DateTime<Utc>,
     ) -> Result<String, String> {
+        self.set_members(
+            source,
+            destination,
+            session_id,
+            at,
+            &destination.execution.device_id,
+        )
+    }
+    pub(crate) fn link(
+        &self,
+        source: &SessionExecutionTarget,
+        destination: &SessionExecutionTarget,
+        session_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<String, String> {
+        self.set_members(
+            source,
+            destination,
+            session_id,
+            at,
+            &source.execution.device_id,
+        )
+    }
+    fn set_members(
+        &self,
+        source: &SessionExecutionTarget,
+        destination: &SessionExecutionTarget,
+        session_id: &str,
+        at: DateTime<Utc>,
+        active_device_id: &str,
+    ) -> Result<String, String> {
         if source.repository_id != destination.repository_id
             || source.branch_ref != destination.branch_ref
         {
@@ -121,7 +152,7 @@ impl SisterWorktreeStore {
                             group_id,
                             repository_id,
                             branch_ref,
-                            destination.execution.device_id,
+                            active_device_id,
                             session_id,
                             at.to_rfc3339(),
                         ],

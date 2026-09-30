@@ -84,8 +84,8 @@ export function createTauriAgentSessionClient(
     updateQueuedMessage: (input) => invokeCommand('update_queued_agent_session_message', { input }),
     updateTargetOperation: (input) =>
       invokeCommand('update_agent_session_target_operation', { input }),
-    startQueueEntry: (sessionId, entryId) =>
-      invokeCommand('start_agent_session_queue_entry', { input: { sessionId, entryId } }),
+    recalculateTargetProjection: (input) =>
+      invokeCommand('recalculate_agent_session_target_projection', { input }),
     retryQueueEntry: (sessionId, entryId) =>
       invokeCommand('retry_agent_session_queue_entry', { input: { sessionId, entryId } }),
     cancelQueueEntry: (sessionId, entryId) =>

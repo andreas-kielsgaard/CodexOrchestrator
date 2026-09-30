@@ -1,19 +1,23 @@
-import { ImportedTurnContent } from './ImportedTurnContent';
-import { SessionInteractions } from './SessionInteractions';
+import { useState, useEffect } from 'react';
+import { AgentSessionInvocation } from './AgentSessionInvocation';
+import { SessionTransitionIndicator } from './SessionTransitionIndicator';
+import { SessionTransitionDetailsDialog } from './SessionTransitionDetailsDialog';
+import type { SessionHistoryItem, SessionTransition } from './sessionHistoryProjector';
 import {
   projectedTranscriptContent,
   type ProjectedTranscript,
   type ProjectedTranscriptContent,
 } from './transcriptProjector';
-import { AgentMarkdown } from './AgentMarkdown';
-import { ProcessingDisclosure } from './ProcessingDisclosure';
 import type { AgentIdentity, RuntimeInteractionResponseDto } from '../../application/agentSessions';
-import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
-import { RuntimeFailureGuidance } from '../agentProviders/RuntimeFailureGuidance';
 
 interface AgentSessionTranscriptProps {
-  onRespondToRequest?(invocationId: string, requestId: string, response: RuntimeInteractionResponseDto): Promise<void>;
+  onRespondToRequest?(
+    invocationId: string,
+    requestId: string,
+    response: RuntimeInteractionResponseDto,
+  ): Promise<void>;
   transcript: ProjectedTranscript | null;
+  history?: readonly SessionHistoryItem[];
   content?: readonly ProjectedTranscriptContent[];
   loading: boolean;
   expandedProcessing: ReadonlySet<string>;
@@ -26,6 +30,7 @@ interface AgentSessionTranscriptProps {
 
 export function AgentSessionTranscript({
   transcript,
+  history,
   content,
   loading,
   expandedProcessing,
@@ -36,6 +41,14 @@ export function AgentSessionTranscript({
   processingHeading,
   onRespondToRequest,
 }: AgentSessionTranscriptProps) {
+  const [selectedTransition, setSelectedTransition] = useState<SessionTransition | null>(null);
+  useEffect(() => {
+    if (
+      selectedTransition?.kind === 'blocked' &&
+      !history?.some((item) => item.id === selectedTransition.id)
+    )
+      setSelectedTransition(null);
+  }, [history, selectedTransition]);
   if (loading && !transcript) {
     return (
       <p className="session-empty" role="status">
@@ -46,8 +59,8 @@ export function AgentSessionTranscript({
   const visibleInvocations = transcript
     ? projectVisibleInvocations(transcript, content ?? projectedTranscriptContent(transcript))
     : [];
-  if (transcript && content && !visibleInvocations.length) return null;
-  if (!transcript || !visibleInvocations.length) {
+  if (transcript && content && !visibleInvocations.length && !history?.length) return null;
+  if (!transcript || (!visibleInvocations.length && !history?.length)) {
     return (
       <section className={`session-empty${emptyState ? ' session-empty--custom' : ''}`}>
         <h2>{emptyState?.heading ?? 'Start with a message'}</h2>
@@ -57,110 +70,47 @@ export function AgentSessionTranscript({
     );
   }
 
+  const byId = new Map(visibleInvocations.map((invocation) => [invocation.id, invocation]));
+  const items =
+    history ??
+    visibleInvocations.map((invocation) => ({ kind: 'invocation' as const, id: invocation.id }));
   return (
-    <ol className="agent-transcript" aria-label="Agent Session transcript">
-      {visibleInvocations.map((invocation) => (
-        <li
-          className="transcript-invocation"
-          key={invocation.id}
-          data-invocation-id={invocation.id}
-          tabIndex={-1}
-        >
-          {invocation.imported ? (
-            <ImportedTurnContent
-              history={invocation.imported}
-              status={invocation.status}
-              safeOnly={safeActivityDetails}
-              showOutcome={invocation.showOutcome}
-            />
+    <>
+      <ol className="agent-transcript" aria-label="Agent Session transcript">
+        {items.map((item) =>
+          item.kind === 'invocation' ? (
+            byId.has(item.id) && (
+              <AgentSessionInvocation
+                key={item.id}
+                invocation={byId.get(item.id)!}
+                expandedProcessing={expandedProcessing}
+                onToggleProcessing={onToggleProcessing}
+                safeActivityDetails={safeActivityDetails}
+                processingHeading={processingHeading}
+                agentIdentity={agentIdentity}
+                onRespondToRequest={onRespondToRequest}
+                providerChange={'providerChange' in item ? item.providerChange : undefined}
+                onOpenTransition={setSelectedTransition}
+              />
+            )
           ) : (
-            <>
-              {invocation.showInput && (
-                <article className="transcript-message user-message">
-                  <header>
-                    <span>
-                      {invocation.inputProvenance === 'application'
-                        ? 'Plan Builder / Application'
-                        : 'You'}
-                    </span>
-                  </header>
-                  <p>{invocation.submittedText}</p>
-                  {invocation.attachments.length > 0 && (
-                    <div className="transcript-image-attachments">
-                      {invocation.attachments.map((attachment) => (
-                        <img
-                          key={attachment.id}
-                          src={`data:${attachment.mediaType};base64,${attachment.dataBase64}`}
-                          alt={attachment.name}
-                        />
-                      ))}
-                    </div>
-                  )}
-                  {invocation.preparing && (
-                    <small className="waiting-status" role="status">
-                      Waiting for setup
-                    </small>
-                  )}
-                </article>
-              )}
-              <section
-                className="agent-invocation-output"
-                aria-label={`Agent response: ${invocation.outcome.label}`}
-              >
-                <ProcessingDisclosure
-                  invocationId={invocation.id}
-                  activity={invocation.processing}
-                  running={invocation.isActive && !invocation.preparing}
-                  expanded={expandedProcessing.has(invocation.id)}
-                  onToggle={() => onToggleProcessing(invocation.id)}
-                  safeOnly={safeActivityDetails}
-                  heading={processingHeading}
-                />
-                {invocation.interactions?.length ? (
-                  <SessionInteractions
-                    interactions={invocation.interactions}
-                    onRespond={onRespondToRequest}
-                  />
-                ) : null}
-                {invocation.finalResponse && (
-                  <article className="transcript-message agent-final-message">
-                    <header>
-                      <span className="transcript-message__agent">
-                        {agentIdentity && <AgentIdentityBadge identity={agentIdentity} compact />}
-                        <span>{agentIdentity?.name ?? 'Agent'}</span>
-                      </span>
-                      <span className="outcome-label">{invocation.outcome.label}</span>
-                    </header>
-                    <AgentMarkdown>{invocation.finalResponse.text}</AgentMarkdown>
-                  </article>
-                )}
-                {invocation.showOutcome &&
-                  !invocation.finalResponse &&
-                  invocation.outcome.message && (
-                    <>
-                      <p className={`invocation-outcome ${invocation.status}`} role="status">
-                        <strong>{invocation.outcome.label}.</strong> {invocation.outcome.message}
-                      </p>
-                      <RuntimeFailureGuidance failure={invocation.runtimeFailure} />
-                    </>
-                  )}
-                {invocation.showOutcome &&
-                  !invocation.finalResponse &&
-                  invocation.status === 'completed' && (
-                    <p className="invocation-outcome completed" role="status">
-                      <strong>Completed without a final response.</strong>
-                    </p>
-                  )}
-              </section>
-            </>
-          )}
-        </li>
-      ))}
-    </ol>
+            <li key={item.id}>
+              <SessionTransitionIndicator transition={item} onOpen={setSelectedTransition} />
+            </li>
+          ),
+        )}
+      </ol>
+      {selectedTransition && (
+        <SessionTransitionDetailsDialog
+          transition={selectedTransition}
+          onClose={() => setSelectedTransition(null)}
+        />
+      )}
+    </>
   );
 }
 
-type VisibleInvocation = ProjectedTranscript['invocations'][number] & {
+export type VisibleInvocation = ProjectedTranscript['invocations'][number] & {
   showInput: boolean;
   showOutcome: boolean;
 };

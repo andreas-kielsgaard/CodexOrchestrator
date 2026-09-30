@@ -177,12 +177,17 @@ fn main_and_remote_prototype_schemas_upgrade_without_losing_session_state() {
             Ok(())
         }).unwrap();
         let repository = SqliteAgentSessionRepository::from_database(database.clone());
-        let before = repository
+        let mut before = repository
             .load_session_history(&session_id)
             .unwrap()
             .unwrap();
         assert_eq!(before.invocations.len(), 1);
         assert_eq!(before.invocations[0].events.len(), 1);
+        before.timeline.positions = vec![crate::agent_sessions::history::SessionHistoryPosition {
+            ordinal: 0,
+            invocation_id: Some("invocation".into()),
+            operation_id: None,
+        }];
         let organization = repository.list_organization().unwrap();
         let order = NavigationOrderRepository::new(database.clone())
             .load()

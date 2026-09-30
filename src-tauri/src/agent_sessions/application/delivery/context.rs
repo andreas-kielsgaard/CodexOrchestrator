@@ -91,7 +91,10 @@ mod tests {
     use chrono::Utc;
     use serde_json::json;
 
-    fn invocation(id: &str, text: &str, status: AgentInvocationStatus) -> AgentInvocation { AgentInvocation { attachments: vec![], id: AgentInvocationId::new(id).unwrap(),
+    fn invocation(id: &str, text: &str, status: AgentInvocationStatus) -> AgentInvocation {
+        AgentInvocation {
+            attachments: vec![],
+            id: AgentInvocationId::new(id).unwrap(),
             session_id: AgentSessionId::new("session").unwrap(),
             submitted_text: text.into(),
             input_provenance: AgentInvocationInputProvenance::User,
@@ -138,6 +141,7 @@ mod tests {
             import_provenance: None,
         };
         AgentSessionHistory {
+            timeline: Default::default(),
             session: AgentSession {
                 execution_target: None,
                 workspace_origin: None,

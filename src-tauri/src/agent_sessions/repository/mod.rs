@@ -2,9 +2,13 @@ mod native_conversations;
 pub(crate) use native_conversations::SCHEMA as NATIVE_CONVERSATION_SCHEMA;
 mod preparation;
 pub(crate) use preparation::SCHEMA as PREPARATION_SCHEMA;
+mod history;
 mod queue;
+mod target_operations;
+pub(crate) use history::SCHEMA as HISTORY_SCHEMA;
 pub(crate) use queue::migrate_legacy_target_transitions;
 pub(crate) use queue::SCHEMA as QUEUE_SCHEMA;
+pub(crate) use target_operations::upgrade_target_switches;
 mod addressing;
 pub(crate) mod file_history;
 mod mapping;
@@ -98,12 +102,14 @@ impl SqliteAgentSessionRepository {
                     })
                 })
                 .collect::<Result<Vec<_>, RepositoryError>>()?;
+            let timeline = history::read_timeline(&transaction, session_id)?;
             transaction
                 .commit()
                 .map_err(sql_unavailable("commit Agent Session history load"))?;
             Ok(Some(AgentSessionHistory {
                 session,
                 invocations,
+                timeline,
             }))
         })
     }
@@ -233,6 +239,22 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
     ) -> Result<(), RepositoryError> {
         self.save_preparation_record(preparation)
     }
+    fn current_provider_binding_owner(
+        &self,
+        session_id: &AgentSessionId,
+    ) -> Result<Option<crate::agent_sessions::domain::ProviderBindingOwner>, RepositoryError> {
+        self.read("read current provider owner", |connection| {
+            let json: Option<String> = connection
+                .query_row(
+                    "SELECT binding_owner_json FROM agent_sessions WHERE id=?1",
+                    [session_id.as_str()],
+                    |r| r.get(0),
+                )
+                .map_err(sql_unavailable("read binding owner"))?;
+            json.map(|json| from_json(&json, "binding owner"))
+                .transpose()
+        })
+    }
     fn provider_session_binding(
         &self,
         session_id: &AgentSessionId,
@@ -291,9 +313,10 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
     fn enqueue_target_operation(
         &self,
         operation: super::target_operation::SessionTargetOperation,
+        before_entry_id: Option<&str>,
         at: DateTime<Utc>,
     ) -> Result<super::queue::SessionQueueSnapshot, RepositoryError> {
-        self.enqueue_target_operation_record(operation, at)
+        self.enqueue_target_operation_record(operation, before_entry_id, at)
     }
     fn target_operation(
         &self,
@@ -371,16 +394,28 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         session_id: &AgentSessionId,
         entry_id: &str,
         expected_revision: u64,
-        destination: crate::execution_targets::domain::SessionExecutionSelection,
+        request: crate::agent_sessions::target_operation::TargetSwitchRequest,
         at: DateTime<Utc>,
     ) -> Result<super::queue::SessionQueueSnapshot, RepositoryError> {
-        self.replace_target_operation_record(
-            session_id,
-            entry_id,
-            expected_revision,
-            destination,
-            at,
-        )
+        self.replace_target_operation_record(session_id, entry_id, expected_revision, request, at)
+    }
+    fn save_target_projection(
+        &self,
+        operation: &super::target_operation::SessionTargetOperation,
+        revision: u64,
+    ) -> Result<super::queue::SessionQueueSnapshot, RepositoryError> {
+        self.save_target_projection_record(operation, revision)
+    }
+    fn discard_target_operation(&self, id: &str, at: DateTime<Utc>) -> Result<(), RepositoryError> {
+        self.discard_target_operation_record(id, at)
+    }
+    fn discard_queue_entry(
+        &self,
+        session_id: &AgentSessionId,
+        entry_id: &str,
+        at: DateTime<Utc>,
+    ) -> Result<super::queue::SessionQueueSnapshot, RepositoryError> {
+        self.discard_queue_entry_record(session_id, entry_id, at)
     }
     fn activate_target_operation(
         &self,
@@ -509,6 +544,9 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
                 ],
             )
             .map_err(sql_unavailable("update runtime binding"))?;
+        if let Some(target) = current.execution_target.as_ref() {
+            transaction.execute("UPDATE agent_sessions SET binding_owner_json=?2 WHERE id=?1", params![session_id.as_str(),to_json(&crate::agent_sessions::domain::ProviderBindingOwner::from(target))?]).map_err(sql_write("update native binding owner"))?;
+        }
         Ok(candidate)
         })
     }
@@ -684,6 +722,8 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
                 params![invocation_id.as_str(), timestamp(accepted_at)],
             )
             .map_err(sql_write("record invocation launch acceptance"))?;
+        let invocation = required_invocation(transaction, invocation_id)?;
+        history::allocate_position(transaction,&invocation.session_id,Some(invocation_id.as_str()),None)?;
         Ok(())
     })
     }
@@ -818,6 +858,10 @@ fn initialize_agent_session_storage(connection: &Connection) -> Result<(), Strin
         .execute_batch(QUEUE_SCHEMA)
         .map_err(|e| e.to_string())?;
     migrate_legacy_target_transitions(connection)?;
+    upgrade_target_switches(connection)?;
+    connection
+        .execute_batch(HISTORY_SCHEMA)
+        .map_err(|e| e.to_string())?;
     ensure_agent_session_ownership_schema(connection)?;
     connection
         .execute_batch(IMPORT_SCHEMA)

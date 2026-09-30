@@ -22,6 +22,8 @@ interface HistoryEntry {
   loadPromise?: Promise<AgentSessionDetailsDto>;
   publishScheduled: boolean;
   touchedAt: number;
+  removedInvocationIds: Set<string>;
+  latestQueueUpdate?: Extract<AgentSessionUpdateDto, { kind: 'queue_updated' }>;
 }
 
 const initialSnapshot = (): AgentSessionHistorySnapshot => ({
@@ -57,6 +59,7 @@ export function createAgentSessionHistorySource({
       pendingChanges: [],
       publishScheduled: false,
       touchedAt: ++clock,
+      removedInvocationIds: new Set(),
     };
     entries.set(sessionId, created);
     evictInactiveEntries();
@@ -108,6 +111,7 @@ export function createAgentSessionHistorySource({
     refreshing: boolean,
   ): Promise<AgentSessionDetailsDto> => {
     if (entry.loadPromise) return entry.loadPromise;
+    entry.latestQueueUpdate = undefined;
     entry.snapshot = {
       ...entry.snapshot,
       loading: !entry.snapshot.details,
@@ -117,7 +121,16 @@ export function createAgentSessionHistorySource({
     };
     notify(entry);
     const request = load(sessionId).then(
-      (details) => {
+      (loadedDetails) => {
+        const queueReduction = entry.latestQueueUpdate
+          ? reduceAgentSessionHistory(loadedDetails, entry.latestQueueUpdate)
+          : null;
+        const details = {
+          ...(queueReduction?.kind === 'changed' ? queueReduction.details : loadedDetails),
+          invocations: loadedDetails.invocations.filter(
+            (item) => !entry.removedInvocationIds.has(item.invocation.id),
+          ),
+        };
         entry.loadPromise = undefined;
         entry.workingDetails = details;
         entry.pendingChanges = [];
@@ -159,7 +172,13 @@ export function createAgentSessionHistorySource({
 
   const applyUpdate = (update: AgentSessionUpdateDto) => {
     const entry = entries.get(update.sessionId);
-    if (!entry?.workingDetails) return;
+    if (!entry) return;
+    if (update.kind === 'queue_updated') {
+      entry.latestQueueUpdate = update;
+      for (const id of update.removedInvocationIds ?? []) entry.removedInvocationIds.add(id);
+    } else if ('invocationId' in update && entry.removedInvocationIds.has(update.invocationId))
+      return;
+    if (!entry.workingDetails) return;
     const reduction = reduceAgentSessionHistory(entry.workingDetails, update);
     if (reduction.kind === 'unchanged') return;
     if (reduction.kind === 'reconcile') {
@@ -170,7 +189,9 @@ export function createAgentSessionHistorySource({
     entry.pendingChanges.push(update);
     queuePublish(
       entry,
-      update.kind === 'invocation_terminal' || update.kind === 'diagnostic_recorded',
+      update.kind === 'invocation_terminal' ||
+        update.kind === 'diagnostic_recorded' ||
+        update.kind === 'queue_updated',
     );
   };
 

@@ -83,20 +83,30 @@ impl ExecutionTargetService {
     }
 
     pub(crate) fn ensure_ready(&self, binding: &ExecutionBinding) -> Result<(), String> {
+        self.ensure_ready_with_effect(binding).map(|_| ())
+    }
+    pub(crate) fn ensure_ready_with_effect(
+        &self,
+        binding: &ExecutionBinding,
+    ) -> Result<bool, String> {
         if !binding.is_remote() {
-            return Ok(());
+            return Ok(false);
         }
+        let started = std::cell::Cell::new(false);
         ensure_device_ready(
             &self.readiness_gates,
             &binding.device_id,
             || self.endpoints.describe_runtime(binding, None).map(|_| ()),
             || {
                 self.synchronize_devices()?;
-                self.devices.run_start(&binding.device_id)
+                self.devices.run_start(&binding.device_id)?;
+                started.set(true);
+                Ok(())
             },
             Duration::from_secs(120),
             Duration::from_secs(1),
-        )
+        )?;
+        Ok(started.get())
     }
 
     pub(crate) fn runtime(

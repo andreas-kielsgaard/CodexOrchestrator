@@ -27,7 +27,18 @@ export function queueTargetLabel(
 export function queueEntryTitle(item: SessionQueueEntryViewDto) {
   if (item.entry.item.kind === 'compaction') return 'Compact conversation';
   if (item.message) return item.message.invocation.submittedText.split(/\r?\n/, 1)[0] || 'Message';
-  return `Switch to ${item.targetOperation?.destinationSelection.execution.deviceName ?? 'destination'}`;
+  const request = item.targetOperation?.request;
+  if (!request) return 'Target switch';
+  const workspace = request.destination.workspace;
+  const branch =
+    workspace.kind === 'existing'
+      ? workspace.target.branchRef
+      : workspace.kind === 'create'
+        ? workspace.branchRef
+        : '';
+  return request.intent === 'continue_work'
+    ? `Continue this work at ${request.destination.execution.deviceName}`
+    : `Change conversation target to ${request.destination.execution.deviceName} ${branch.replace(/^refs\/heads\//, '')}`.trim();
 }
 
 export function queueEntryState(item: SessionQueueEntryViewDto) {
@@ -62,7 +73,6 @@ const actionLabels: Record<TargetOperationActionKindDto, string> = {
   apply_snapshot: 'Apply snapshot',
   verify_migrated_state: 'Verify migrated state',
   activate_sister: 'Activate sister worktree',
-  select_provider_context: 'Select provider context',
   activate_target: 'Activate target',
 };
 

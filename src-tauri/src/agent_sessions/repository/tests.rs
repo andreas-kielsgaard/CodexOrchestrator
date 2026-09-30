@@ -638,7 +638,10 @@ fn test_invocation(
     id: &str,
     session_id: &AgentSessionId,
     created_at: DateTime<Utc>,
-) -> AgentInvocation { AgentInvocation { attachments: vec![], id: AgentInvocationId::new(id).expect("invocation ID"),
+) -> AgentInvocation {
+    AgentInvocation {
+        attachments: vec![],
+        id: AgentInvocationId::new(id).expect("invocation ID"),
         session_id: session_id.clone(),
         submitted_text: format!("input for {id}"),
         input_provenance: AgentInvocationInputProvenance::User,
@@ -911,6 +914,7 @@ fn queued_preparations_accept_multiple_pending_messages_and_reorder_them_atomica
             error: None,
             can_retry: false,
             selection: None,
+            requested_capability_profile: None,
             source_target: None,
             source_binding: AgentRuntimeBinding {
                 external_context_id: None,
@@ -1062,6 +1066,21 @@ fn legacy_target_transition_and_waiting_prompt_migrate_to_adjacent_queue_entries
 
     let queue = repository.session_queue(&session.id).unwrap();
     assert_eq!(queue.entries.len(), 2);
+    assert_eq!(
+        queue.entries[0].state,
+        crate::agent_sessions::queue::SessionQueueEntryState::Blocked
+    );
+    if let crate::agent_sessions::queue::SessionQueueEntryItem::TargetOperation { operation_id } =
+        &queue.entries[0].item
+    {
+        assert!(
+            repository
+                .target_operation(operation_id)
+                .unwrap()
+                .unwrap()
+                .needs_resolution
+        );
+    }
     assert!(matches!(
         queue.entries[0].item,
         crate::agent_sessions::queue::SessionQueueEntryItem::TargetOperation { .. }
@@ -1119,5 +1138,74 @@ fn keeps_the_first_initial_prompt_prefix() {
     assert_eq!(
         repository.initial_prompt_prefix(&session.id).unwrap(),
         Some(prefix("first"))
+    );
+}
+
+#[test]
+fn target_switch_upgrade_blocks_ambiguous_pending_intent_without_fabricating_history() {
+    use crate::agent_sessions::target_operation::*;
+    use crate::execution_targets::domain::*;
+    let repository = memory_repository();
+    let session = repository
+        .create_session(test_session("old-operation", at(0)))
+        .unwrap();
+    let target = SessionExecutionTarget {
+        capability_profile_id: "profile".into(),
+        capability_profile_revision: 1,
+        execution: ExecutionBinding::default(),
+        repository_id: String::new(),
+        branch_ref: String::new(),
+        worktree_id: "old-target".into(),
+        path: "C:/old-target".into(),
+        head: None,
+    };
+    let selection = SessionExecutionSelection {
+        capability_profile_id: "profile".into(),
+        capability_profile_revision: 1,
+        execution: ExecutionBinding::default(),
+        workspace: SessionWorkspaceSelection::Existing { target },
+    };
+    let operation = SessionTargetOperation::new(
+        "old-operation".into(),
+        session.id.clone(),
+        None,
+        TargetSwitchRequest::retarget(selection),
+        at(1),
+    );
+    repository
+        .enqueue_target_operation(operation.clone(), None, at(1))
+        .unwrap();
+    repository
+        .write("seed old payload and upgrade", |tx| {
+            let mut payload = serde_json::to_value(&operation).unwrap();
+            payload["destinationSelection"] = payload["request"]["destination"].clone();
+            let object = payload.as_object_mut().unwrap();
+            for key in ["request", "needsResolution", "projectedPlan", "receipt"] {
+                object.remove(key);
+            }
+            tx.execute(
+                "UPDATE agent_session_target_operations SET payload_json=?2 WHERE id=?1",
+                params![operation.id, payload.to_string()],
+            )
+            .map_err(sql_write("seed legacy operation"))?;
+            super::target_operations::upgrade_target_switches(tx)
+                .map_err(|error| RepositoryError::new(RepositoryErrorKind::Unavailable, error))
+        })
+        .unwrap();
+    let recovered = repository.target_operation(&operation.id).unwrap().unwrap();
+    assert!(recovered.needs_resolution);
+    assert_eq!(recovered.phase, TargetOperationPhase::Blocked);
+    assert!(recovered.receipt.is_none());
+    assert!(recovered.projected_plan.stale);
+    assert!(repository
+        .load_session_history(&session.id)
+        .unwrap()
+        .unwrap()
+        .timeline
+        .transitions
+        .is_empty());
+    assert_eq!(
+        repository.session_queue(&session.id).unwrap().entries[0].state,
+        crate::agent_sessions::queue::SessionQueueEntryState::Blocked
     );
 }

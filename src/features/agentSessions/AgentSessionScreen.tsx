@@ -1,3 +1,4 @@
+import { projectedQueueSource } from '../../application/agentSessions/sessionQueue';
 import type { AgentSessionImportClient } from '../../application/agentSessions/importContracts';
 import { capabilityProfileDeviceModels, withCapabilityProfileDeviceModels } from './routeModels';
 import { ImportCodexSessionDialog } from './ImportCodexSessionDialog';
@@ -9,6 +10,7 @@ import {
   executionRouteKey,
   executionRouteRef,
   type ExecutionTargetClient,
+  type SessionExecutionTargetDto,
 } from '../../application/executionTargets/contracts';
 import type { ProfileModelCatalogueDto } from '../../application/executionConfiguration';
 import { selectedTargetQuickFeatures } from './selectedTargetQuickFeatures';
@@ -158,6 +160,7 @@ export function StandaloneAgentSessionScreen({
   const [importOpen, setImportOpen] = useState(false);
   const [targetPicker, setTargetPicker] = useState<{
     deviceId?: string;
+    target?: SessionExecutionTargetDto;
     queueEntry?: SessionQueueEntryViewDto;
   } | null>(null);
   const [deviceContinuationOpen, setDeviceContinuationOpen] = useState(false);
@@ -251,6 +254,19 @@ export function StandaloneAgentSessionScreen({
                 }
               : null;
           })(),
+        (() => {
+          const operation = session.queue?.entries
+            .map((item) => item.targetOperation)
+            .find(
+              (operation) =>
+                operation?.receipt &&
+                operation.stagedTarget?.worktreeId === currentTarget?.worktreeId &&
+                operation.request.destination.workspace.kind === 'create',
+            );
+          return operation?.stagedTarget
+            ? { selection: operation.request.destination, target: operation.stagedTarget }
+            : null;
+        })(),
       );
   }, [
     session.details?.session.id,
@@ -261,6 +277,7 @@ export function StandaloneAgentSessionScreen({
     targetDraft.availableProfiles,
     view.profile,
     session.currentProfile,
+    session.queue,
   ]);
   useEffect(() => {
     if (session.preparation?.phase === 'ready')
@@ -564,7 +581,7 @@ export function StandaloneAgentSessionScreen({
       controller={session}
       onChooseTarget={(queueEntry) =>
         setTargetPicker({
-          deviceId: queueEntry.targetOperation?.destinationSelection.execution.deviceId,
+          deviceId: queueEntry.targetOperation?.request.destination.execution.deviceId,
           queueEntry,
         })
       }
@@ -600,7 +617,11 @@ export function StandaloneAgentSessionScreen({
                   sessionId: selectedSessionId ?? undefined,
                   client: executionTargetClient,
                   target: targetDraft.target,
-                  onSelectTarget: targetDraft.setTarget,
+                  onSelectTarget: (target) => {
+                    if (selectedSessionId && target)
+                      setTargetPicker({ deviceId: target.execution.deviceId, target });
+                    else targetDraft.setTarget(target);
+                  },
                   onBrowseBranches: (deviceId) => setTargetPicker({ deviceId }),
                 }
               : undefined
@@ -633,23 +654,23 @@ export function StandaloneAgentSessionScreen({
           client={executionTargetClient}
           source={branchSource}
           selected={
-            targetPicker.queueEntry?.targetOperation?.destinationSelection.workspace.kind ===
+            targetPicker.queueEntry?.targetOperation?.request.destination.workspace.kind ===
             'existing'
-              ? targetPicker.queueEntry.targetOperation.destinationSelection.workspace.target
+              ? targetPicker.queueEntry.targetOperation.request.destination.workspace.target
               : targetPicker.queueEntry?.message
                 ? null
-                : targetDraft.target
+                : (targetPicker.target ?? targetDraft.target)
           }
           initialRepositoryId={
-            targetPicker.queueEntry?.targetOperation?.destinationSelection.workspace.kind ===
+            targetPicker.queueEntry?.targetOperation?.request.destination.workspace.kind ===
             'create'
-              ? targetPicker.queueEntry.targetOperation.destinationSelection.workspace.repositoryId
+              ? targetPicker.queueEntry.targetOperation.request.destination.workspace.repositoryId
               : (draftRepositoryId ?? undefined)
           }
           initialBranchRef={
-            targetPicker.queueEntry?.targetOperation?.destinationSelection.workspace.kind ===
+            targetPicker.queueEntry?.targetOperation?.request.destination.workspace.kind ===
             'create'
-              ? targetPicker.queueEntry.targetOperation.destinationSelection.workspace.branchRef
+              ? targetPicker.queueEntry.targetOperation.request.destination.workspace.branchRef
               : targetDraft.branchChoice?.branchRef
           }
           deviceId={targetPicker.deviceId}
@@ -660,39 +681,25 @@ export function StandaloneAgentSessionScreen({
           }
           sessionId={selectedSessionId ?? undefined}
           onClose={() => setTargetPicker(null)}
+          sourceTarget={
+            session.queue
+              ? projectedQueueSource(session.queue, targetPicker.queueEntry?.entry.id)
+              : currentTarget
+          }
+          initialRequest={targetPicker.queueEntry?.targetOperation?.request}
           onSelect={(target) => {
-            if (targetPicker.queueEntry?.targetOperation && target) {
-              void session.updateTargetOperation?.({
-                entryId: targetPicker.queueEntry.entry.id,
-                destination: {
-                  capabilityProfileId: target.capabilityProfileId,
-                  capabilityProfileRevision: target.capabilityProfileRevision,
-                  execution: target.execution,
-                  workspace: { kind: 'existing', target },
-                },
-              });
-            } else if (targetPicker.queueEntry?.message && target) {
-              void session.enqueueTargetOperation?.(
-                {
-                  capabilityProfileId: target.capabilityProfileId,
-                  capabilityProfileRevision: target.capabilityProfileRevision,
-                  execution: target.execution,
-                  workspace: { kind: 'existing', target },
-                },
-                targetPicker.queueEntry.entry.id,
-              );
-            } else if (!targetPicker.queueEntry) targetDraft.setTarget(target);
+            targetDraft.setTarget(target);
             setTargetPicker(null);
           }}
-          onSelectSelection={(next) => {
+          onSelectRequest={(request) => {
             if (targetPicker.queueEntry?.targetOperation)
               void session.updateTargetOperation?.({
                 entryId: targetPicker.queueEntry.entry.id,
-                destination: next,
+                request,
               });
-            else if (targetPicker.queueEntry?.message)
-              void session.enqueueTargetOperation?.(next, targetPicker.queueEntry.entry.id);
-            else targetDraft.setSelection(next);
+            else if (selectedSessionId)
+              void session.enqueueTargetOperation?.(request, targetPicker.queueEntry?.entry.id);
+            targetDraft.setSelection(request.destination);
             setTargetPicker(null);
           }}
         />
@@ -702,13 +709,17 @@ export function StandaloneAgentSessionScreen({
           client={executionTargetClient}
           sessionId={selectedSessionId ?? undefined}
           source={branchSource}
-          sourceTarget={currentTarget ?? targetDraft.target}
+          sourceTarget={
+            session.queue
+              ? projectedQueueSource(session.queue)
+              : (currentTarget ?? targetDraft.target)
+          }
           onChooseDevice={targetDraft.chooseDevice}
           onQueueSelection={
             selectedSessionId
-              ? async (destination) => {
-                  targetDraft.setSelection(destination);
-                  await session.enqueueTargetOperation?.(destination);
+              ? async (request) => {
+                  targetDraft.setSelection(request.destination);
+                  await session.enqueueTargetOperation?.(request);
                 }
               : undefined
           }

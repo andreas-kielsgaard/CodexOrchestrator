@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { projectSessionQueueTargets, type SessionQueueViewDto } from './sessionQueue';
+import {
+  projectSessionQueueTargets,
+  projectedQueueSource,
+  type SessionQueueViewDto,
+} from './sessionQueue';
 import type { SessionExecutionTargetDto } from '../executionTargets/contracts';
 
 const local: SessionExecutionTargetDto = {
@@ -54,11 +58,25 @@ function queue(operationState: 'pending' | 'completed' | 'canceled'): SessionQue
           id: 'operation',
           sessionId: 'session',
           sourceTarget: local,
-          destinationSelection: {
-            capabilityProfileId: remote.capabilityProfileId,
-            capabilityProfileRevision: 1,
-            execution: remote.execution,
-            workspace: { kind: 'existing', target: remote },
+          needsResolution: false,
+          receipt: null,
+          projectedPlan: {
+            calculatedAt: '2026-09-30T10:00:00Z',
+            requestRevision: 0,
+            stale: false,
+            source: null,
+            facts: { destination: null, destinationReady: null, unknown: [], blockers: [] },
+            steps: [],
+          },
+          request: {
+            intent: 'change_conversation_target' as const,
+            migrationResolution: null,
+            destination: {
+              capabilityProfileId: remote.capabilityProfileId,
+              capabilityProfileRevision: 1,
+              execution: remote.execution,
+              workspace: { kind: 'existing', target: remote },
+            },
           },
           phase: operationState,
           actions: [],
@@ -104,4 +122,38 @@ describe('projectSessionQueueTargets', () => {
     const completed = { ...queue('completed'), activeTarget: remote };
     expect(projectSessionQueueTargets(completed)[1].target).toBe(remote);
   });
+});
+
+it('uses preceding workspace intentions as the source and leaves unresolved creation unknown', () => {
+  const value = queue('pending');
+  expect(projectedQueueSource(value, 'switch')).toEqual(local);
+  expect(projectedQueueSource(value, 'message')).toEqual(remote);
+  const item = value.entries[0];
+  const operation = item.targetOperation!;
+  const unresolved = {
+    ...value,
+    entries: [
+      {
+        ...item,
+        targetOperation: {
+          ...operation,
+          request: {
+            ...operation.request,
+            destination: {
+              ...operation.request.destination,
+              workspace: {
+                kind: 'create' as const,
+                repositoryId: 'repo',
+                branchRef: 'refs/heads/main',
+                commit: '',
+                attachment: 'branch' as const,
+              },
+            },
+          },
+        },
+      },
+      value.entries[1],
+    ],
+  };
+  expect(projectedQueueSource(unresolved, 'message')).toBeNull();
 });

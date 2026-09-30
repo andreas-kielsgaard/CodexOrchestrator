@@ -1,3 +1,4 @@
+import { projectSessionHistory } from './sessionHistoryProjector';
 import type { ComposerTargetSource } from './composerTargetActions';
 import { Check, ClipboardCopy } from 'lucide-react';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
@@ -217,6 +218,11 @@ export function AgentSessionWorkspace({
                   {
                     id: controller.transcript.sessionId,
                     transcript: controller.transcript,
+                    history: projectSessionHistory(
+                      controller.details,
+                      controller.transcript,
+                      controller.queue,
+                    ),
                     ...(transcriptRange ? { range: transcriptRange } : {}),
                   },
                 ]

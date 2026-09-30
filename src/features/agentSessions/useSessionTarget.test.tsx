@@ -56,9 +56,13 @@ it('recognizes a create-worktree intent resolved to the active target without co
       attachment: 'branch' as const,
     },
   };
-  expect(selectionSatisfiedByTarget(create, remoteTarget)).toBe(true);
+  expect(selectionSatisfiedByTarget(create, remoteTarget)).toBe(false);
   expect(
-    selectionSatisfiedByTarget(create, { ...remoteTarget, head: 'newer-commit' }),
+    selectionSatisfiedByTarget(
+      create,
+      { ...remoteTarget, head: 'newer-commit' },
+      { selection: create, target: remoteTarget },
+    ),
   ).toBe(true);
   expect(
     selectionSatisfiedByTarget(
@@ -71,13 +75,13 @@ it('recognizes a create-worktree intent resolved to the active target without co
 it('keeps an existing worktree selected as its HEAD changes', () => {
   const selection = selectionForTarget(remoteTarget);
   expect(selectionSatisfiedByTarget(selection, { ...remoteTarget, head: null })).toBe(true);
-  expect(
-    selectionSatisfiedByTarget(selection, { ...remoteTarget, head: 'newer-commit' }),
-  ).toBe(true);
+  expect(selectionSatisfiedByTarget(selection, { ...remoteTarget, head: 'newer-commit' })).toBe(
+    true,
+  );
   expect(
     selectionSatisfiedByTarget(selection, { ...remoteTarget, branchRef: 'refs/heads/other' }),
   ).toBe(false);
-  expect(
-    selectionSatisfiedByTarget(selection, { ...remoteTarget, worktreeId: 'other-tree' }),
-  ).toBe(false);
+  expect(selectionSatisfiedByTarget(selection, { ...remoteTarget, worktreeId: 'other-tree' })).toBe(
+    false,
+  );
 });

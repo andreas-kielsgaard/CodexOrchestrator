@@ -406,7 +406,7 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::queue::reorder_agent_session_queue,
             crate::agent_sessions::transport::queue::update_queued_agent_session_message,
             crate::agent_sessions::transport::queue::update_agent_session_target_operation,
-            crate::agent_sessions::transport::queue::start_agent_session_queue_entry,
+            crate::agent_sessions::transport::queue::recalculate_agent_session_target_projection,
             crate::agent_sessions::transport::queue::retry_agent_session_queue_entry,
             crate::agent_sessions::transport::queue::cancel_agent_session_queue_entry,
             crate::agent_sessions::transport::cancel_agent_invocation,

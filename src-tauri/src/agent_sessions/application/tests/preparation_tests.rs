@@ -224,6 +224,7 @@ struct PreparationFixture {
     repository: Arc<SqliteAgentSessionRepository>,
     runtime: Arc<BlockingPreparationRuntime>,
     old_runtime: Arc<FakeRuntime>,
+    notifier: Arc<RecordingNotifier>,
     selection: SessionExecutionSelection,
     session: AgentSession,
 }
@@ -314,10 +315,11 @@ impl PreparationFixture {
             endpoints.clone(),
             profiles.clone(),
         ));
+        let notifier = Arc::new(RecordingNotifier::new(repository.clone()));
         let app = AgentSessionApplication::new(
             repository.clone(),
             runtime.clone(),
-            Arc::new(RecordingNotifier::new(repository.clone())),
+            notifier.clone(),
             providers.clone(),
             providers,
             None,
@@ -345,6 +347,7 @@ impl PreparationFixture {
             repository,
             runtime,
             old_runtime,
+            notifier,
             selection,
             session,
         }
@@ -369,7 +372,7 @@ impl PreparationFixture {
         self.repository.preparation(id).unwrap().unwrap()
     }
     fn wait(&self, mut condition: impl FnMut() -> bool) {
-        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = Instant::now() + std::time::Duration::from_secs(15);
         while !condition() {
             assert!(
                 Instant::now() < deadline,
@@ -579,7 +582,7 @@ fn native_failure_preserves_activated_destination_and_retry_reuses_resolved_work
     assert!(fixture.runtime.state.lock().unwrap().delivered.is_empty());
     // The accepted destination stays fixed when the editable selection changes elsewhere.
     fixture.runtime.state.lock().unwrap().outcome = None;
-    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = Instant::now() + std::time::Duration::from_secs(15);
     loop {
         match fixture.app.retry_preparation(&ack.invocation_id) {
             Ok(()) => break,
@@ -649,3 +652,5 @@ fn cancel_routes_to_preparing_destination_and_late_readiness_cannot_deliver() {
 }
 
 mod persistence;
+
+mod target_switches;

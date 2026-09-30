@@ -30,6 +30,13 @@ pub(crate) struct InvocationExecutionSnapshot {
     pub(crate) harness_version: Option<HarnessVersionRef>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct QueuedCapabilityProfile {
+    pub(crate) id: String,
+    pub(crate) revision: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SessionPreparation {
@@ -40,6 +47,8 @@ pub(crate) struct SessionPreparation {
     pub(crate) error: Option<String>,
     pub(crate) can_retry: bool,
     pub(crate) selection: Option<SessionExecutionSelection>,
+    #[serde(default)]
+    pub(crate) requested_capability_profile: Option<QueuedCapabilityProfile>,
     pub(crate) source_target: Option<SessionExecutionTarget>,
     pub(crate) source_binding: AgentRuntimeBinding,
     #[serde(default)]

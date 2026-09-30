@@ -1,3 +1,4 @@
+import type { SessionTimelineDto } from './sessionHistory';
 import type { SessionExecutionTargetDto } from '../executionTargets/contracts';
 import type { HarnessVersionRef } from '../harnesses';
 import type { AssignedAgentIdentity } from '../identities';
@@ -135,12 +136,7 @@ export interface NormalizedRuntimeEventDto {
 export type ToolActivityPhaseDto = 'started' | 'completed' | 'unknown';
 /** What a tool item did, in Orchid's provider-independent vocabulary. */
 export type ToolActivityKindDto =
-  | 'command'
-  | 'file_change'
-  | 'web_search'
-  | 'plan'
-  | 'mcp_tool'
-  | 'other';
+  'command' | 'file_change' | 'web_search' | 'plan' | 'mcp_tool' | 'other';
 export type ToolResultClassificationDto = 'succeeded' | 'failed' | 'unknown';
 
 export interface NormalizedToolActivityDto {
@@ -209,6 +205,7 @@ export interface AgentInvocationDetailsDto {
 }
 
 export interface AgentSessionDetailsDto {
+  timeline?: SessionTimelineDto;
   interactions?: SessionInteractionDto[];
   session: AgentSessionDto;
   invocations: AgentInvocationDetailsDto[];
@@ -267,7 +264,13 @@ export interface SendAgentSessionMessageResultDto {
 
 export type AgentSessionUpdateDto =
   | { kind: 'preparation_updated'; sessionId: string; invocationId: string }
-  | { kind: 'queue_updated'; sessionId: string }
+  | {
+      kind: 'queue_updated';
+      sessionId: string;
+      session?: AgentSessionDto;
+      timeline?: SessionTimelineDto;
+      removedInvocationIds?: readonly string[];
+    }
   | { kind: 'steering_accepted'; sessionId: string; invocationId: string; inputId: string }
   | {
       kind: 'event_persisted';

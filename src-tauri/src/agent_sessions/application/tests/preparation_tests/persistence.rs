@@ -96,14 +96,21 @@ fn startup_turns_interrupted_target_staging_into_a_retryable_blocker() {
         "interrupted-target".into(),
         fixture.session.id.clone(),
         fixture.session.execution_target.clone(),
-        fixture.selection.clone(),
+        crate::agent_sessions::target_operation::TargetSwitchRequest::retarget(
+            fixture.selection.clone(),
+        ),
         now,
     );
     fixture
         .repository
-        .enqueue_target_operation(operation.clone(), now)
+        .enqueue_target_operation(operation.clone(), None, now)
         .unwrap();
     operation.phase = crate::agent_sessions::target_operation::TargetOperationPhase::Staging;
+    operation.actions = crate::agent_sessions::target_operation::plan_target_switch(
+        operation.source_target.as_ref(),
+        &operation.request,
+        &crate::agent_sessions::target_operation::TargetSwitchFacts::default(),
+    );
     operation.actions[0].status =
         crate::agent_sessions::target_operation::TargetOperationActionStatus::Running;
     fixture

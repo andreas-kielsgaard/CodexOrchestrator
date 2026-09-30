@@ -170,7 +170,9 @@ impl AgentSessionApplication {
         let operation =
             self.target_operation_for_submission(&session, input.execution_selection.as_ref())?;
         let id = input.submission_id.clone();
-        let pending = AgentInvocation { attachments: input.attachments, id: id.clone(),
+        let pending = AgentInvocation {
+            attachments: input.attachments,
+            id: id.clone(),
             session_id: session.id.clone(),
             submitted_text: input.submitted_text,
             input_provenance: provenance,
@@ -194,6 +196,12 @@ impl AgentSessionApplication {
             error: None,
             can_retry: false,
             selection: None,
+            requested_capability_profile: input.execution_selection.as_ref().map(|s| {
+                crate::agent_sessions::preparation::QueuedCapabilityProfile {
+                    id: s.capability_profile_id.clone(),
+                    revision: s.capability_profile_revision,
+                }
+            }),
             source_target: session.execution_target.clone(),
             source_binding: session.runtime_binding.clone(),
             prepared_binding: None,
@@ -216,7 +224,6 @@ impl AgentSessionApplication {
             .session_id
             .is_none()
             .then(|| (session.clone(), input.folder_target.map(Into::into)));
-        let operation_id = operation.as_ref().map(|operation| operation.id.clone());
         self.repository
             .accept_queued_preparation(new_session, pending, preparation, operation, now)
             .map_err(AgentSessionApplicationError::repository)?;
@@ -224,9 +231,6 @@ impl AgentSessionApplication {
             session_id: session.id.clone(),
             invocation_id: id.clone(),
         });
-        if let Some(operation_id) = operation_id {
-            self.start_target_operation_early(operation_id)?;
-        }
         self.wake_session_queue(session.id.clone());
         Ok(SendAgentSessionMessageResult {
             session_id: session.id,

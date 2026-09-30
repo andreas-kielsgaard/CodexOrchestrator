@@ -1,8 +1,8 @@
 # Agent Session target switches: implementation shape and change list
 
-Status: proposed implementation shape, 2026-09-30, using `plan-implementation-shape`. Based on the user's completed decisions. No implementation in this turn; earlier uncommitted HEAD-equality corrections remain separate. This document supersedes the behavioral proposals in the preceding exploration.
+Status: implemented, 2026-09-30, using `plan-implementation-shape`. Based on the user's completed decisions. Original uncommitted work was checkpointed in `917c07f8`; the implementation incorporates the HEAD-identity corrections. This document supersedes the behavioral proposals in the preceding exploration. Verification and remaining limits are recorded below.
 
-## Implementation choices proposed by the agent
+## Implementation choices
 
 The product decisions are settled. These are structural choices for achieving them, not additional requested features:
 
@@ -12,9 +12,9 @@ The product decisions are settled. These are structural choices for achieving th
 - Add a session-level history projector alongside the existing invocation-content projector. Shared turn/range consumers should not have to understand workspace operations.
 - Block old pending operations that lack explicit intent/resolution during upgrade. Choosing a migration on their behalf would contradict the new explicit-choice contract.
 
-## Proposed ownership and consumption
+## Ownership and consumption
 
-Paths in this table identify the proposed source layout; newly created files do not exist yet.
+Paths in this table identify the implemented source layout.
 
 | Disposition / home | Responsibility and consumers |
 | --- | --- |
@@ -30,6 +30,7 @@ Paths in this table identify the proposed source layout; newly created files do 
 | Create `features/agentSessions/sessionHistoryProjector.ts` | Merge existing invocation panels with successful transitions and a temporary blocking indicator. The full Session view consumes it; turn/range inspectors retain invocation-only content. |
 | Create `SessionTransitionIndicator.tsx`, `SessionTransitionDetailsDialog.tsx`, `sessionTransitions.css` | Clickable history elements and outcome-first details, used by the Session renderer. |
 | Retain/adapt existing target dialogs, queue panel/item dialog, labels and screen | Intent/resolution selection, edit-in-place, projected/actual details, and compact rows. All quick/browse/device entry points build the same request. |
+| Create `TargetSwitchChoice.tsx` and `targetSwitchRequest.ts` | Shared intent/resolution controls and request construction for the target dialogs and quick choices. |
 | Remove early-start API, provider-context workspace step, and retained discard path | Remove competing control paths rather than adding flags or alternate schedulers around them. |
 
 The paths under `agent_sessions/` above are under `src-tauri/src/`; frontend paths are under `src/`. Keep the application facade and repository port, rather than introducing another service registry or an execution framework. Private transaction helpers can be shared across the focused repository modules.
@@ -204,3 +205,15 @@ Extend the existing Rust queue/repository/preparation/target tests and frontend 
 Run the root frontend build, Rust check and focused fast tests, then build and launch an isolated native instance for the queue/history walkthrough. Verify visible hover/click/modal behavior, edit/recalculate, blocking/resolution, and reload persistence. Exercise one real linked two-device migration without changing its existing mechanics. Automated component tests alone do not establish those native or remote outcomes.
 
 The implementation order above follows dependencies. Completion means the new contracts work together in the native flow, not merely that labels have changed. Root/module declarations, public DTO exports, in-memory test repository implementations, and recorded fixtures should adopt the new fields directly; do not keep dual request formats or a second planner for compatibility.
+
+## Implementation verification
+
+- Focused Agent Session Rust tests: 117 passed, one existing ignored test. Storage upgrade tests: 50 passed. Frontend Session/application/infrastructure tests: 210 passed across 47 files. Rust check and complete debug application build passed.
+- Real Git tests cover explicit linking and migration of tracked/untracked work, preservation of the source and provider binding owner, dirty-destination blocking, detached retargeting without a selected HEAD, and delivery-independent workspace preparation. Existing snapshot/apply mechanics and migration guards remain in place.
+- An isolated native build and database exercised target selection, disabled unsupported Continue choices, editing an older blocked operation without changing its ID, frozen projected plans across restart, manual Recalculate, successful retargeting, centered receipts and outcome-first details. Native validation exposed a missing post-activation notification; completion now publishes the durable receipt, and queue history updates publish immediately without waiting for an animation frame.
+- Queue notifications are regression-tested for completed receipts and discarded invocation removal, including updates arriving during initial history loading. Discarded content cannot return through a late update.
+- Schema version is now 64. Pending legacy operations require explicit resolution; successful old history remains readable without fabricated provider/outcome evidence.
+
+Native evidence and final command logs are retained locally in the ignored `.dev/target-switch-validation/` directory. The review used a separate application identifier and database; the running production application was not replaced or restarted.
+
+Limits: only a local device is configured, so physical migration between two devices was not exercised. The native review did not launch an agent/provider turn; provider transitions and delivery ownership were checked through focused tests. Actual pointer hover was not automated; click/modal rendering and hover/focus styles were checked. Cross-device migration acceptance remains unverified, with the existing migration engine behavior preserved.
