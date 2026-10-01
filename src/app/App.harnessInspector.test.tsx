@@ -55,8 +55,14 @@ describe('App Harness Management preview', () => {
     });
     fireEvent.click(recordedSession);
 
-    expect(await screen.findByRole('heading', { name: displayTitle ?? '' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Manage harness' })).toBeVisible();
+    expect(
+      await screen.findByRole('heading', { name: `${agentName}: Epic Plan Builder exploration` }),
+    ).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Manage harness' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Session model')).not.toBeInTheDocument();
+    fireEvent.contextMenu(recordedSession);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Session configuration' }));
+    expect(await screen.findByRole('button', { name: 'Manage harness' })).toBeVisible();
     expect(screen.getByLabelText('Session model')).toBeVisible();
     expect(screen.queryByLabelText('Session effort')).toBeNull();
     const reopenedResponse = screen
@@ -64,5 +70,9 @@ describe('App Harness Management preview', () => {
       .closest('article');
     expect(reopenedResponse).not.toBeNull();
     if (reopenedResponse) expect(within(reopenedResponse).getByText(agentName)).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Manage harness' }));
+    expect(await screen.findByRole('heading', { name: 'Harness details' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Close session configuration' }));
+    expect(screen.queryByRole('dialog', { name: 'Session configuration' })).not.toBeInTheDocument();
   });
 });

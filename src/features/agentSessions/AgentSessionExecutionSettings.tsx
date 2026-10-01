@@ -1,5 +1,5 @@
 import type { PinnedAgentSessionProfileDto } from '../../application/agentSessions';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { AssignedAgentIdentity } from '../../application/identities';
 import { AgentIdentityBadge, IdentityPickerDialog } from '../identities';
 import type { EventDeliveryRecordDto } from '../../application/sessionEvents';
@@ -12,6 +12,7 @@ import {
 } from './PerMessageRuntimeControls';
 
 export interface AgentSessionExecutionSettingsProps {
+  readonly modalContent?: boolean;
   readonly showMessageControls?: boolean;
   readonly profile: PinnedAgentSessionProfileDto | null;
   readonly profileError: string | null;
@@ -27,6 +28,7 @@ export interface AgentSessionExecutionSettingsProps {
 
 /** Session-facing projection of pinned creation truth and message-local user authority. */
 export function AgentSessionExecutionSettings({
+  modalContent = false,
   profile,
   showMessageControls = true,
   profileError,
@@ -44,15 +46,21 @@ export function AgentSessionExecutionSettings({
   const resolved = profile?.creationResolution.sessionProfile;
   return (
     <div className="agent-session-execution-settings">
-      <div className="agent-session-execution-settings__identity">
-        {identity ? <AgentIdentityBadge identity={identity} /> : <span>No assigned identity</span>}
-        {onIdentityChange ? (
-          <button type="button" disabled={disabled} onClick={() => setEditingIdentity(true)}>
-            {identity ? 'Edit identity' : 'Set identity'}
-          </button>
-        ) : null}
-        {identityError ? <p role="alert">{identityError}</p> : null}
-      </div>
+      {!modalContent && (
+        <div className="agent-session-execution-settings__identity">
+          {identity ? (
+            <AgentIdentityBadge identity={identity} />
+          ) : (
+            <span>No assigned identity</span>
+          )}
+          {onIdentityChange ? (
+            <button type="button" disabled={disabled} onClick={() => setEditingIdentity(true)}>
+              {identity ? 'Edit identity' : 'Set identity'}
+            </button>
+          ) : null}
+          {identityError ? <p role="alert">{identityError}</p> : null}
+        </div>
+      )}
       {editingIdentity && onIdentityChange ? (
         <IdentityPickerDialog
           identity={
@@ -74,7 +82,7 @@ export function AgentSessionExecutionSettings({
         />
       ) : null}
       {profile && resolved ? (
-        <CollapsibleSection title="Message and Session configuration" defaultExpanded={false}>
+        <ConfigurationSection modalContent={modalContent}>
           {showMessageControls && (
             <>
               <p>
@@ -116,7 +124,7 @@ export function AgentSessionExecutionSettings({
               </button>
             ) : null}
           </CollapsibleSection>
-        </CollapsibleSection>
+        </ConfigurationSection>
       ) : (
         <p className="agent-session-execution-settings__unavailable" role="status">
           {profileError
@@ -126,5 +134,19 @@ export function AgentSessionExecutionSettings({
         </p>
       )}
     </div>
+  );
+}
+
+function ConfigurationSection({
+  modalContent,
+  children,
+}: {
+  modalContent: boolean;
+  children: ReactNode;
+}) {
+  return modalContent ? (
+    <div className="session-configuration-content">{children}</div>
+  ) : (
+    <CollapsibleSection title="Message and Session configuration">{children}</CollapsibleSection>
   );
 }

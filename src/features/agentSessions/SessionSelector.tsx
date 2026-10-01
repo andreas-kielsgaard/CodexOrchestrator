@@ -51,5 +51,8 @@ export const SessionSelector = memo(
     previous.organizing === next.organizing &&
     previous.onImport === next.onImport &&
     previous.onRename === next.onRename &&
+    previous.onCopySession === next.onCopySession &&
+    previous.onSetIdentity === next.onSetIdentity &&
+    previous.onConfigure === next.onConfigure &&
     previous.onOpenWorkflow === next.onOpenWorkflow,
 );

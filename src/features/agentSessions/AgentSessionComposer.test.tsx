@@ -42,6 +42,7 @@ function Harness({
   contextKey = 'session-1',
   prefetched = false,
   compact,
+  cancel,
 }: {
   load: () => Promise<AgentSessionQuickFeatures>;
   send: ReturnType<typeof vi.fn>;
@@ -51,6 +52,7 @@ function Harness({
   contextKey?: string;
   prefetched?: boolean;
   compact?: () => Promise<void>;
+  cancel?: () => void;
 }) {
   const [draft, setDraft] = useState('');
   const [selection, setSelection] = useState<PerMessageRuntimeSelection>({
@@ -70,7 +72,7 @@ function Harness({
       showWorkingDirectory={false}
       keyboardHint="tooltip"
       onWorkingDirectoryChange={() => {}}
-      onCancel={() => {}}
+      onCancel={cancel ?? (() => {})}
       onSend={(attachments) =>
         attachments.length ? send(draft, selection, attachments) : send(draft, selection)
       }
@@ -325,6 +327,44 @@ it('attaches an image without text, previews it, and sends portable content', as
   expect(send.mock.calls[0][2]).toEqual([
     expect.objectContaining({ name: 'diagram.png', mediaType: 'image/png', dataBase64: 'AQID' }),
   ]);
+});
+
+it('shows one compact attachment preview and reveals the collection and removal actions on hover', async () => {
+  const user = userEvent.setup();
+  render(<Harness load={async () => capabilities} send={vi.fn()} />);
+  const files = ['first.png', 'second.png'].map((name, index) => {
+    const bytes = new Uint8Array([index + 1]);
+    const file = new File([bytes], name, { type: 'image/png' });
+    Object.defineProperty(file, 'arrayBuffer', { value: async () => bytes.buffer });
+    return file;
+  });
+  await user.upload(screen.getByLabelText('Image files'), files);
+  await screen.findByRole('img', { name: 'first.png' });
+  const preview = screen.getByRole('button', { name: 'Attached images' });
+  expect(preview).toHaveTextContent('+1');
+  expect(screen.queryByRole('img', { name: 'second.png' })).not.toBeInTheDocument();
+  expect(preview.closest('.composer-input-row')).toBeInTheDocument();
+  await user.hover(preview);
+  expect(screen.getByRole('img', { name: 'second.png' })).toBeVisible();
+  await user.click(screen.getByRole('button', { name: 'Remove second.png' }));
+  expect(preview).not.toHaveTextContent('+1');
+  expect(screen.queryByRole('img', { name: 'second.png' })).not.toBeInTheDocument();
+});
+
+it('keeps active-turn cancellation reachable by keyboard when the Queue button is disabled', async () => {
+  const user = userEvent.setup();
+  const cancel = vi.fn();
+  render(<Harness load={async () => capabilities} send={vi.fn()} active cancel={cancel} />);
+  expect(screen.getByRole('button', { name: 'Queue' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+  await user.tab(); // Message
+  await user.tab(); // Attach images
+  await user.tab(); // Turn actions, even with an empty draft
+  expect(screen.getByRole('button', { name: 'Cancel' })).toBeVisible();
+  await user.tab();
+  expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+  await user.keyboard('{Enter}');
+  expect(cancel).toHaveBeenCalledTimes(1);
 });
 
 it('pastes clipboard images without replacing ordinary text paste', async () => {

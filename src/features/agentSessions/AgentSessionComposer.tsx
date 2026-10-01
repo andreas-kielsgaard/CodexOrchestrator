@@ -16,6 +16,8 @@ import type { ComposerQuickFeatures } from './composerQuickActions';
 import type { ComposerTargetSource } from './composerTargetActions';
 import { useComposerQuickMenu } from './useComposerQuickMenu';
 import { ComposerQuickMenu } from './ComposerQuickMenu';
+import { ComposerHoverGroup } from './ComposerHoverGroup';
+import './compactSessionChrome.css';
 
 export interface AgentSessionComposerProps {
   toolbar?: ReactNode;
@@ -181,6 +183,34 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
     }
   };
 
+  const sendAction = (
+    <span className="composer-send-action">
+      <button
+        className="send-agent-button"
+        type="submit"
+        disabled={
+          (!props.draft.trim() && !attachments.length) ||
+          props.sending ||
+          Boolean(props.sendUnavailableReason)
+        }
+        aria-describedby={props.keyboardHint === 'tooltip' ? 'composer-keyboard-hint' : undefined}
+      >
+        <Send size={16} aria-hidden="true" />
+        {props.sending ? 'Sending…' : props.active ? 'Queue' : 'Send'}
+      </button>
+      {props.keyboardHint === 'tooltip' && (
+        <span className="composer-keyboard-tooltip" id="composer-keyboard-hint" role="tooltip">
+          {props.quickFeatures || props.targetSource ? '/ for quick features. ' : ''}
+          Enter to {props.active ? 'queue' : 'send'}.{' '}
+          {props.active && props.steeringAvailable && props.onSteer
+            ? 'Ctrl+Enter steers the current turn. '
+            : ''}
+          Shift+Enter adds a new line.
+        </span>
+      )}
+    </span>
+  );
+
   return (
     <form
       className={`agent-session-composer${dragging ? ' agent-session-composer--dragging' : ''}`}
@@ -226,29 +256,45 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
           placeholder={props.messagePlaceholder ?? 'What would you like the agent to do?'}
           aria-label={props.messageLabel ?? 'Message'}
           disabled={inputDisabled}
-          rows={4}
+          rows={3}
         />
+        {attachments.length > 0 && (
+          <ComposerHoverGroup
+            className="composer-attachment-group"
+            label="Attached images"
+            summary={
+              <>
+                <img
+                  src={`data:${attachments[0].mediaType};base64,${attachments[0].dataBase64}`}
+                  alt={attachments[0].name}
+                />
+                {attachments.length > 1 && <span>+{attachments.length - 1}</span>}
+              </>
+            }
+          >
+            <ul className="composer-attachments" aria-label="Attached images">
+              {attachments.map((attachment, index) => (
+                <li key={`${attachment.name}-${index}`}>
+                  <img
+                    src={`data:${attachment.mediaType};base64,${attachment.dataBase64}`}
+                    alt={attachment.name}
+                  />
+                  <span>{attachment.name}</span>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${attachment.name}`}
+                    onClick={() =>
+                      setAttachments((current) => current.filter((_, i) => i !== index))
+                    }
+                  >
+                    <X size={14} aria-hidden="true" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </ComposerHoverGroup>
+        )}
       </div>
-      {attachments.length > 0 && (
-        <ul className="composer-attachments" aria-label="Attached images">
-          {attachments.map((attachment, index) => (
-            <li key={`${attachment.name}-${index}`}>
-              <img
-                src={`data:${attachment.mediaType};base64,${attachment.dataBase64}`}
-                alt={attachment.name}
-              />
-              <span>{attachment.name}</span>
-              <button
-                type="button"
-                aria-label={`Remove ${attachment.name}`}
-                onClick={() => setAttachments((current) => current.filter((_, i) => i !== index))}
-              >
-                <X size={14} aria-hidden="true" />
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
       <div className={props.toolbar ? 'session-composer-toolbar' : 'composer-actions-row'}>
         <div className="composer-leading-actions">
           <input
@@ -272,63 +318,39 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
           {props.toolbar}
         </div>
         <div className="composer-actions">
-          {props.active && (
-            <button
-              className="cancel-agent-button"
-              type="button"
-              onClick={props.onCancel}
-              disabled={props.canceling}
+          {props.active ? (
+            <ComposerHoverGroup
+              label="Turn actions"
+              summary="Turn actions"
+              className="composer-turn-group"
+              trigger={sendAction}
             >
-              <Square size={15} aria-hidden="true" />
-              {props.canceling ? 'Canceling…' : 'Cancel'}
-            </button>
-          )}
-          {props.active && props.steeringAvailable && props.onSteer && (
-            <button
-              className="steer-agent-button"
-              type="button"
-              disabled={(!props.draft.trim() && !attachments.length) || props.sending}
-              onClick={() => {
-                props.onSteer?.(attachments);
-                setAttachments([]);
-              }}
-            >
-              Steer current turn
-            </button>
-          )}
-          {
-            <span className="composer-send-action">
               <button
-                className="send-agent-button"
-                type="submit"
-                disabled={
-                  (!props.draft.trim() && !attachments.length) ||
-                  props.sending ||
-                  Boolean(props.sendUnavailableReason)
-                }
-                aria-describedby={
-                  props.keyboardHint === 'tooltip' ? 'composer-keyboard-hint' : undefined
-                }
+                className="cancel-agent-button"
+                type="button"
+                onClick={props.onCancel}
+                disabled={props.canceling}
               >
-                <Send size={16} aria-hidden="true" />
-                {props.sending ? 'Sending…' : props.active ? 'Queue' : 'Send'}
+                <Square size={15} aria-hidden="true" />
+                {props.canceling ? 'Canceling…' : 'Cancel'}
               </button>
-              {props.keyboardHint === 'tooltip' && (
-                <span
-                  className="composer-keyboard-tooltip"
-                  id="composer-keyboard-hint"
-                  role="tooltip"
+              {props.steeringAvailable && props.onSteer && (
+                <button
+                  className="steer-agent-button"
+                  type="button"
+                  disabled={(!props.draft.trim() && !attachments.length) || props.sending}
+                  onClick={() => {
+                    props.onSteer?.(attachments);
+                    setAttachments([]);
+                  }}
                 >
-                  {props.quickFeatures || props.targetSource ? '/ for quick features. ' : ''}Enter
-                  to {props.active ? 'queue' : 'send'}.{' '}
-                  {props.active && props.steeringAvailable && props.onSteer
-                    ? 'Ctrl+Enter steers the current turn. '
-                    : ''}
-                  Shift+Enter adds a new line.
-                </span>
+                  Steer current turn
+                </button>
               )}
-            </span>
-          }
+            </ComposerHoverGroup>
+          ) : (
+            sendAction
+          )}
         </div>
       </div>
       {menu.notice && (
@@ -341,7 +363,11 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
           <Image size={20} aria-hidden="true" /> Drop images to attach
         </div>
       )}
-      {attachmentNotice && <p className="composer-attachment-notice" role="status">{attachmentNotice}</p>}
+      {attachmentNotice && (
+        <p className="composer-attachment-notice" role="status">
+          {attachmentNotice}
+        </p>
+      )}
       {props.sendUnavailableReason ? <p role="status">{props.sendUnavailableReason}</p> : null}
     </form>
   );
@@ -351,7 +377,8 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const SUPPORTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
 async function readBrowserImage(file: File): Promise<NewAgentImageAttachmentDto> {
-  if (!SUPPORTED_IMAGE_TYPES.has(file.type)) throw new Error(`${file.name} is not a supported image.`);
+  if (!SUPPORTED_IMAGE_TYPES.has(file.type))
+    throw new Error(`${file.name} is not a supported image.`);
   if (file.size > MAX_IMAGE_BYTES) throw new Error(`${file.name} is larger than 10 MB.`);
   const bytes = new Uint8Array(await file.arrayBuffer());
   let binary = '';

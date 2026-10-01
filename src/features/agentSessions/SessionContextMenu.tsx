@@ -13,6 +13,9 @@ export function SessionContextMenu({
   onPin,
   onRename,
   onCopy,
+  onCopySession,
+  onSetIdentity,
+  onConfigure,
   organizing,
 }: {
   session: SessionNavigationRow;
@@ -24,6 +27,9 @@ export function SessionContextMenu({
   onPin(): void;
   onRename(title: string): Promise<void>;
   onCopy(): Promise<void>;
+  onCopySession?(): Promise<void>;
+  onSetIdentity?(): void;
+  onConfigure?(): void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [moving, setMoving] = useState(false);
@@ -46,7 +52,7 @@ export function SessionContextMenu({
       className="session-context-menu"
       style={{
         left: Math.max(8, Math.min(position.x, window.innerWidth - 280)),
-        top: Math.max(8, Math.min(position.y, window.innerHeight - 260)),
+        top: Math.max(8, Math.min(position.y, window.innerHeight - 370)),
       }}
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
@@ -67,11 +73,7 @@ export function SessionContextMenu({
       <button role="menuitem" disabled={!organizing} onClick={onPin}>
         {session.pinned ? 'Unpin' : 'Pin'}
       </button>
-      <button
-        role="menuitem"
-        aria-expanded={renaming}
-        onClick={() => setRenaming(!renaming)}
-      >
+      <button role="menuitem" aria-expanded={renaming} onClick={() => setRenaming(!renaming)}>
         Rename
       </button>
       {renaming && (
@@ -127,6 +129,38 @@ export function SessionContextMenu({
       >
         Copy deeplink
       </button>
+      {onCopySession && (
+        <button
+          role="menuitem"
+          onClick={() =>
+            void onCopySession().then(onClose, () => setError('The session could not be copied.'))
+          }
+        >
+          Copy entire session
+        </button>
+      )}
+      {onSetIdentity && (
+        <button
+          role="menuitem"
+          onClick={() => {
+            onClose();
+            onSetIdentity();
+          }}
+        >
+          Set identity
+        </button>
+      )}
+      {onConfigure && (
+        <button
+          role="menuitem"
+          onClick={() => {
+            onClose();
+            onConfigure();
+          }}
+        >
+          Session configuration
+        </button>
+      )}
       {error && <p role="alert">{error}</p>}
     </div>
   );

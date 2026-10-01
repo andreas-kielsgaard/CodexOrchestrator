@@ -8,6 +8,7 @@ import type { PerMessageRuntimeSelection } from './PerMessageRuntimeControls';
 import type { AgentSessionQuickFeatures } from '../../application/agentSessions/quickFeatures';
 import { effectiveSessionOptions, selectionForModel } from './effectiveSessionOptions';
 import { targetWorktreeLabel } from '../../application/executionTargets/presentation';
+import { ComposerHoverGroup } from './ComposerHoverGroup';
 import './sessionPreparation.css';
 export interface SessionComposerToolbarProps {
   profiles: readonly CapabilityProfileDto[];
@@ -26,6 +27,9 @@ export interface SessionComposerToolbarProps {
 export function SessionComposerToolbar(props: SessionComposerToolbarProps) {
   const workspace = props.selection?.workspace;
   const effective = effectiveSessionOptions(props.capabilities, props.options);
+  const profileName = props.profiles.find(
+    (profile) => profile.capabilityProfileId === props.selection?.capabilityProfileId,
+  )?.name;
   const worktreeLabel =
     workspace?.kind === 'existing'
       ? workspace.target.branchRef
@@ -36,110 +40,145 @@ export function SessionComposerToolbar(props: SessionComposerToolbarProps) {
         : (props.workspaceLabel ?? 'Empty workspace');
   return (
     <>
-      <div className="session-composer-toolbar__targets">
-        <label className="session-composer-toolbar__select">
-          <Shield size={16} aria-hidden="true" />
-          <select
-            aria-label="Capability Profile"
-            value={props.selection?.capabilityProfileId ?? ''}
-            onChange={(event) => props.onProfile(event.target.value)}
-            disabled={props.profiles.length === 0}
-          >
-            {props.profiles.length === 0 && <option value="">No Capability Profiles</option>}
-            {props.profiles
-              .filter(
-                (profile) =>
-                  !props.deviceId ||
-                  (profile.execution ?? localExecutionBinding).deviceId === props.deviceId,
-              )
-              .map((profile) => (
-                <option key={profile.capabilityProfileId} value={profile.capabilityProfileId}>
-                  {profile.name}
-                </option>
-              ))}
-          </select>
-        </label>
-        <button
-          type="button"
-          className="session-composer-toolbar__device"
-          aria-label={`Destination device: ${props.selection?.execution.deviceName ?? 'Choose device'}`}
-          onClick={props.onDevice}
-          title="Compare this conversation’s worktree on another device"
-        >
-          <Monitor size={16} aria-hidden="true" />
-          <span>{props.selection?.execution.deviceName ?? 'Destination device'}</span>
-        </button>
-        <button
-          className="session-composer-toolbar__worktree"
-          aria-label={
-            workspace?.kind === 'existing'
-              ? `${worktreeLabel} · ${props.selection?.execution.deviceName}`
-              : workspace?.kind === 'create'
-                ? worktreeLabel
-                : 'Target worktree'
-          }
-          type="button"
-          onClick={props.onWorktree}
-          title={
-            workspace?.kind === 'existing'
-              ? `${workspace.target.repositoryId} · ${workspace.target.path} · ${workspace.target.worktreeId}`
-              : worktreeLabel
-          }
-        >
-          <FolderGit2 size={16} aria-hidden="true" />
-          <span>{worktreeLabel}</span>
-        </button>
-        {props.pending && (
+      <ComposerHoverGroup
+        label="Target settings"
+        className="composer-target-group"
+        summary={
+          <>
+            <FolderGit2 size={15} aria-hidden="true" />
+            <span>
+              {profileName ? `${profileName} · ` : ''}
+              {props.selection?.execution.deviceName
+                ? `${props.selection.execution.deviceName} · `
+                : ''}
+              {workspace?.kind === 'existing'
+                ? workspace.target.branchRef.replace(/^refs\/heads\//, '') || 'Session folder'
+                : worktreeLabel}
+            </span>
+          </>
+        }
+      >
+        <div className="session-composer-toolbar__targets">
+          <label className="session-composer-toolbar__select">
+            <Shield size={16} aria-hidden="true" />
+            <select
+              aria-label="Capability Profile"
+              value={props.selection?.capabilityProfileId ?? ''}
+              onChange={(event) => props.onProfile(event.target.value)}
+              disabled={props.profiles.length === 0}
+            >
+              {props.profiles.length === 0 && <option value="">No Capability Profiles</option>}
+              {props.profiles
+                .filter(
+                  (profile) =>
+                    !props.deviceId ||
+                    (profile.execution ?? localExecutionBinding).deviceId === props.deviceId,
+                )
+                .map((profile) => (
+                  <option key={profile.capabilityProfileId} value={profile.capabilityProfileId}>
+                    {profile.name}
+                  </option>
+                ))}
+            </select>
+          </label>
           <button
             type="button"
-            className="session-preparation-marker"
-            aria-label="Preparation required on Send. View steps"
-            title="Preparation required on Send. View steps"
-            onClick={props.onPreview}
+            className="session-composer-toolbar__device"
+            aria-label={`Destination device: ${props.selection?.execution.deviceName ?? 'Choose device'}`}
+            onClick={props.onDevice}
+            title="Compare this conversation’s worktree on another device"
           >
-            <span />
+            <Monitor size={16} aria-hidden="true" />
+            <span>{props.selection?.execution.deviceName ?? 'Destination device'}</span>
           </button>
-        )}
-      </div>
-      <div
-        className="session-composer-toolbar__runtime"
-        role="group"
-        aria-label="Model and reasoning"
+          <button
+            className="session-composer-toolbar__worktree"
+            aria-label={
+              workspace?.kind === 'existing'
+                ? `${worktreeLabel} · ${props.selection?.execution.deviceName}`
+                : workspace?.kind === 'create'
+                  ? worktreeLabel
+                  : 'Target worktree'
+            }
+            type="button"
+            onClick={props.onWorktree}
+            title={
+              workspace?.kind === 'existing'
+                ? `${workspace.target.repositoryId} · ${workspace.target.path} · ${workspace.target.worktreeId}`
+                : worktreeLabel
+            }
+          >
+            <FolderGit2 size={16} aria-hidden="true" />
+            <span>{worktreeLabel}</span>
+          </button>
+          {props.pending && (
+            <button
+              type="button"
+              className="session-preparation-marker"
+              aria-label="Preparation required on Send. View steps"
+              title="Preparation required on Send. View steps"
+              onClick={props.onPreview}
+            >
+              <span />
+            </button>
+          )}
+        </div>
+      </ComposerHoverGroup>
+      <ComposerHoverGroup
+        label="Model and reasoning settings"
+        className="composer-runtime-group"
+        summary={
+          <span>
+            {effective.model?.label ?? 'Model'} · {effective.reasoningMode ?? 'Reasoning'}
+          </span>
+        }
       >
-        <select
-          aria-label="Model"
-          value={effective.model?.id ?? ''}
-          onChange={(event) => {
-            if (props.capabilities && event.target.value)
-              props.onOptions(
-                selectionForModel(props.capabilities, props.options, event.target.value),
-              );
-          }}
-          disabled={!effective.model}
+        <div
+          className="session-composer-toolbar__runtime"
+          role="group"
+          aria-label="Model and reasoning"
         >
-          {!effective.model && <option value="">Loading models…</option>}
-          {props.capabilities?.models.map((model) => (
-            <option key={model.id} value={model.id}>
-              {model.label}
-            </option>
-          ))}
-        </select>
-        <select
-          aria-label="Reasoning"
-          value={effective.reasoningMode ?? ''}
-          onChange={(event) =>
-            props.onOptions({ ...props.options, reasoningMode: event.target.value })
-          }
-          disabled={!effective.reasoningMode}
-        >
-          {!effective.reasoningMode && <option value="">Loading reasoning…</option>}
-          {effective.model?.reasoningModes.map((mode) => (
-            <option key={mode.id} value={mode.id}>
-              {mode.id}
-            </option>
-          ))}
-        </select>
-      </div>
+          <label>
+            <span>Model</span>
+            <select
+              aria-label="Model"
+              value={effective.model?.id ?? ''}
+              onChange={(event) => {
+                if (props.capabilities && event.target.value)
+                  props.onOptions(
+                    selectionForModel(props.capabilities, props.options, event.target.value),
+                  );
+              }}
+              disabled={!effective.model}
+            >
+              {!effective.model && <option value="">Loading models…</option>}
+              {props.capabilities?.models.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Reasoning</span>
+            <select
+              aria-label="Reasoning"
+              value={effective.reasoningMode ?? ''}
+              onChange={(event) =>
+                props.onOptions({ ...props.options, reasoningMode: event.target.value })
+              }
+              disabled={!effective.reasoningMode}
+            >
+              {!effective.reasoningMode && <option value="">Loading reasoning…</option>}
+              {effective.model?.reasoningModes.map((mode) => (
+                <option key={mode.id} value={mode.id}>
+                  {mode.id}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </ComposerHoverGroup>
     </>
   );
 }

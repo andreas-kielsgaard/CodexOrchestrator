@@ -67,6 +67,7 @@ it('keeps a pending question reachable across runtime updates and steering witho
   details.invocations[0].events.push(runtimeEvent(2, 'unknown', 'More runtime detail'));
   rerender(view());
   expect(screen.getByRole('button', { name: 'Review request' })).toBeVisible();
+  fireEvent.mouseEnter(screen.getByRole('group', { name: 'Turn actions' }));
   expect(screen.getByRole('button', { name: 'Steer current turn' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'Queue' })).toBeEnabled();
   expect(screen.queryByText('More runtime detail')).toBeNull();

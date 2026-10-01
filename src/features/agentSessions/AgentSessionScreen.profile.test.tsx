@@ -2,6 +2,38 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StandaloneAgentSessionScreen } from './AgentSessionScreen';
 import { repairSessionClients } from './profileTestFixtures';
+import { browserAgentSessionClipboard } from './sessionClipboard';
+
+async function openConfiguration(user: ReturnType<typeof userEvent.setup>) {
+  fireEvent.contextMenu(await screen.findByRole('treeitem', { name: 'Durable session' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Session configuration' }));
+}
+
+it('keeps session utilities in the conversation menu and configuration in a modal', async () => {
+  const fixture = repairSessionClients();
+  const user = userEvent.setup();
+  const copy = vi.spyOn(browserAgentSessionClipboard, 'writeText').mockResolvedValue();
+  render(
+    <StandaloneAgentSessionScreen client={fixture.sessions} profileClient={fixture.profiles} />,
+  );
+  await screen.findByText('Do the work');
+  expect(screen.queryByText('No assigned identity')).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole('button', { name: /Message and Session configuration/ }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Copy entire session' })).not.toBeInTheDocument();
+  fireEvent.contextMenu(screen.getByRole('treeitem', { name: 'Durable session' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Copy entire session' }));
+  await waitFor(() => expect(copy).toHaveBeenCalledWith(expect.stringContaining('Do the work')));
+  await openConfiguration(user);
+  expect(screen.getByRole('dialog', { name: 'Session configuration' })).toBeVisible();
+  expect(
+    screen.queryByRole('button', { name: /Message and Session configuration/ }),
+  ).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Close session configuration' }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  copy.mockRestore();
+});
 
 it('uses slash choices for the first message and refreshes discovery in the created Session context', async () => {
   const user = userEvent.setup();
@@ -33,7 +65,7 @@ it('uses slash choices for the first message and refreshes discovery in the crea
   });
   await user.keyboard('{Enter}');
   await user.type(input, 'medium{Enter}');
-  await user.click(screen.getByRole('button', { name: /Message and Session configuration/ }));
+  await openConfiguration(user);
   expect(screen.getByLabelText('Model')).toHaveValue('model-a');
   expect(screen.getByLabelText('Reasoning')).toHaveValue('medium');
 });
@@ -56,11 +88,10 @@ it('uses the profiled route for both the first and next message, with message-lo
       expect.objectContaining({ submittedText: 'First', model: null }),
     ),
   );
-  await user.click(
-    await screen.findByRole('button', { name: /Message and Session configuration/ }),
-  );
+  await openConfiguration(user);
   fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'model-b' } });
   fireEvent.change(screen.getByLabelText('Reasoning'), { target: { value: 'medium' } });
+  await user.click(screen.getByRole('button', { name: 'Close session configuration' }));
   fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: 'Next' } });
   await user.click(screen.getByRole('button', { name: 'Send' }));
   await waitFor(() =>
@@ -71,6 +102,7 @@ it('uses the profiled route for both the first and next message, with message-lo
       reasoningMode: 'medium',
     }),
   );
+  await openConfiguration(user);
   expect(screen.getByLabelText('Model')).toHaveValue('model-a');
   expect(generic).not.toHaveBeenCalled();
 });
@@ -98,7 +130,8 @@ it('edits the Session identity without changing the node or pinned profile', asy
   render(
     <StandaloneAgentSessionScreen client={fixture.sessions} profileClient={fixture.profiles} />,
   );
-  await user.click(await screen.findByRole('button', { name: 'Edit identity' }));
+  fireEvent.contextMenu(await screen.findByRole('treeitem', { name: 'Durable session' }));
+  await user.click(screen.getByRole('menuitem', { name: 'Set identity' }));
   fireEvent.change(screen.getByLabelText('Identity display name'), { target: { value: 'Alex' } });
   await user.click(screen.getByRole('button', { name: 'Apply identity' }));
   await waitFor(() =>

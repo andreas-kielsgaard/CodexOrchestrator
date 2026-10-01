@@ -33,12 +33,12 @@ describe('conversation state', () => {
       content: { text: string };
       result: null;
     }) => void;
-    const steerSession = vi.fn(
-      (_command: { inputId: string }) =>
-        new Promise<Parameters<typeof acceptSteering>[0]>((resolve) => {
-          acceptSteering = resolve;
-        }),
-    );
+    const steerSession = vi.fn((command: { inputId: string }) => {
+      expect(command.inputId).toBeTruthy();
+      return new Promise<Parameters<typeof acceptSteering>[0]>((resolve) => {
+        acceptSteering = resolve;
+      });
+    });
     const client = Object.assign(new FakeAgentSessionClient({ running: true }), { steerSession });
     const sendExistingMessage = vi.fn();
     const { result } = renderHook(() => useConversationHost(client, { sendExistingMessage }));

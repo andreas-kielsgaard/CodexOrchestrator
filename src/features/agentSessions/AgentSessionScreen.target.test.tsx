@@ -10,6 +10,10 @@ import { sessionDetails } from './testFixtures';
 
 beforeEach(() => window.localStorage.clear());
 
+async function revealTarget(user: ReturnType<typeof userEvent.setup>) {
+  await user.hover(screen.getByRole('button', { name: 'Target settings' }));
+}
+
 it('preserves the prompt while choosing a remote worktree and uses the shared target selection for the profiled send', async () => {
   const user = userEvent.setup();
   const sessions = repairSessionClients(false);
@@ -38,9 +42,11 @@ it('preserves the prompt while choosing a remote worktree and uses the shared ta
     await screen.findByRole('textbox', { name: 'Message' }),
     'Work on the remote checkout',
   );
+  await revealTarget(user);
   await user.click(screen.getByRole('button', { name: /Destination device/ }));
   await user.click(await screen.findByRole('button', { name: /Remote server/ }));
   await user.click(screen.getByRole('button', { name: 'Use device' }));
+  await revealTarget(user);
   await user.click(screen.getByRole('button', { name: 'Target worktree' }));
   await screen.findByRole('option', { name: /Codex Orchestrator/ });
   fireEvent.change(screen.getByLabelText('Target repository'), {
@@ -69,6 +75,7 @@ it('preserves the prompt while choosing a remote worktree and uses the shared ta
       }),
     ),
   );
+  await revealTarget(user);
   expect(
     await screen.findByRole('button', { name: /codex\/durable-review.*Remote server/ }),
   ).toBeEnabled();
@@ -124,11 +131,13 @@ it('uses the device command to select the same target as the modal and retains d
   await screen.findByRole('option', { name: /Remote server/ });
   await user.type(input, 'Remote{Enter}');
   await screen.findByRole('option', { name: /codex\/durable-review · review/ });
+  await revealTarget(user);
   expect(screen.getByRole('button', { name: 'Target worktree' })).toHaveTextContent(
     'Empty workspace',
   );
   expect(start).not.toHaveBeenCalled();
   await user.type(input, 'codex/durable-review{Enter}');
+  await revealTarget(user);
   expect(
     await screen.findByRole('button', { name: /codex\/durable-review.*Remote server/ }),
   ).toBeEnabled();
@@ -153,6 +162,7 @@ it('uses the device command to select the same target as the modal and retains d
       }),
     ),
   );
+  await revealTarget(user);
   expect(
     await screen.findByRole('button', { name: /codex\/durable-review.*Remote server/ }),
   ).toBeEnabled();
@@ -193,6 +203,7 @@ it('keeps New session and its remote target draft open while existing history re
   await screen.findByText('Do the work');
   await user.click(screen.getAllByRole('button', { name: 'New session' })[0]);
   await screen.findByRole('heading', { name: 'New Agent Session' });
+  await revealTarget(user);
   expect(screen.getByRole('button', { name: 'Target worktree' })).toBeEnabled();
   fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
     target: { value: 'Preserve this remote prompt' },
@@ -200,6 +211,7 @@ it('keeps New session and its remote target draft open while existing history re
   await user.click(screen.getByRole('button', { name: /Destination device/ }));
   await user.click(await screen.findByRole('button', { name: /Remote server/ }));
   await user.click(screen.getByRole('button', { name: 'Use device' }));
+  await revealTarget(user);
   await user.click(screen.getByRole('button', { name: 'Target worktree' }));
   await screen.findByRole('option', { name: /Codex Orchestrator/ });
   fireEvent.change(screen.getByLabelText('Target repository'), {
@@ -212,6 +224,7 @@ it('keeps New session and its remote target draft open while existing history re
   await user.click(screen.getByRole('button', { name: 'Refresh' }));
   await waitFor(() => expect(list.mock.calls.length).toBeGreaterThan(previousCalls));
   expect(screen.getByRole('heading', { name: 'New Agent Session' })).toBeVisible();
+  await revealTarget(user);
   expect(
     screen.getByRole('button', { name: /codex\/durable-review.*Remote server/ }),
   ).toBeEnabled();
@@ -219,6 +232,7 @@ it('keeps New session and its remote target draft open while existing history re
     'Preserve this remote prompt',
   );
   await user.click(screen.getByRole('button', { name: 'New session' }));
+  await revealTarget(user);
   await waitFor(() =>
     expect(
       screen.getByRole('button', { name: /codex\/durable-review.*Remote server/ }),

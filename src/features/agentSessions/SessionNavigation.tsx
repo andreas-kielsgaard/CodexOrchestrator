@@ -37,6 +37,9 @@ export function SessionNavigation({
   onPin,
   onRename,
   onReorder,
+  onCopySession,
+  onSetIdentity,
+  onConfigure,
   organizing = true,
 }: {
   model: SessionNavigationModel;
@@ -49,6 +52,9 @@ export function SessionNavigation({
   onPin(id: string, pinned: boolean): Promise<void>;
   onRename(id: string, title: string): Promise<void>;
   onReorder(scope: NavigationOrderScope, ids: readonly string[]): Promise<void>;
+  onCopySession?(id: string): Promise<void>;
+  onSetIdentity?(id: string): void;
+  onConfigure?(id: string): void;
   organizing?: boolean;
 }) {
   const [menu, setMenu] = useState<{ row: SessionNavigationRow; x: number; y: number } | null>(
@@ -240,6 +246,9 @@ export function SessionNavigation({
           onCopy={() =>
             browserAgentSessionClipboard.writeText(formatSessionDeepLink(menu.row.summary.id))
           }
+          onCopySession={onCopySession ? () => onCopySession(menu.row.summary.id) : undefined}
+          onSetIdentity={onSetIdentity ? () => onSetIdentity(menu.row.summary.id) : undefined}
+          onConfigure={onConfigure ? () => onConfigure(menu.row.summary.id) : undefined}
         />
       )}
     </>

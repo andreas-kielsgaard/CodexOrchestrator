@@ -114,6 +114,7 @@ it('keeps the focused next draft through first-session acceptance and permits qu
   fireEvent.keyDown(input, { key: 'Enter' });
   await waitFor(() => expect(sendPreparedMessage).toHaveBeenCalledTimes(2));
   expect(steerSession).not.toHaveBeenCalled();
+  fireEvent.mouseEnter(screen.getByRole('group', { name: 'Turn actions' }));
   fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
   await waitFor(() => expect(cancelPreparation).toHaveBeenCalledWith('invocation-1'));
   expect(input).toHaveValue('My next draft');

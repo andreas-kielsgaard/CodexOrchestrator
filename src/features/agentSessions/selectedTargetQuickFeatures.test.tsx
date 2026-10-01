@@ -61,6 +61,8 @@ it('uses selected remote capabilities for a creation draft without querying lapt
 it('discovers skills from the selected local configuration before creating a worktree', async () => {
   const fixture = repairSessionClients(false);
   const loadQuickFeatures = vi.fn(fixture.profiles.loadQuickFeatures);
+  const profiles = { ...fixture.profiles, loadQuickFeatures };
+  const facts = selectedTargetQuickFeatures(repairRuntime, repairProfile);
   const selection: SessionExecutionSelectionDto = {
     capabilityProfileId: repairProfile.capabilityProfileId,
     capabilityProfileRevision: repairProfile.revision,
@@ -78,9 +80,9 @@ it('discovers skills from the selected local configuration before creating a wor
       selectedSessionId: null,
       preparedExecution: true,
       executionSelection: selection,
-      executionQuickFeatures: selectedTargetQuickFeatures(repairRuntime, repairProfile),
+      executionQuickFeatures: facts,
       execution: {
-        client: { ...fixture.profiles, loadQuickFeatures },
+        client: profiles,
         selection: { model: null, reasoningMode: null },
         setSelection: () => {},
         afterAccepted: () => {},

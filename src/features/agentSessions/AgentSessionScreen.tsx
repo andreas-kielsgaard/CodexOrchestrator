@@ -60,6 +60,10 @@ import { useAgentSessionCollection } from './useAgentSessionCollection';
 import { useProfiledAgentSession } from './useProfiledAgentSession';
 import { ResizableSplitSurface } from '../orchestrations/components/ResizableSplitSurface';
 import './agentSession.css';
+import { ModalDialog } from '../../components/ModalDialog';
+import { IdentityPickerDialog } from '../identities';
+import { browserAgentSessionClipboard, formatAgentSessionContext } from './sessionClipboard';
+import { projectAgentSessionTranscript } from './transcriptProjector';
 
 type RouteModelCatalogueCacheEntry =
   | { readonly state: 'loading'; readonly promise: Promise<ProfileModelCatalogueDto> }
@@ -158,6 +162,20 @@ export function StandaloneAgentSessionScreen({
   onOpenWorkflow,
 }: AgentSessionScreenProps) {
   const [importOpen, setImportOpen] = useState(false);
+  const [sessionDialog, setSessionDialog] = useState<{
+    id: string;
+    kind: 'identity' | 'configuration';
+  } | null>(null);
+  const [identityError, setIdentityError] = useState<string | null>(null);
+  const copyEntireSession = useCallback(
+    async (sessionId: string) => {
+      const details = await client.loadSession({ sessionId });
+      await browserAgentSessionClipboard.writeText(
+        formatAgentSessionContext(details, projectAgentSessionTranscript(details)),
+      );
+    },
+    [client],
+  );
   const [targetPicker, setTargetPicker] = useState<{
     deviceId?: string;
     target?: SessionExecutionTargetDto;
@@ -365,6 +383,7 @@ export function StandaloneAgentSessionScreen({
   const settings =
     profileClient && selectedSessionId ? (
       <AgentSessionExecutionSettings
+        modalContent
         profile={view.profile}
         profileError={view.profileError}
         deliveries={view.deliveries.deliveries}
@@ -372,8 +391,6 @@ export function StandaloneAgentSessionScreen({
         onReloadDeliveries={view.deliveries.reload}
         selection={view.selection}
         onSelectionChange={view.setSelection}
-        identity={session.details?.session.assignedIdentity}
-        onIdentityChange={view.updateIdentity}
         showMessageControls={!executionTargetClient || !branchSource}
       />
     ) : undefined;
@@ -604,7 +621,7 @@ export function StandaloneAgentSessionScreen({
     selection.kind === 'initial' ? (
       <p role="status">Loading sessions…</p>
     ) : (
-      <AgentSessionHeaderActionsProvider actions={null} settings={settings}>
+      <AgentSessionHeaderActionsProvider actions={null}>
         <AgentSessionWorkspace
           controller={session}
           composerToolbar={toolbar}
@@ -635,12 +652,16 @@ export function StandaloneAgentSessionScreen({
               : undefined
           }
           presentation={{
+            compactHeader: true,
+            showCopyAction: false,
             emptyState,
             ...(selectedIdentity
               ? {
                   identityHeader: {
                     agentIdentity: selectedIdentity,
-                    title: legacyHarnessRoleLabel(selectedIdentity.harnessRole),
+                    title:
+                      session.details?.session.title ??
+                      legacyHarnessRoleLabel(selectedIdentity.harnessRole),
                   },
                 }
               : {}),
@@ -759,6 +780,24 @@ export function StandaloneAgentSessionScreen({
               onMove={collection.move}
               onPin={collection.pin}
               onRename={onRename}
+              onCopySession={copyEntireSession}
+              onSetIdentity={
+                profileClient && client.updateIdentity
+                  ? (id) => {
+                      onSelect(id);
+                      setIdentityError(null);
+                      setSessionDialog({ id, kind: 'identity' });
+                    }
+                  : undefined
+              }
+              onConfigure={
+                profileClient || harnessManagementSource
+                  ? (id) => {
+                      onSelect(id);
+                      setSessionDialog({ id, kind: 'configuration' });
+                    }
+                  : undefined
+              }
               onReorder={collection.reorder}
               organizing={Boolean(navigationClient)}
               onReload={() => {
@@ -789,20 +828,69 @@ export function StandaloneAgentSessionScreen({
                   </button>
                 </section>
               )}
-              {selectedSessionId && harnessManagementSource ? (
-                <HarnessAwareAgentSessionPane
-                  sessionId={selectedSessionId}
-                  source={harnessManagementSource}
-                >
-                  {workspace}
-                </HarnessAwareAgentSessionPane>
-              ) : (
-                workspace
-              )}
+              {workspace}
             </div>
           }
         />
       </main>
+      {sessionDialog?.kind === 'configuration' && selectedSessionId === sessionDialog.id && (
+        <ModalDialog
+          labelledBy="session-configuration-title"
+          onClose={() => setSessionDialog(null)}
+          className="session-configuration-dialog"
+        >
+          <header>
+            <h2 id="session-configuration-title">Session configuration</h2>
+            <button
+              type="button"
+              aria-label="Close session configuration"
+              onClick={() => setSessionDialog(null)}
+            >
+              <X size={18} />
+            </button>
+          </header>
+          {harnessManagementSource ? (
+            <HarnessAwareAgentSessionPane
+              sessionId={sessionDialog.id}
+              source={harnessManagementSource}
+            >
+              {settings}
+            </HarnessAwareAgentSessionPane>
+          ) : (
+            settings
+          )}
+        </ModalDialog>
+      )}
+      {sessionDialog?.kind === 'identity' &&
+        selectedSessionId === sessionDialog.id &&
+        session.details?.session.id === sessionDialog.id && (
+          <>
+            <IdentityPickerDialog
+              identity={
+                session.details.session.assignedIdentity ?? {
+                  originIdentityId: null,
+                  displayName: 'Agent',
+                  color: '#39745a',
+                  shape: 'circle',
+                }
+              }
+              title="Set identity"
+              onClose={() => setSessionDialog(null)}
+              onSave={(identity) => {
+                if (!view.updateIdentity) return;
+                void view.updateIdentity(identity).then(
+                  () => setSessionDialog(null),
+                  (cause) => setIdentityError(String(cause)),
+                );
+              }}
+            />
+            {identityError && (
+              <p className="session-identity-error" role="alert">
+                {identityError}
+              </p>
+            )}
+          </>
+        )}
     </>
   );
 }

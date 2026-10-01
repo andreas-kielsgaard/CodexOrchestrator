@@ -16,6 +16,8 @@ import {
 import type { AgentSessionWorkspaceController } from './useAgentSession';
 
 export interface AgentSessionPresentation {
+  readonly compactHeader?: boolean;
+  readonly showCopyAction?: boolean;
   readonly showHeader?: boolean;
   readonly ariaLabel?: string;
   readonly identityHeader?: Readonly<{
@@ -146,7 +148,7 @@ export function AgentSessionWorkspace({
     <section
       className={`agent-session-workspace${
         showHeader || identityHeader ? '' : ' agent-session-workspace--header-hidden'
-      }${contextualChrome.settings ? ' agent-session-workspace--with-settings' : ''}`}
+      }${contextualChrome.settings ? ' agent-session-workspace--with-settings' : ''}${presentation.compactHeader ? ' agent-session-workspace--compact' : ''}`}
       aria-label={presentation.ariaLabel ?? title}
     >
       {identityHeader ? (
@@ -163,14 +165,14 @@ export function AgentSessionWorkspace({
           </div>
           <div className="agent-session-identity-header__actions">
             {contextualChrome.actions}
-            {copyAction}
+            {presentation.showCopyAction !== false && copyAction}
             {activityStatus}
           </div>
         </header>
       ) : showHeader ? (
         <header className="agent-session-header">
           <div>
-            <p className="eyebrow">Agent Session</p>
+            {!presentation.compactHeader && <p className="eyebrow">Agent Session</p>}
             <h2>{title}</h2>
             {presentation.composer?.showWorkingDirectory &&
               controller.details?.session.workingDirectory && (
@@ -184,14 +186,14 @@ export function AgentSessionWorkspace({
           </div>
           <div className="agent-session-header__actions">
             {contextualChrome.actions}
-            {copyAction}
+            {presentation.showCopyAction !== false && copyAction}
             {activityStatus}
           </div>
         </header>
       ) : (
         <div className="agent-session-utility-bar">
           {contextualChrome.actions}
-          {copyAction}
+          {presentation.showCopyAction !== false && copyAction}
           {activityStatus}
         </div>
       )}
