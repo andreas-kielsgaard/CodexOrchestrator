@@ -401,6 +401,7 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::preparation::cancel_agent_session_preparation,
             crate::agent_sessions::transport::preparation::retry_agent_session_preparation,
             crate::agent_sessions::transport::queue::load_agent_session_queue,
+            crate::agent_sessions::transport::queue::send_queued_agent_session_message_now,
             crate::agent_sessions::transport::queue::enqueue_agent_session_target_operation,
             crate::agent_sessions::transport::queue::enqueue_agent_session_compaction,
             crate::agent_sessions::transport::queue::reorder_agent_session_queue,

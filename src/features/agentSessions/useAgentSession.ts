@@ -31,7 +31,6 @@ import {
   presentSessionQueue,
   type SessionQueuePresentation,
 } from '../../application/agentSessions/sessionQueuePresentation';
-import { samePreparedConfiguration } from './sessionPreparationState';
 import {
   clearCachedComposerDraft,
   clearCachedComposerText,
@@ -104,6 +103,10 @@ export interface AgentSessionWorkspaceController {
 
   reload(): Promise<void>;
   toggleProcessing(invocationId: string): void;
+  sendQueueEntryNow?(
+    entryId: string,
+    message?: Omit<UpdateQueuedMessageInputDto, 'sessionId' | 'entryId' | 'expectedRevision'>,
+  ): Promise<boolean>;
   clearError(): void;
 }
 
@@ -217,13 +220,15 @@ export function useAgentSession(
   draftRef.current = draft;
   const [currentProfile, setCurrentProfile] = useState<PinnedAgentSessionProfileDto | null>(null);
   const [preparation, setPreparation] = useState<SessionPreparationDto | null>(null);
-  const acceptedOptionsRef = useRef<string | null>(null);
+  const pendingComposerWrite = useRef<{
+    key: string;
+    text: string;
+    workingDirectory: string;
+  } | null>(null);
   const sendingRef = useRef(false);
   const [workingDirectory, setWorkingDirectory] = useState(
     initialComposer.draft?.workingDirectory ?? '',
   );
-  const workingDirectoryRef = useRef(workingDirectory);
-  workingDirectoryRef.current = workingDirectory;
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [canceling, setCanceling] = useState(false);
@@ -235,6 +240,7 @@ export function useAgentSession(
   const invocationIdsRef = useRef<Set<string>>(new Set());
   const mountedRef = useRef(true);
   const loadGenerationRef = useRef(0);
+  const profileRefreshKeyRef = useRef<string | null>(null);
   const subscriptionReadyRef = useRef<Promise<void>>(Promise.resolve());
 
   const reloadHistoryRef = useRef<(sessionId: string, reload?: boolean) => Promise<unknown>>(
@@ -260,15 +266,17 @@ export function useAgentSession(
   const { compact } = queueControls;
   const loadSelected = useCallback(
     async (sessionId: string, reload = false) => {
+      if (selectedIdRef.current !== sessionId) return;
       const generation = ++loadGenerationRef.current;
-      const next = historySource
+      const historyRequest = historySource
         ? reload
-          ? await historySource.refresh(sessionId)
-          : await historySource.ensure(sessionId)
+          ? historySource.refresh(sessionId)
+          : historySource.ensure(sessionId)
         : reload
-          ? await client.reloadSession({ sessionId })
-          : await client.loadSession({ sessionId });
-      const [prepared, current] = await Promise.all([
+          ? client.reloadSession({ sessionId })
+          : client.loadSession({ sessionId });
+      const [next, prepared, current] = await Promise.all([
+        historyRequest,
         options.preparedExecution && options.execution?.client.loadPreparation
           ? options.execution.client.loadPreparation(sessionId)
           : Promise.resolve(null),
@@ -285,6 +293,11 @@ export function useAgentSession(
         if (!historySource) setFallbackDetails(next);
         setPreparation(prepared);
         setCurrentProfile(current);
+        profileRefreshKeyRef.current = JSON.stringify([
+          next.session.id,
+          next.session.executionTarget,
+          next.session.harnessVersion,
+        ]);
         setWorkingDirectory(
           readCachedComposerDraft(composerCacheKeyRef.current)?.workingDirectory ??
             next.session.workingDirectory ??
@@ -305,7 +318,17 @@ export function useAgentSession(
         return;
       }
       if (historySource) {
-        if (update.kind !== 'preparation_updated' && update.kind !== 'queue_updated') return;
+        if (update.kind === 'queue_updated') {
+          const key =
+            update.session &&
+            JSON.stringify([
+              update.session.id,
+              update.session.executionTarget,
+              update.session.harnessVersion,
+            ]);
+          if (key && key === profileRefreshKeyRef.current) return;
+          profileRefreshKeyRef.current = key ?? null;
+        } else if (update.kind !== 'preparation_updated') return;
         try {
           const [prepared, current] = await Promise.all([
             options.preparedExecution && options.execution?.client.loadPreparation
@@ -368,7 +391,6 @@ export function useAgentSession(
       setCurrentProfile(null);
       setPreparation(null);
       setQueue(null);
-      acceptedOptionsRef.current = null;
       setLoading(true);
       setError(null);
       try {
@@ -391,7 +413,6 @@ export function useAgentSession(
       setPreparation(null);
       setQueue(null);
       setCurrentProfile(null);
-      acceptedOptionsRef.current = null;
       invocationIdsRef.current = new Set();
       if (hydrateComposer) {
         setWorkingDirectory(cached?.workingDirectory ?? '');
@@ -421,17 +442,29 @@ export function useAgentSession(
 
   useEffect(() => {
     if (hydratedComposerCacheKey !== composerCacheKey) return;
+    pendingComposerWrite.current = { key: composerCacheKey, text: draft, workingDirectory };
     const timer = window.setTimeout(() => {
       writeCachedComposerDraft(composerCacheKey, { text: draft, workingDirectory });
     }, 180);
     return () => {
       window.clearTimeout(timer);
-      writeCachedComposerDraft(composerCacheKey, {
-        text: draftRef.current,
-        workingDirectory: workingDirectoryRef.current,
-      });
     };
   }, [composerCacheKey, draft, hydratedComposerCacheKey, workingDirectory]);
+
+  // Flush on navigation/unmount, not on each keystroke's effect cleanup.
+  useEffect(
+    () => () => {
+      const pending = pendingComposerWrite.current;
+      if (pending?.key === composerCacheKey) {
+        writeCachedComposerDraft(pending.key, {
+          text: pending.text,
+          workingDirectory: pending.workingDirectory,
+        });
+        pendingComposerWrite.current = null;
+      }
+    },
+    [composerCacheKey],
+  );
 
   const reload = useCallback(async () => {
     const sessionId = selectedIdRef.current;
@@ -449,6 +482,14 @@ export function useAgentSession(
     }
   }, [loadSelected]);
 
+  const clearSubmittedText = useCallback((key: string, submittedText: string) => {
+    const pending = pendingComposerWrite.current;
+    if (pending?.key === key && pending.text.trim() === submittedText.trim())
+      pendingComposerWrite.current = { ...pending, text: '' };
+    if (readCachedComposerDraft(key)?.text?.trim() === submittedText.trim())
+      clearCachedComposerText(key);
+  }, []);
+
   const sendText = useCallback(
     async (
       value: string,
@@ -461,7 +502,7 @@ export function useAgentSession(
       const sendContext = contextRef.current;
       const sendCacheKey = composerCacheKeyRef.current;
       const existingSessionId = selectedIdRef.current;
-      let acceptedDelivery = false;
+      let acceptedSessionId: string | null = null;
       sendingRef.current = true;
       setSending(true);
       setError(null);
@@ -478,10 +519,6 @@ export function useAgentSession(
             throw new Error('Working context selection is unavailable.');
           await client.resolveWorkingDirectory(existingSessionId, workingDirectory.trim());
         }
-        const preparedOptions = JSON.stringify([
-          options.executionSelection,
-          options.execution?.selection,
-        ]);
         const acknowledgement =
           options.preparedExecution && options.execution?.client.sendPreparedMessage
             ? await options.execution.client.sendPreparedMessage({
@@ -538,8 +575,7 @@ export function useAgentSession(
                         ? { workingDirectory: workingDirectory.trim() }
                         : {}),
                     });
-        acceptedOptionsRef.current = preparedOptions;
-        acceptedDelivery = true;
+        acceptedSessionId = acknowledgement.sessionId;
         if (options.execution) {
           const effective =
             'invocation' in acknowledgement
@@ -583,25 +619,33 @@ export function useAgentSession(
         if (contextRef.current === sendContext && selectedIdRef.current === existingSessionId) {
           selectedIdRef.current = acknowledgement.sessionId;
           invocationIdsRef.current.add(acknowledgement.invocationId);
-          await loadSelected(acknowledgement.sessionId, true);
+          void loadSelected(acknowledgement.sessionId, true).catch((caught) => {
+            if (mountedRef.current && selectedIdRef.current === acknowledgement.sessionId)
+              setError(`Session refresh failed: ${errorMessage(caught)}`);
+          });
         }
       } catch (caught) {
         if (mountedRef.current) setError(errorMessage(caught));
       } finally {
+        if (acceptedSessionId && clearComposer) clearSubmittedText(sendCacheKey, value);
         // A controlled owner can switch to the created Session while its acknowledgement is still
         // settling. Clear again only when this exact sent text is still visible; a user-typed next
         // draft always wins.
-        if (acceptedDelivery && clearComposer && draftRef.current === value) {
+        if (
+          acceptedSessionId &&
+          clearComposer &&
+          (contextRef.current === sendContext || selectedIdRef.current === acceptedSessionId) &&
+          draftRef.current === value
+        ) {
           draftRef.current = '';
           setDraft('');
-          if (existingSessionId) clearCachedComposerText(sendCacheKey);
-          else clearCachedComposerDraft(sendCacheKey);
+          if (!existingSessionId) clearCachedComposerDraft(sendCacheKey);
         }
         sendingRef.current = false;
         if (mountedRef.current) setSending(false);
       }
     },
-    [client, details, loadSelected, options, workingDirectory],
+    [client, details, loadSelected, options, workingDirectory, clearSubmittedText],
   );
 
   const send = useCallback(
@@ -612,18 +656,21 @@ export function useAgentSession(
   const steer = useCallback(
     async (attachments: readonly NewAgentImageAttachmentDto[] = []) => {
       const sessionId = selectedIdRef.current;
+      const sendCacheKey = composerCacheKeyRef.current;
       const submittedText = draftRef.current.trim();
-      const invocationId = details
-        ? projectAgentSessionTranscript(details).activeInvocationId
-        : null;
+      const invocationId = details?.invocations.find(
+        ({ invocation }) => invocation.status === 'running',
+      )?.invocation.id;
       if (
         !sessionId ||
         !invocationId ||
         (!submittedText && !attachments.length) ||
-        !client.steerSession
+        !client.steerSession ||
+        sendingRef.current
       )
         return;
       const inputId = crypto.randomUUID();
+      sendingRef.current = true;
       const optimistic: SessionInteractionDto = {
         id: inputId,
         invocationId,
@@ -650,25 +697,29 @@ export function useAgentSession(
             : current.map((item) => (item.id === inputId ? outcome : item)),
         );
         if (outcome.state === 'accepted') {
-          if (draftRef.current.trim() === submittedText) {
+          clearSubmittedText(sendCacheKey, submittedText);
+          if (selectedIdRef.current === sessionId && draftRef.current.trim() === submittedText) {
             draftRef.current = '';
             setDraft('');
-            clearCachedComposerText(composerCacheKeyRef.current);
           }
         } else {
           setError(
             outcome.result ?? `Steering ${outcome.state}. It will not be sent again automatically.`,
           );
         }
-        await loadSelected(sessionId, true);
+        void loadSelected(sessionId, true).catch((caught) => {
+          if (mountedRef.current && selectedIdRef.current === sessionId)
+            setError(`Session refresh failed: ${errorMessage(caught)}`);
+        });
       } catch (caught) {
         setOptimisticSteering((current) => current.filter(({ id }) => id !== inputId));
         setError(errorMessage(caught));
       } finally {
+        sendingRef.current = false;
         if (mountedRef.current) setSending(false);
       }
     },
-    [client, details, loadSelected],
+    [client, details, loadSelected, clearSubmittedText],
   );
 
   const cancel = useCallback(async () => {
@@ -899,14 +950,10 @@ export function useAgentSession(
   }, [loadQuickFeatures, quickFeatureKey, quickFeatureOwner]);
 
   const preparing = isSessionPreparing(preparation);
-  const sameActiveConfiguration =
-    !options.preparedExecution ||
-    samePreparedConfiguration(
-      options.executionSelection,
-      options.execution?.selection,
-      preparation,
-      acceptedOptionsRef.current,
-    );
+  const runningInvocationId = details?.invocations.find(
+    ({ invocation }) => invocation.status === 'running',
+  )?.invocation.id;
+  const runningTurnPreparing = preparation?.invocationId === runningInvocationId && preparing;
   return {
     preparation,
     preparing,
@@ -944,7 +991,8 @@ export function useAgentSession(
         : undefined,
     quickCatalogue,
     respondToRequest,
-    steeringAvailable: Boolean(client.steerSession) && !preparing && sameActiveConfiguration,
+    steeringAvailable:
+      Boolean(client.steerSession) && Boolean(runningInvocationId) && !runningTurnPreparing,
     steer,
     queue,
     queuePresentation,

@@ -76,6 +76,7 @@ export function createTauriAgentSessionClient(
     retryPreparation: (invocationId) =>
       invokeCommand('retry_agent_session_preparation', { input: { invocationId } }),
     loadQueue: (sessionId) => invokeCommand('load_agent_session_queue', { input: { sessionId } }),
+    sendQueueEntryNow: (input) => invokeCommand('send_queued_agent_session_message_now', { input }),
     enqueueTargetOperation: (input) =>
       invokeCommand('enqueue_agent_session_target_operation', { input }),
     enqueueCompaction: (sessionId) =>

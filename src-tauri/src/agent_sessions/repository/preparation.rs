@@ -88,7 +88,10 @@ impl SqliteAgentSessionRepository {
                 .query_row(
                     "SELECT p.invocation_id FROM agent_session_preparations p
                  JOIN agent_session_invocations i ON i.id=p.invocation_id
-                 WHERE p.session_id=?1 ORDER BY i.created_at DESC,i.rowid DESC LIMIT 1",
+                 LEFT JOIN agent_session_queue_entries q ON q.invocation_id=i.id
+                 WHERE p.session_id=?1
+                 ORDER BY CASE WHEN i.status='running' THEN 0 WHEN q.state='executing' THEN 1 ELSE 2 END,
+                          i.created_at DESC,i.rowid DESC LIMIT 1",
                     [id.as_str()],
                     |row| row.get(0),
                 )

@@ -42,20 +42,24 @@ pub(crate) struct SendDirectUserAgentSessionMessageResultDto {
 }
 
 #[tauri::command]
-pub(crate) fn load_pinned_agent_session_profile(
+pub(crate) async fn load_pinned_agent_session_profile(
     state: State<'_, super::AgentSessionTauriState>,
     input: LoadPinnedSessionProfileInput,
 ) -> Result<PinnedAgentSessionProfileDto, String> {
-    let pinned = state
-        .application
-        .load_pinned_session_profile(LoadPinnedSessionProfileQuery {
-            session_id: input.session_id,
+    let application = state.application.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let pinned = application
+            .load_pinned_session_profile(LoadPinnedSessionProfileQuery {
+                session_id: input.session_id,
+            })
+            .map_err(|error| error.to_string())?;
+        Ok(PinnedAgentSessionProfileDto {
+            session_id: pinned.session_id,
+            creation_resolution: pinned.creation_resolution,
         })
-        .map_err(|error| error.to_string())?;
-    Ok(PinnedAgentSessionProfileDto {
-        session_id: pinned.session_id,
-        creation_resolution: pinned.creation_resolution,
     })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -128,16 +132,20 @@ impl
 }
 
 #[tauri::command]
-pub(crate) fn load_current_agent_session_profile(
+pub(crate) async fn load_current_agent_session_profile(
     state: State<'_, super::AgentSessionTauriState>,
     input: LoadPinnedSessionProfileInput,
 ) -> Result<PinnedAgentSessionProfileDto, String> {
-    let profile = state
-        .application
-        .load_current_session_profile(&input.session_id)
-        .map_err(|e| e.to_string())?;
-    Ok(PinnedAgentSessionProfileDto {
-        session_id: profile.session_id,
-        creation_resolution: profile.creation_resolution,
+    let application = state.application.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let profile = application
+            .load_current_session_profile(&input.session_id)
+            .map_err(|e| e.to_string())?;
+        Ok(PinnedAgentSessionProfileDto {
+            session_id: profile.session_id,
+            creation_resolution: profile.creation_resolution,
+        })
     })
+    .await
+    .map_err(|error| error.to_string())?
 }

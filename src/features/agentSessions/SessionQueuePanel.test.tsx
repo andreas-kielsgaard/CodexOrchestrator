@@ -148,6 +148,53 @@ function controller(overrides: Partial<AgentSessionWorkspaceController> = {}) {
 }
 
 describe('SessionQueuePanel', () => {
+  it('sends immediately from an icon without opening the editor', async () => {
+    const sendQueueEntryNow = vi.fn(async () => true);
+    render(
+      <SessionQueuePanel
+        queue={fixture()}
+        controller={controller({ sendQueueEntryNow })}
+        onChooseTarget={() => {}}
+      />,
+    );
+    const button = screen.getByRole('button', { name: 'Send immediately: Do the next task' });
+    expect(button.textContent).toBe('');
+    fireEvent.click(button);
+    expect(sendQueueEntryNow).toHaveBeenCalledWith('message-entry');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await waitFor(() => expect(button).toBeEnabled());
+  });
+
+  it('sends the edited message from the modal and keeps it open on failure', async () => {
+    const sendQueueEntryNow = vi.fn(async () => false);
+    const updateQueuedMessage = vi.fn();
+    render(
+      <SessionQueuePanel
+        queue={fixture()}
+        controller={controller({ sendQueueEntryNow, updateQueuedMessage })}
+        onChooseTarget={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Queued: Do the next task/ }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
+      target: { value: 'Updated correction' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send immediately' }));
+    await waitFor(() =>
+      expect(sendQueueEntryNow).toHaveBeenCalledWith('message-entry', {
+        submittedText: 'Updated correction',
+        model: 'gpt-test',
+        reasoningMode: 'high',
+        sandboxMode: 'workspace_write',
+      }),
+    );
+    expect(updateQueuedMessage).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    sendQueueEntryNow.mockResolvedValue(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Send immediately' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
   it('reorders messages and target operation sets as peer entries', () => {
     const reorderQueue = vi.fn();
     render(

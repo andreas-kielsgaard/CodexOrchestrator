@@ -111,6 +111,9 @@ struct BlockingPreparationRuntime {
 }
 #[derive(Default)]
 struct BlockedState {
+    stay_running: bool,
+    steering_error: Option<RuntimePortErrorKind>,
+    steering: Vec<(String, String)>,
     requests: Vec<RuntimeInvocationRequest>,
     outcome: Option<bool>,
     delivered: Vec<AgentInvocationId>,
@@ -127,6 +130,22 @@ impl BlockingPreparationRuntime {
     }
 }
 impl AgentRuntime for BlockingPreparationRuntime {
+    fn steer(
+        &self,
+        id: &AgentInvocationId,
+        input_id: &str,
+        text: &str,
+        _: &[crate::agent_sessions::domain::RuntimeImageAttachment],
+    ) -> Result<(), RuntimePortError> {
+        let mut state = self.state.lock().unwrap();
+        assert!(state.delivered.contains(id));
+        state.steering.push((input_id.into(), text.into()));
+        if let Some(kind) = state.steering_error {
+            Err(RuntimePortError::new(kind, "test steering failure"))
+        } else {
+            Ok(())
+        }
+    }
     fn preflight_invocation(
         &self,
         _: RuntimeInvocationMode,
@@ -166,6 +185,9 @@ impl AgentRuntime for BlockingPreparationRuntime {
         let sink = {
             let mut state = self.state.lock().unwrap();
             state.delivered.push(id.clone());
+            if state.stay_running {
+                return Ok(());
+            }
             state.sink.clone().unwrap()
         };
         sink.emit_update(
@@ -200,6 +222,201 @@ impl AgentRuntime for BlockingPreparationRuntime {
     ) -> Result<(), RuntimePortError> {
         panic!("Preparation must not use immediate resume")
     }
+}
+
+#[test]
+fn queued_send_now_steers_once_and_removes_only_the_accepted_message() {
+    let fixture = PreparationFixture::new();
+    fixture.runtime.state.lock().unwrap().stay_running = true;
+    let active = fixture
+        .app
+        .accept_prepared_message(fixture.input("active-now"))
+        .unwrap();
+    fixture.wait(|| fixture.runtime.attempts() == 1);
+    fixture.runtime.release(true);
+    fixture.wait(|| {
+        fixture
+            .runtime
+            .state
+            .lock()
+            .unwrap()
+            .delivered
+            .contains(&active.invocation_id)
+    });
+    let queued = fixture
+        .app
+        .accept_prepared_message(fixture.input("queued-now"))
+        .unwrap();
+    assert_eq!(
+        fixture
+            .app
+            .load_preparation(&active.session_id)
+            .unwrap()
+            .unwrap()
+            .invocation_id,
+        active.invocation_id
+    );
+    let view = fixture.app.load_session_queue(&active.session_id).unwrap();
+    let entry = view.entries.iter().find(|entry| matches!(&entry.item, crate::agent_sessions::queue::SessionQueueEntryItem::Message { invocation_id } if invocation_id == &queued.invocation_id)).unwrap();
+    let edits = super::super::queue::UpdateQueuedMessageInput {
+        session_id: active.session_id.clone(),
+        entry_id: entry.id.clone(),
+        expected_revision: view.revision,
+        submitted_text: "Edited steering".into(),
+        model: None,
+        reasoning_mode: None,
+        sandbox_mode: None,
+    };
+    fixture
+        .app
+        .send_queued_message_now(&active.session_id, &entry.id, view.revision, Some(edits))
+        .unwrap();
+    assert!(fixture
+        .repository
+        .get_invocation(&queued.invocation_id)
+        .unwrap()
+        .is_none());
+    assert_eq!(fixture.runtime.state.lock().unwrap().steering.len(), 1);
+    assert_eq!(
+        fixture.runtime.state.lock().unwrap().steering[0].1,
+        "Edited steering"
+    );
+    assert!(fixture
+        .app
+        .send_queued_message_now(&active.session_id, &entry.id, view.revision, None)
+        .is_err());
+    assert_eq!(fixture.runtime.state.lock().unwrap().steering.len(), 1);
+    assert_eq!(
+        fixture
+            .repository
+            .get_invocation(&active.invocation_id)
+            .unwrap()
+            .unwrap()
+            .status,
+        AgentInvocationStatus::Running
+    );
+}
+
+#[test]
+fn queued_send_now_retains_rejected_messages_and_blocks_uncertain_delivery() {
+    for (kind, expected) in [
+        (
+            RuntimePortErrorKind::NotActive,
+            crate::agent_sessions::queue::SessionQueueEntryState::Pending,
+        ),
+        (
+            RuntimePortErrorKind::Unavailable,
+            crate::agent_sessions::queue::SessionQueueEntryState::Blocked,
+        ),
+    ] {
+        let fixture = PreparationFixture::new();
+        {
+            let mut state = fixture.runtime.state.lock().unwrap();
+            state.stay_running = true;
+            state.steering_error = Some(kind);
+        }
+        let active = fixture
+            .app
+            .accept_prepared_message(fixture.input("active-failure"))
+            .unwrap();
+        fixture.wait(|| fixture.runtime.attempts() == 1);
+        fixture.runtime.release(true);
+        fixture.wait(|| {
+            fixture
+                .runtime
+                .state
+                .lock()
+                .unwrap()
+                .delivered
+                .contains(&active.invocation_id)
+        });
+        let queued = fixture
+            .app
+            .accept_prepared_message(fixture.input("retained-now"))
+            .unwrap();
+        let view = fixture.app.load_session_queue(&active.session_id).unwrap();
+        let entry = fixture
+            .repository
+            .queue_entry_for_invocation(&queued.invocation_id)
+            .unwrap()
+            .unwrap();
+        assert!(fixture
+            .app
+            .send_queued_message_now(&active.session_id, &entry.id, view.revision, None)
+            .is_err());
+        assert_eq!(
+            fixture
+                .repository
+                .queue_entry_for_invocation(&queued.invocation_id)
+                .unwrap()
+                .unwrap()
+                .state,
+            expected
+        );
+        assert!(fixture
+            .repository
+            .get_invocation(&queued.invocation_id)
+            .unwrap()
+            .is_some());
+        if kind == RuntimePortErrorKind::NotActive {
+            fixture.runtime.state.lock().unwrap().steering_error = None;
+            let fresh = fixture.app.load_session_queue(&active.session_id).unwrap();
+            fixture
+                .app
+                .send_queued_message_now(&active.session_id, &entry.id, fresh.revision, None)
+                .unwrap();
+            assert!(fixture
+                .repository
+                .get_invocation(&queued.invocation_id)
+                .unwrap()
+                .is_none());
+            assert_eq!(fixture.runtime.state.lock().unwrap().steering.len(), 2);
+        }
+    }
+}
+
+#[test]
+fn queued_send_now_prioritizes_an_idle_message_and_continues_preparation() {
+    let fixture = PreparationFixture::new();
+    let first = fixture
+        .app
+        .accept_prepared_message(fixture.input("blocked-first"))
+        .unwrap();
+    fixture.wait(|| fixture.runtime.attempts() == 1);
+    fixture.runtime.release(false);
+    fixture.wait(|| {
+        fixture
+            .repository
+            .queue_entry_for_invocation(&first.invocation_id)
+            .unwrap()
+            .is_some_and(|entry| {
+                entry.state == crate::agent_sessions::queue::SessionQueueEntryState::Blocked
+            })
+    });
+    let next = fixture
+        .app
+        .accept_prepared_message(fixture.input("priority-next"))
+        .unwrap();
+    let view = fixture.app.load_session_queue(&first.session_id).unwrap();
+    let entry = fixture
+        .repository
+        .queue_entry_for_invocation(&next.invocation_id)
+        .unwrap()
+        .unwrap();
+    fixture
+        .app
+        .send_queued_message_now(&first.session_id, &entry.id, view.revision, None)
+        .unwrap();
+    fixture.wait(|| fixture.runtime.attempts() == 2);
+    let view = fixture.app.load_session_queue(&first.session_id).unwrap();
+    assert_eq!(
+        view.entries
+            .iter()
+            .find(|entry| entry.state.is_unfinished())
+            .unwrap()
+            .id,
+        entry.id
+    );
 }
 struct PreparationProfileSource;
 impl ProviderConfigurationSource for PreparationProfileSource {

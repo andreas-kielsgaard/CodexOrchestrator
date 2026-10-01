@@ -89,11 +89,158 @@ pub(crate) struct UpdateTargetOperationInput {
 }
 
 impl AgentSessionApplication {
+    pub(crate) fn send_queued_message_now(
+        &self,
+        session_id: &AgentSessionId,
+        entry_id: &str,
+        expected_revision: u64,
+        edits: Option<UpdateQueuedMessageInput>,
+    ) -> Result<(), AgentSessionApplicationError> {
+        // Serialize against automatic dispatch so a message cannot launch and steer twice.
+        let lane = self.queue_dispatch_lanes.lane(session_id);
+        let _guard = lane
+            .lock()
+            .map_err(|_| AgentSessionApplicationError::conflict("Session queue unavailable"))?;
+        let mut queue = self.load_session_queue(session_id)?;
+        if queue.revision != expected_revision {
+            return Err(AgentSessionApplicationError::conflict(
+                "The queue changed. Try again.",
+            ));
+        }
+        if let Some(edits) = edits {
+            if edits.session_id != *session_id
+                || edits.entry_id != entry_id
+                || edits.expected_revision != expected_revision
+            {
+                return Err(AgentSessionApplicationError::invalid(
+                    "Queue edit does not match the selected message",
+                ));
+            }
+            self.update_queued_message(edits)?;
+            queue = self.load_session_queue(session_id)?;
+        }
+        let entry = queue
+            .entries
+            .iter()
+            .find(|entry| entry.id == entry_id)
+            .ok_or_else(|| AgentSessionApplicationError::not_found("Queue entry not found"))?;
+        let SessionQueueEntryItem::Message { invocation_id } = &entry.item else {
+            return Err(AgentSessionApplicationError::invalid(
+                "Only queued messages can be sent immediately",
+            ));
+        };
+        if entry.state != SessionQueueEntryState::Pending {
+            return Err(AgentSessionApplicationError::conflict(
+                "This message is not pending",
+            ));
+        }
+        let history = self.load_session(session_id)?;
+        if let Some(active) = history
+            .invocations
+            .iter()
+            .find(|item| item.invocation.status == AgentInvocationStatus::Running)
+        {
+            let queued = self
+                .repository
+                .get_invocation(invocation_id)
+                .map_err(AgentSessionApplicationError::repository)?
+                .ok_or_else(|| {
+                    AgentSessionApplicationError::not_found("Queued message not found")
+                })?;
+            self.repository
+                .set_queue_entry_state(
+                    entry_id,
+                    SessionQueueEntryState::Executing,
+                    None,
+                    self.clock.now(),
+                )
+                .map_err(AgentSessionApplicationError::repository)?;
+            self.notify_queue(session_id);
+            let result = self.steer_session(super::SteerAgentSessionCommand {
+                session_id: session_id.clone(),
+                invocation_id: active.invocation.id.clone(),
+                input_id: format!("queue-now:{entry_id}:{}", queue.revision),
+                text: queued.submitted_text,
+                attachments: queued.attachments,
+            });
+            let uncertain = result
+                .as_ref()
+                .is_ok_and(|outcome| outcome.state == "uncertain");
+            let reason = result
+                .as_ref()
+                .ok()
+                .and_then(|outcome| outcome.result.clone());
+            self.repository
+                .set_queue_entry_state(
+                    entry_id,
+                    if uncertain {
+                        SessionQueueEntryState::Blocked
+                    } else {
+                        SessionQueueEntryState::Pending
+                    },
+                    reason,
+                    self.clock.now(),
+                )
+                .map_err(AgentSessionApplicationError::repository)?;
+            match result {
+                Ok(outcome) if outcome.state == "accepted" => {
+                    self.cancel_queue_entry(session_id, entry_id)?
+                }
+                Ok(outcome) => {
+                    self.notify_queue(session_id);
+                    return Err(AgentSessionApplicationError::conflict(
+                        outcome.result.unwrap_or_else(|| {
+                            format!(
+                                "Steering {}. The queued message was retained.",
+                                outcome.state
+                            )
+                        }),
+                    ));
+                }
+                Err(error) => {
+                    self.notify_queue(session_id);
+                    return Err(error);
+                }
+            }
+        } else {
+            // Preserve preceding target operations: priority must not change the destination.
+            let dependencies = queue
+                .entries
+                .iter()
+                .take_while(|item| item.id != entry_id)
+                .filter(|item| {
+                    item.state.is_unfinished()
+                        && matches!(item.item, SessionQueueEntryItem::TargetOperation { .. })
+                })
+                .map(|item| item.id.clone())
+                .collect::<Vec<_>>();
+            let mut ids = dependencies.clone();
+            ids.push(entry_id.to_string());
+            ids.extend(
+                queue
+                    .entries
+                    .iter()
+                    .filter(|item| {
+                        item.state.is_unfinished()
+                            && item.id != entry_id
+                            && !dependencies.contains(&item.id)
+                    })
+                    .map(|item| item.id.clone()),
+            );
+            self.reorder_session_queue(session_id, queue.revision, &ids)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn enqueue_session_compaction(
         &self,
         session_id: &AgentSessionId,
     ) -> Result<SessionQueueSnapshot, AgentSessionApplicationError> {
-        let session = self.load_session(session_id)?.session;
+        let session = self
+            .repository
+            .get_session(session_id)
+            .map_err(AgentSessionApplicationError::repository)?
+            .ok_or_else(|| AgentSessionApplicationError::not_found("Agent Session not found"))?;
         if session.runtime_binding.external_context_id.is_none() {
             return Err(AgentSessionApplicationError::conflict(
                 "This conversation has no Codex context to compact",
@@ -138,7 +285,11 @@ impl AgentSessionApplication {
         session_id: &AgentSessionId,
     ) -> Result<SessionQueueView, AgentSessionApplicationError> {
         let snapshot = self.load_session_queue(session_id)?;
-        let session = self.load_session(session_id)?.session;
+        let session = self
+            .repository
+            .get_session(session_id)
+            .map_err(AgentSessionApplicationError::repository)?
+            .ok_or_else(|| AgentSessionApplicationError::not_found("Agent Session not found"))?;
         let mut entries = Vec::with_capacity(snapshot.entries.len());
         for entry in snapshot.entries {
             let (message, target_operation) = match &entry.item {

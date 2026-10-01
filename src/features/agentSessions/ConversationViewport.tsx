@@ -1,5 +1,6 @@
 import type { SessionHistoryItem } from './sessionHistoryProjector';
 import type { ReactNode } from 'react';
+import { memo } from 'react';
 import { AlertCircle, X } from 'lucide-react';
 import { AgentSessionComposer } from './AgentSessionComposer';
 import type { ComposerQuickFeatures } from './composerQuickActions';
@@ -143,19 +144,13 @@ export function ConversationViewport({
         onScroll={follow.handleScroll}
       >
         {segments.map((segment) => (
-          <AgentSessionTranscript
+          <TranscriptSegment
             key={segment.id}
+            segment={segment}
             onRespondToRequest={
               segment.transcript.sessionId === composerTarget?.sessionId
                 ? composerTarget?.respondToRequest
                 : undefined
-            }
-            transcript={segment.transcript}
-            history={segment.range ? undefined : segment.history}
-            content={
-              segment.range
-                ? selectTranscriptRange(segment.transcript, segment.range)
-                : projectedTranscriptContent(segment.transcript)
             }
             loading={loading}
             expandedProcessing={expandedProcessing}
@@ -211,3 +206,24 @@ export function ConversationViewport({
     </div>
   );
 }
+
+// Draft and queue-dialog edits must not re-project or render the entire history.
+const TranscriptSegment = memo(function TranscriptSegment({
+  segment,
+  ...props
+}: {
+  segment: ConversationViewportSegment;
+} & Omit<Parameters<typeof AgentSessionTranscript>[0], 'transcript' | 'history' | 'content'>) {
+  return (
+    <AgentSessionTranscript
+      {...props}
+      transcript={segment.transcript}
+      history={segment.range ? undefined : segment.history}
+      content={
+        segment.range
+          ? selectTranscriptRange(segment.transcript, segment.range)
+          : projectedTranscriptContent(segment.transcript)
+      }
+    />
+  );
+});

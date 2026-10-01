@@ -9,6 +9,35 @@ import { repairSessionClients } from './profileTestFixtures';
 import { remoteTarget, sessionTargetFixtures } from './sessionTargetFixtures';
 import { selectionForTarget } from './useSessionTarget';
 
+it('does not let a later queued preparation disable steering the running turn', async () => {
+  const fixture = repairSessionClients();
+  fixture.details.invocations[0].invocation.status = 'running';
+  const preparation: SessionPreparationDto = {
+    sessionId: 'session-1',
+    invocationId: 'queued-later',
+    phase: 'accepted',
+    selection: null,
+    steps: [],
+    canRetry: false,
+    error: null,
+  };
+  const profileClient = { ...fixture.profiles, loadPreparation: vi.fn(async () => preparation) };
+  const client = { ...fixture.sessions, steerSession: vi.fn() };
+  const { result } = renderHook(() =>
+    useAgentSession(client, {
+      selectedSessionId: 'session-1',
+      preparedExecution: true,
+      execution: {
+        client: profileClient,
+        selection: { model: null, reasoningMode: null },
+        afterAccepted: () => {},
+      },
+    }),
+  );
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.steeringAvailable).toBe(true);
+});
+
 it('queues missing-worktree intent without resolving the branch before selection', async () => {
   const fixture = sessionTargetFixtures();
   fixture.client.resolveBranchTip = vi.fn();
@@ -120,7 +149,7 @@ it('keeps the focused next draft through first-session acceptance and permits qu
   expect(input).toHaveValue('My next draft');
 });
 
-it('queues changed execution settings instead of steering the active prepared turn', async () => {
+it('keeps steering available after changing next-message settings, while Enter still queues', async () => {
   const fixture = repairSessionClients();
   fixture.details.invocations[0].invocation.status = 'running';
   const selection = selectionForTarget(remoteTarget);
@@ -151,7 +180,7 @@ it('queues changed execution settings instead of steering the active prepared tu
     }),
   );
   await waitFor(() => expect(result.current.loading).toBe(false));
-  expect(result.current.steeringAvailable).toBe(false);
+  expect(result.current.steeringAvailable).toBe(true);
   act(() => result.current.setDraft('For the next model'));
   await act(async () => result.current.send());
   expect(steerSession).not.toHaveBeenCalled();

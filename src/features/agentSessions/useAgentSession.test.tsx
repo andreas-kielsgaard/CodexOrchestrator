@@ -23,6 +23,101 @@ import {
 beforeEach(() => window.localStorage.clear());
 
 describe('conversation state', () => {
+  it('does not let a late steering acknowledgement invalidate navigation or clear another draft', async () => {
+    let acknowledge!: () => void;
+    const client = Object.assign(new FakeAgentSessionClient({ running: true }), {
+      steerSession: vi.fn(
+        (input: { inputId: string }) =>
+          new Promise<import('../../application/agentSessions').SessionInteractionDto>(
+            (resolve) => {
+              acknowledge = () =>
+                resolve({
+                  id: input.inputId,
+                  invocationId: 'invocation-1',
+                  sequence: 3,
+                  kind: 'steering',
+                  state: 'accepted',
+                  content: { text: 'Correction' },
+                  result: null,
+                });
+            },
+          ),
+      ),
+    });
+    let loadSecond!: (details: AgentSessionDetailsDto) => void;
+    const second = sessionDetails('completed');
+    second.session.id = 'session-2';
+    vi.spyOn(client, 'loadSession').mockImplementation(async ({ sessionId }) =>
+      sessionId === 'session-2'
+        ? new Promise<AgentSessionDetailsDto>((resolve) => {
+            loadSecond = resolve;
+          })
+        : sessionDetails('running'),
+    );
+    const reload = vi.spyOn(client, 'reloadSession');
+    const { result, rerender } = renderHook(
+      ({ sessionId }) => useAgentSession(client, { selectedSessionId: sessionId }),
+      { initialProps: { sessionId: 'session-1' } },
+    );
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => result.current.setDraft('Correction'));
+    let steering!: Promise<void>;
+    act(() => {
+      steering = result.current.steer!();
+    });
+    rerender({ sessionId: 'session-2' });
+    await waitFor(() => expect(loadSecond).toBeDefined());
+    act(() => result.current.setDraft('Correction'));
+    await act(async () => {
+      acknowledge();
+      await steering;
+    });
+    await act(async () => {
+      loadSecond(second);
+    });
+    expect(result.current.details?.session.id).toBe('session-2');
+    expect(result.current.draft).toBe('Correction');
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('debounces draft storage and flushes the last edit on unmount', async () => {
+    const client = new FakeAgentSessionClient();
+    const { result, unmount } = renderHook(() => useConversationHost(client));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const writes = vi.spyOn(Storage.prototype, 'setItem');
+    vi.useFakeTimers();
+    try {
+      writes.mockClear();
+      for (let i = 1; i <= 8; i++) act(() => result.current.setDraft('x'.repeat(i)));
+      expect(writes).not.toHaveBeenCalled();
+      act(() => vi.advanceTimersByTime(180));
+      expect(writes).toHaveBeenCalledTimes(1);
+      act(() => result.current.setDraft('Final unsaved edit'));
+      unmount();
+      expect(readCachedComposerDraft(composerDraftCacheKey('session-1'))?.text).toBe(
+        'Final unsaved edit',
+      );
+    } finally {
+      vi.useRealTimers();
+      writes.mockRestore();
+    }
+  });
+
+  it('releases the composer after acceptance without waiting for history reads', async () => {
+    const client = new FakeAgentSessionClient();
+    const { result } = renderHook(() => useConversationHost(client));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    vi.spyOn(client, 'reloadSession').mockImplementation(() => new Promise(() => {}));
+    act(() => result.current.setDraft('Send now'));
+    await act(async () => {
+      await result.current.send();
+    });
+    expect(result.current.sending).toBe(false);
+    expect(result.current.draft).toBe('');
+    act(() => result.current.setDraft('Still responsive'));
+    expect(result.current.draft).toBe('Still responsive');
+  });
+
   it('steers an active turn through the shared client without another domain delivery', async () => {
     let acceptSteering!: (value: {
       id: string;

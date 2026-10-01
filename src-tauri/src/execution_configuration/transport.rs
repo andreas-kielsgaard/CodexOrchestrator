@@ -107,14 +107,18 @@ pub(crate) struct UpdateCapabilityProfileInput {
 }
 
 #[tauri::command]
-pub(crate) fn load_native_profile_capability_inventory(
+pub(crate) async fn load_native_profile_capability_inventory(
     state: State<'_, CapabilityProfileTauriState>,
     input: NativeProfileInventoryInput,
 ) -> Result<super::NativeCapabilityInventory, String> {
-    state
-        .service
-        .native_inventory_for_configuration(&input.configuration)
-        .map_err(|e| e.to_string())
+    let service = state.service.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service
+            .native_inventory_for_configuration(&input.configuration)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -130,52 +134,67 @@ pub(crate) async fn list_provider_setups(
 }
 
 #[tauri::command]
-pub(crate) fn load_selected_runtime_profile(
+pub(crate) async fn load_selected_runtime_profile(
     state: State<'_, CapabilityProfileTauriState>,
 ) -> Result<RuntimeProfileSnapshot, String> {
-    state
-        .service
-        .runtime_profile()
-        .map_err(|error| error.to_string())
+    let service = state.service.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service.runtime_profile().map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn list_capability_profiles(
+pub(crate) async fn list_capability_profiles(
     state: State<'_, CapabilityProfileTauriState>,
 ) -> Result<Vec<CapabilityProfile>, String> {
-    state.service.list().map_err(|error| error.to_string())
+    let service = state.service.clone();
+    tauri::async_runtime::spawn_blocking(move || service.list().map_err(|error| error.to_string()))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn load_default_capability_profile(
+pub(crate) async fn load_default_capability_profile(
     state: State<'_, CapabilityProfileTauriState>,
 ) -> Result<Option<String>, String> {
-    state
-        .service
-        .default_profile_id()
-        .map_err(|e| e.to_string())
+    let service = state.service.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service.default_profile_id().map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn set_default_capability_profile(
+pub(crate) async fn set_default_capability_profile(
     state: State<'_, CapabilityProfileTauriState>,
     input: CapabilityProfileIdInput,
 ) -> Result<(), String> {
-    state
-        .service
-        .set_default_profile(&input.capability_profile_id)
-        .map_err(|e| e.to_string())
+    let service = state.service.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service
+            .set_default_profile(&input.capability_profile_id)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub(crate) fn load_capability_profile(
+pub(crate) async fn load_capability_profile(
     state: State<'_, CapabilityProfileTauriState>,
     input: CapabilityProfileIdInput,
 ) -> Result<CapabilityProfile, String> {
-    state
-        .service
-        .read(&input.capability_profile_id)
-        .map_err(|error| error.to_string())
+    let service = state.service.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service
+            .read(&input.capability_profile_id)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -224,14 +243,18 @@ pub(crate) async fn update_capability_profile(
 }
 
 #[tauri::command]
-pub(crate) fn delete_capability_profile(
+pub(crate) async fn delete_capability_profile(
     state: State<'_, CapabilityProfileTauriState>,
     input: CapabilityProfileIdInput,
 ) -> Result<(), String> {
-    state
-        .service
-        .delete(&input.capability_profile_id)
-        .map_err(|error| error.to_string())
+    let service = state.service.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service
+            .delete(&input.capability_profile_id)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[cfg(test)]

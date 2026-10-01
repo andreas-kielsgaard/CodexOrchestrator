@@ -56,32 +56,44 @@ pub(crate) async fn send_prepared_agent_session_message(
     })
 }
 #[tauri::command]
-pub(crate) fn load_agent_session_preparation(
+pub(crate) async fn load_agent_session_preparation(
     state: State<'_, AgentSessionTauriState>,
     input: PreparationQuery,
 ) -> Result<Option<SessionPreparation>, String> {
-    state
-        .application
-        .load_preparation(&input.session_id)
-        .map_err(|e| e.to_string())
+    let application = state.application.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        application
+            .load_preparation(&input.session_id)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 #[tauri::command]
-pub(crate) fn cancel_agent_session_preparation(
+pub(crate) async fn cancel_agent_session_preparation(
     state: State<'_, AgentSessionTauriState>,
     input: PreparationAction,
 ) -> Result<(), String> {
-    state
-        .application
-        .cancel_preparation(&input.invocation_id)
-        .map_err(|e| e.to_string())
+    let application = state.application.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        application
+            .cancel_preparation(&input.invocation_id)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 #[tauri::command]
-pub(crate) fn retry_agent_session_preparation(
+pub(crate) async fn retry_agent_session_preparation(
     state: State<'_, AgentSessionTauriState>,
     input: PreparationAction,
 ) -> Result<(), String> {
-    state
-        .application
-        .retry_preparation(&input.invocation_id)
-        .map_err(|e| e.to_string())
+    let application = state.application.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        application
+            .retry_preparation(&input.invocation_id)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }

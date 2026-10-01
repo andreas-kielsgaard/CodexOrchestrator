@@ -255,7 +255,7 @@ it('uses Ctrl+Enter for steering when available', async () => {
   expect(send).not.toHaveBeenCalled();
 });
 
-it('falls Ctrl+Enter back to ordinary queueing when steering is unavailable', async () => {
+it('does not silently queue Ctrl+Enter when steering is unavailable', async () => {
   const send = vi.fn();
   const steer = vi.fn();
   render(
@@ -270,8 +270,10 @@ it('falls Ctrl+Enter back to ordinary queueing when steering is unavailable', as
   const input = screen.getByRole('textbox', { name: 'Message' });
   await userEvent.setup().type(input, 'Queue this');
   fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true });
-  expect(send).toHaveBeenCalledWith('Queue this', expect.anything());
+  expect(send).not.toHaveBeenCalled();
   expect(steer).not.toHaveBeenCalled();
+  expect(input).toHaveValue('Queue this');
+  expect(screen.getByText(/Your message has not been queued/)).toBeInTheDocument();
 });
 
 it('retains the draft on discovery failure and retries without sending', async () => {

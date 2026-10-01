@@ -179,6 +179,13 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
         setAttachments([]);
         return;
       }
+      if (event.ctrlKey && props.active) {
+        if (!props.sending)
+          setAttachmentNotice(
+            'Steering is not available while this turn is preparing. Your message has not been queued.',
+          );
+        return;
+      }
       submit();
     }
   };

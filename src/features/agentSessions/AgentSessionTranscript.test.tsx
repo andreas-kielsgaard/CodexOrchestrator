@@ -13,8 +13,8 @@ describe('AgentSessionTranscript', () => {
         ]),
       ),
     );
-    expect(screen.getByText('Inspecting files')).not.toBeVisible();
-    expect(screen.getByText('I found the issue')).not.toBeVisible();
+    expect(screen.queryByText('Inspecting files')).not.toBeInTheDocument();
+    expect(screen.queryByText('I found the issue')).not.toBeInTheDocument();
     expect(screen.getByText('Working')).toBeInTheDocument();
   });
 
@@ -66,7 +66,7 @@ describe('AgentSessionTranscript', () => {
       />,
     );
     expect(screen.getByText('Finished result')).toBeVisible();
-    expect(screen.getByText('Read files')).not.toBeVisible();
+    expect(screen.queryByText('Read files')).not.toBeInTheDocument();
     fireEvent.click(screen.getByText('Worked'));
     expect(onToggle).toHaveBeenCalledWith('invocation-1');
   });

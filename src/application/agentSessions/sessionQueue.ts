@@ -153,6 +153,12 @@ export interface SessionQueueClient {
   }): Promise<SessionQueueViewDto>;
   retryQueueEntry(sessionId: string, entryId: string): Promise<void>;
   cancelQueueEntry(sessionId: string, entryId: string): Promise<void>;
+  sendQueueEntryNow(input: {
+    sessionId: string;
+    entryId: string;
+    expectedRevision: number;
+    message?: Omit<UpdateQueuedMessageInputDto, 'sessionId' | 'entryId' | 'expectedRevision'>;
+  }): Promise<SessionQueueViewDto>;
 }
 
 export interface ProjectedQueueEntry {

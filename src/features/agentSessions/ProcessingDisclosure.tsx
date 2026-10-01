@@ -1,4 +1,5 @@
 import type { TranscriptActivity } from './transcriptProjector';
+import { memo } from 'react';
 import { AgentMarkdown } from './AgentMarkdown';
 import { presentToolActivity } from './toolActivityPresentation';
 
@@ -34,16 +35,24 @@ export function ProcessingDisclosure({
         <span>{running ? 'Working' : heading}</span>
         <small>{activity.length ? activitySummary(activity) : 'Waiting for activity'}</small>
       </summary>
-      <ol className="turn-activity" aria-label={`Processing for invocation ${invocationId}`}>
-        {activity.map((item) => (
-          <ActivityItem item={item} safeOnly={safeOnly} key={item.id} />
-        ))}
-      </ol>
+      {expanded && (
+        <ol className="turn-activity" aria-label={`Processing for invocation ${invocationId}`}>
+          {activity.map((item) => (
+            <ActivityItem item={item} safeOnly={safeOnly} key={item.id} />
+          ))}
+        </ol>
+      )}
     </details>
   );
 }
 
-function ActivityItem({ item, safeOnly }: { item: TranscriptActivity; safeOnly: boolean }) {
+const ActivityItem = memo(function ActivityItem({
+  item,
+  safeOnly,
+}: {
+  item: TranscriptActivity;
+  safeOnly: boolean;
+}) {
   if (item.kind === 'agent_intermediate' || item.kind === 'processing') {
     return (
       <li className={`turn-message-event activity-${item.kind}`}>
@@ -63,7 +72,7 @@ function ActivityItem({ item, safeOnly }: { item: TranscriptActivity; safeOnly: 
       )}
     </li>
   );
-}
+});
 
 function ToolActivityItem({ item, safeOnly }: { item: TranscriptActivity; safeOnly: boolean }) {
   const presentation = presentToolActivity(item, safeOnly);

@@ -3,11 +3,9 @@ import { localExecutionBinding } from '../../application/executionTargets/contra
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { repairProfile, repairRuntime } from '../workflowAuthoring/testFixtures';
 import { repairSessionClients } from './profileTestFixtures';
-import { remoteExecution, remoteTarget } from './sessionTargetFixtures';
+import { remoteExecution } from './sessionTargetFixtures';
 import { selectedTargetQuickFeatures } from './selectedTargetQuickFeatures';
 import { useAgentSession } from './useAgentSession';
-import { samePreparedConfiguration } from './sessionPreparationState';
-import { selectionForTarget } from './useSessionTarget';
 
 it('keeps the route model catalogue available to direct users outside profile allowances', () => {
   expect(
@@ -97,39 +95,4 @@ it('discovers skills from the selected local configuration before creating a wor
     workingDirectory: null,
     configuration: { provider: 'codex', configurationId: 'profile-two' },
   });
-});
-
-it('matches settled preparation after reload, but excludes profile revisions and delivery in progress', () => {
-  const fixture = repairSessionClients();
-  const selection = selectionForTarget(remoteTarget);
-  const preparation = {
-    sessionId: 'session-1',
-    invocationId: 'invocation-1',
-    phase: 'ready' as const,
-    selection,
-    resolvedTarget: remoteTarget,
-    steps: [{ id: 'delivery', label: 'Deliver prompt', status: 'completed' as const }],
-    canRetry: false,
-    error: null,
-    currentResolution: fixture.profile.creationResolution,
-    resolution: fixture.result.invocationResolution,
-  };
-  const options = { model: null, reasoningMode: null };
-  expect(samePreparedConfiguration(selection, options, preparation, null)).toBe(true);
-  expect(
-    samePreparedConfiguration(
-      { ...selection, capabilityProfileRevision: 2 },
-      options,
-      preparation,
-      null,
-    ),
-  ).toBe(false);
-  expect(
-    samePreparedConfiguration(
-      selection,
-      options,
-      { ...preparation, steps: [{ id: 'delivery', label: 'Deliver prompt', status: 'running' }] },
-      null,
-    ),
-  ).toBe(false);
 });

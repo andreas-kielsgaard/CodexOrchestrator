@@ -559,6 +559,7 @@ describe('App orchestration loading', () => {
     vi.mocked(client.reloadSession).mockResolvedValue(
       discussionDetails('First durable discussion turn', 'canceled'),
     );
+    fireEvent.mouseEnter(await screen.findByRole('group', { name: 'Turn actions' }));
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull());
     vi.mocked(client.reloadSession).mockResolvedValue(discussionDetails('A later discussion turn'));
@@ -794,6 +795,7 @@ describe('App orchestration loading', () => {
     vi.mocked(client.reloadSession).mockResolvedValue(
       discussionDetails('First intake message', 'canceled'),
     );
+    fireEvent.mouseEnter(await screen.findByRole('group', { name: 'Turn actions' }));
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Send' })).toBeVisible());
     vi.mocked(client.reloadSession).mockResolvedValue(discussionDetails('Continue the same plan'));
@@ -868,6 +870,7 @@ describe('App orchestration loading', () => {
     vi.mocked(client.reloadSession).mockResolvedValue(
       discussionDetails('Discuss the product boundary first', 'canceled'),
     );
+    fireEvent.mouseEnter(await screen.findByRole('group', { name: 'Turn actions' }));
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Plan Epic' })).toBeEnabled());
 

@@ -1,7 +1,7 @@
 import { projectSessionHistory } from './sessionHistoryProjector';
 import type { ComposerTargetSource } from './composerTargetActions';
 import { Check, ClipboardCopy } from 'lucide-react';
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { AgentIdentity } from '../../application/agentSessions';
 import { AgentIdentityMarker } from './AgentIdentityMarker';
 import { pendingRequestLabel, pendingSessionRequests } from './sessionAttention';
@@ -85,6 +85,24 @@ export function AgentSessionWorkspace({
   inspection,
 }: AgentSessionWorkspaceProps) {
   const contextualChrome = useContext(AgentSessionChromeContext);
+  const segments = useMemo(
+    () =>
+      controller.transcript
+        ? [
+            {
+              id: controller.transcript.sessionId,
+              transcript: controller.transcript,
+              history: projectSessionHistory(
+                controller.details,
+                controller.transcript,
+                controller.queue,
+              ),
+              ...(transcriptRange ? { range: transcriptRange } : {}),
+            },
+          ]
+        : [],
+    [controller.details, controller.transcript, controller.queue, transcriptRange],
+  );
   const active = Boolean(controller.transcript?.activeInvocationId);
   const activeInvocation = controller.transcript?.invocations.find(
     (invocation) => invocation.id === controller.transcript?.activeInvocationId,
@@ -214,22 +232,7 @@ export function AgentSessionWorkspace({
       ) : (
         <ConversationViewport
           agentIdentity={identityHeader?.agentIdentity}
-          segments={
-            controller.transcript
-              ? [
-                  {
-                    id: controller.transcript.sessionId,
-                    transcript: controller.transcript,
-                    history: projectSessionHistory(
-                      controller.details,
-                      controller.transcript,
-                      controller.queue,
-                    ),
-                    ...(transcriptRange ? { range: transcriptRange } : {}),
-                  },
-                ]
-              : []
-          }
+          segments={segments}
           loading={controller.loading}
           expandedProcessing={controller.expandedProcessing}
           onToggleProcessing={controller.toggleProcessing}

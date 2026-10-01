@@ -1,4 +1,4 @@
-import { AlertCircle, Circle, Clock3, CornerDownRight } from 'lucide-react';
+import { AlertCircle, Circle, Clock3, CornerDownRight, Send, LoaderCircle } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { presentSessionQueue } from '../../application/agentSessions/sessionQueuePresentation';
 import type {
@@ -70,6 +70,11 @@ export function SessionQueuePanel({
               key={projection.item.entry.id}
               projection={projection}
               onOpen={() => setEditingId(projection.item.entry.id)}
+              onSendNow={
+                controller.sendQueueEntryNow
+                  ? () => controller.sendQueueEntryNow!(projection.item.entry.id)
+                  : undefined
+              }
               onDragStart={() => setDragged(projection.item.entry.id)}
               onDrop={() => dropBefore(projection.item.entry.id)}
             />
@@ -113,15 +118,18 @@ function SteeringLine({ interaction }: { readonly interaction: SessionInteractio
 function QueueLine({
   projection,
   onOpen,
+  onSendNow,
   onDragStart,
   onDrop,
 }: {
   readonly projection: ProjectedQueueEntry;
   readonly onOpen: () => void;
+  readonly onSendNow?: () => Promise<boolean>;
   readonly onDragStart: () => void;
   readonly onDrop: () => void;
 }) {
   const item = projection.item;
+  const [sending, setSending] = useState(false);
   const blocked = item.entry.state === 'blocked' || item.targetOperation?.phase === 'blocked';
   return (
     <li
@@ -131,23 +139,44 @@ function QueueLine({
       onDrop={onDrop}
       className={blocked ? 'is-blocked' : undefined}
     >
-      <button
-        type="button"
-        onClick={onOpen}
-        aria-label={`${queueEntryState(item)}: ${queueEntryTitle(item)}`}
-      >
-        <span className="session-queue__state" aria-hidden="true">
-          {blocked ? (
-            <AlertCircle size={14} />
-          ) : item.targetOperation?.phase === 'staged' ? (
-            <Clock3 size={14} />
-          ) : (
-            <Circle size={14} />
-          )}
-        </span>
-        <strong>{queueEntryTitle(item)}</strong>
-        <small>{queueEntryState(item)}</small>
-      </button>
+      <div className="session-queue__row">
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-label={`${queueEntryState(item)}: ${queueEntryTitle(item)}`}
+        >
+          <span className="session-queue__state" aria-hidden="true">
+            {blocked ? (
+              <AlertCircle size={14} />
+            ) : item.targetOperation?.phase === 'staged' ? (
+              <Clock3 size={14} />
+            ) : (
+              <Circle size={14} />
+            )}
+          </span>
+          <strong>{queueEntryTitle(item)}</strong>
+          <small>{queueEntryState(item)}</small>
+        </button>
+        {onSendNow && item.entry.item.kind === 'message' && item.entry.state === 'pending' && (
+          <button
+            type="button"
+            className="session-queue__send-now"
+            aria-label={`Send immediately: ${queueEntryTitle(item)}`}
+            title="Steer the running turn using its current settings, or send next if idle"
+            disabled={sending}
+            onClick={() => {
+              setSending(true);
+              void onSendNow().finally(() => setSending(false));
+            }}
+          >
+            {sending ? (
+              <LoaderCircle size={15} className="session-queue__spinner" />
+            ) : (
+              <Send size={15} />
+            )}
+          </button>
+        )}
+      </div>
     </li>
   );
 }

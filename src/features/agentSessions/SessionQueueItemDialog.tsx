@@ -1,4 +1,4 @@
-import { AlertCircle, Check, Circle, LoaderCircle, X } from 'lucide-react';
+import { AlertCircle, Check, Circle, LoaderCircle, X, Send } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { ModalDialog } from '../../components/ModalDialog';
 import type {
@@ -165,21 +165,36 @@ function MessageDetails({
     message.preparation.sandboxMode ?? message.invocation.requestedOptions.sandbox ?? '',
   );
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!text.trim() || saving) return;
     setSaving(true);
-    await controller.updateQueuedMessage?.({
-      entryId: item.entry.id,
-      submittedText: text.trim(),
-      model: model.trim() || null,
-      reasoningMode: reasoning.trim() || null,
-      sandboxMode: sandbox || null,
-    });
-    onClose();
+    const sendingNow =
+      (event.nativeEvent as SubmitEvent).submitter?.getAttribute('value') === 'send-now';
+    try {
+      const edits = {
+        submittedText: text.trim(),
+        model: model.trim() || null,
+        reasoningMode: reasoning.trim() || null,
+        sandboxMode: sandbox || null,
+      };
+      if (sendingNow) {
+        if (await controller.sendQueueEntryNow?.(item.entry.id, edits)) onClose();
+        else setError('The message could not be sent immediately. It remains in the queue.');
+      } else {
+        await controller.updateQueuedMessage?.({ entryId: item.entry.id, ...edits });
+        onClose();
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSaving(false);
+    }
   };
   return (
     <form onSubmit={(event) => void submit(event)}>
+      {error && <p role="alert">{error}</p>}
       <p className="session-queue-editor__destination">
         Will run on {destination.device} · {destination.workspace}
       </p>
@@ -221,6 +236,17 @@ function MessageDetails({
         <button type="button" onClick={onClose}>
           Cancel
         </button>
+        {item.entry.state === 'pending' && controller.sendQueueEntryNow && (
+          <button
+            type="submit"
+            name="action"
+            value="send-now"
+            disabled={!text.trim() || saving}
+            title="Steer the running turn using its current settings, or send next if idle"
+          >
+            <Send size={15} aria-hidden="true" /> Send immediately
+          </button>
+        )}
         <button type="submit" disabled={!text.trim() || saving}>
           {saving ? 'Saving…' : 'Save message'}
         </button>

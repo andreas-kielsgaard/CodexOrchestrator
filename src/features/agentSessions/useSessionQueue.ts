@@ -25,21 +25,25 @@ export function useSessionQueue({
   setError(error: string): void;
 }) {
   const [queue, setQueueState] = useState<SessionQueueViewDto | null>(null);
+  const queueRef = useRef<SessionQueueViewDto | null>(null);
   const setQueue = useCallback(
-    (snapshot: SessionQueueViewDto | null) =>
-      setQueueState((previous) =>
+    (snapshot: SessionQueueViewDto | null) => {
+      const previous = queueRef.current;
+      if (
         snapshot &&
         (snapshot.sessionId !== selectedIdRef.current ||
           (previous?.sessionId === snapshot.sessionId && previous.revision > snapshot.revision))
-          ? previous
-          : snapshot,
-      ),
+      )
+        return;
+      queueRef.current = snapshot;
+      setQueueState(snapshot);
+    },
     [selectedIdRef],
   );
   const generation = useRef(0);
   const reloadQueue = useCallback(
     async (sessionId: string) => {
-      if (!enabled || !queueClient?.loadQueue) return null;
+      if (!enabled || !queueClient?.loadQueue || selectedIdRef.current !== sessionId) return null;
       const request = ++generation.current;
       const snapshot = await queueClient.loadQueue(sessionId);
       if (selectedIdRef.current === sessionId && request === generation.current) setQueue(snapshot);
@@ -124,9 +128,10 @@ export function useSessionQueue({
             expectedRevision: queue.revision,
           }),
         );
-        await reloadHistory(sessionId, true);
+        void reloadHistory(sessionId, true).catch((error) => setError(errorMessage(error)));
       } catch (caught) {
         setError(errorMessage(caught));
+        throw caught;
       }
     },
     [reloadHistory, queueClient, queue, selectedIdRef, setError, setQueue],
@@ -166,6 +171,35 @@ export function useSessionQueue({
     [reloadHistory, queueClient, selectedIdRef, setError],
   );
 
+  const sendQueueEntryNow = useCallback(
+    async (
+      entryId: string,
+      message?: Omit<UpdateQueuedMessageInputDto, 'sessionId' | 'entryId' | 'expectedRevision'>,
+    ) => {
+      const sessionId = selectedIdRef.current;
+      const snapshot = queueRef.current;
+      if (!sessionId || snapshot?.sessionId !== sessionId || !queueClient?.sendQueueEntryNow)
+        return false;
+      try {
+        setQueue(
+          await queueClient.sendQueueEntryNow({
+            sessionId,
+            entryId,
+            expectedRevision: snapshot.revision,
+            ...(message ? { message } : {}),
+          }),
+        );
+        void reloadHistory(sessionId, true).catch((error) => setError(errorMessage(error)));
+        return true;
+      } catch (caught) {
+        setError(errorMessage(caught));
+        void reloadQueue(sessionId).catch((error) => setError(errorMessage(error)));
+        return false;
+      }
+    },
+    [queueClient, selectedIdRef, setQueue, reloadHistory, reloadQueue, setError],
+  );
+
   const recalculateTargetProjection = useCallback(
     async (entryId: string) => {
       const sessionId = selectedIdRef.current;
@@ -191,6 +225,7 @@ export function useSessionQueue({
     controls: {
       enqueueTargetOperation,
       compact,
+      sendQueueEntryNow: queueClient?.sendQueueEntryNow ? sendQueueEntryNow : undefined,
       reorderQueue,
       updateQueuedMessage,
       updateTargetOperation,

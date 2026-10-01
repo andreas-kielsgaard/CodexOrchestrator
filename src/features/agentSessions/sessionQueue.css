@@ -48,7 +48,7 @@
   background: #edf2ee;
 }
 
-.session-queue li > button,
+.session-queue__row > button:first-child,
 .session-queue__line {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) minmax(120px, auto);
@@ -62,6 +62,32 @@
   color: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.session-queue__row {
+  display: flex;
+  align-items: center;
+}
+.session-queue__row > button:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.session-queue__send-now {
+  flex: 0 0 28px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin-right: 4px;
+  border: 0;
+  border-radius: 6px;
+  color: #496659;
+  background: transparent;
+  cursor: pointer;
+}
+.session-queue__send-now:hover {
+  background: #dce8df;
 }
 .session-queue__line {
   cursor: default;

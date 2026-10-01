@@ -66,9 +66,11 @@ impl AgentSessionApplication {
         &self,
         command: SteerAgentSessionCommand,
     ) -> Result<SessionInteraction, AgentSessionApplicationError> {
-        if command.text.trim().is_empty() || command.input_id.trim().is_empty() {
+        if (command.text.trim().is_empty() && command.attachments.is_empty())
+            || command.input_id.trim().is_empty()
+        {
             return Err(AgentSessionApplicationError::invalid(
-                "Steering requires text and an input identity",
+                "Steering requires text or images and an input identity",
             ));
         }
         let lane = self.interaction_lanes.lane(&command.invocation_id)?;
