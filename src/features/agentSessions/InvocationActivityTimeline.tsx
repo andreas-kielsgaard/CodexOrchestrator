@@ -1,0 +1,76 @@
+import type { ReactNode } from 'react';
+import { ProcessingDisclosure } from './ProcessingDisclosure';
+import type { VisibleInvocation } from './AgentSessionTranscript';
+export function InvocationActivityTimeline({
+  invocation,
+  expandedProcessing,
+  onToggleProcessing,
+  safeActivityDetails,
+  processingHeading,
+}: {
+  readonly invocation: VisibleInvocation;
+  readonly expandedProcessing: ReadonlySet<string>;
+  readonly onToggleProcessing: (id: string) => void;
+  readonly safeActivityDetails: boolean;
+  readonly processingHeading?: string;
+}) {
+  const steering = (invocation.interactions ?? [])
+    .filter((interaction) => interaction.kind === 'steering' && interaction.content.text?.trim())
+    .sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id));
+  if (!steering.length)
+    return (
+      <ProcessingDisclosure
+        invocationId={invocation.id}
+        activity={invocation.processing}
+        running={invocation.isActive && !invocation.preparing}
+        expanded={expandedProcessing.has(invocation.id)}
+        onToggle={() => onToggleProcessing(invocation.id)}
+        safeOnly={safeActivityDetails}
+        heading={processingHeading}
+      />
+    );
+
+  const activity = [...invocation.processing].sort(
+    (left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id),
+  );
+  const content: ReactNode[] = [];
+  let activityIndex = 0;
+  const addActivity = (until: number | null, segment: number) => {
+    const start = activityIndex;
+    while (
+      activityIndex < activity.length &&
+      (until === null || activity[activityIndex].sequence < until)
+    )
+      activityIndex += 1;
+    const items = activity.slice(start, activityIndex);
+    const isLast = until === null;
+    const disclosureId = `${invocation.id}:activity:${segment}`;
+    if (!items.length && !(isLast && invocation.isActive && !invocation.preparing)) return;
+    content.push(
+      <ProcessingDisclosure
+        key={disclosureId}
+        invocationId={disclosureId}
+        activity={items}
+        running={isLast && invocation.isActive && !invocation.preparing}
+        expanded={expandedProcessing.has(disclosureId)}
+        onToggle={() => onToggleProcessing(disclosureId)}
+        safeOnly={safeActivityDetails}
+        heading={processingHeading}
+      />,
+    );
+  };
+
+  steering.forEach((interaction, index) => {
+    addActivity(interaction.sequence, index);
+    content.push(
+      <article className="transcript-message user-message" key={interaction.id}>
+        <header>
+          <span>You</span>
+        </header>
+        <p>{interaction.content.text}</p>
+      </article>,
+    );
+  });
+  addActivity(null, steering.length);
+  return content;
+}

@@ -1,25 +1,26 @@
 import { useId, useState } from 'react';
-import type { RuntimeInteractionResponseDto, SessionInteractionDto } from '../../application/agentSessions';
+import type {
+  RuntimeInteractionResponseDto,
+  SessionInteractionDto,
+} from '../../application/agentSessions';
 
 export function SessionInteractions({
   interactions,
   onRespond,
 }: {
   interactions: readonly SessionInteractionDto[];
-  onRespond?(invocationId: string, requestId: string, response: RuntimeInteractionResponseDto): Promise<void>;
+  onRespond?(
+    invocationId: string,
+    requestId: string,
+    response: RuntimeInteractionResponseDto,
+  ): Promise<void>;
 }) {
   return (
     <div className="session-interactions" aria-label="Turn inputs and requests">
       {interactions.map((interaction) =>
-        interaction.kind === 'steering' ? (
-          <article key={interaction.id} className="session-steering-input">
-            <strong>Steering · {interaction.state}</strong>
-            <p>{interaction.content.text}</p>
-            {interaction.result && <p role="status">{interaction.result}</p>}
-          </article>
-        ) : (
+        interaction.kind === 'request' ? (
           <RuntimeRequest key={interaction.id} request={interaction} onRespond={onRespond} />
-        ),
+        ) : null,
       )}
     </div>
   );
@@ -30,7 +31,11 @@ function RuntimeRequest({
   onRespond,
 }: {
   request: SessionInteractionDto;
-  onRespond?: (invocationId: string, requestId: string, response: RuntimeInteractionResponseDto) => Promise<void>;
+  onRespond?: (
+    invocationId: string,
+    requestId: string,
+    response: RuntimeInteractionResponseDto,
+  ) => Promise<void>;
 }) {
   const choiceDescriptionId = useId();
   const [answers, setAnswers] = useState<Record<string, QuestionAnswer>>({});

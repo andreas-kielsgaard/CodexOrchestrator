@@ -18,6 +18,38 @@ describe('AgentSessionTranscript', () => {
     expect(screen.getByText('Working')).toBeInTheDocument();
   });
 
+  it('renders steering as a user message between the work before and after it', () => {
+    const details = sessionDetails('running', [
+      runtimeEvent(1, 'processing_update', 'Work before steering'),
+      runtimeEvent(4, 'processing_update', 'Work after steering'),
+    ]);
+    details.interactions = [
+      {
+        id: 'steering-1',
+        invocationId: 'invocation-1',
+        sequence: 3,
+        kind: 'steering',
+        state: 'accepted',
+        content: { text: 'Change direction' },
+        result: null,
+      },
+    ];
+    const { container } = render(
+      <AgentSessionTranscript
+        transcript={projectAgentSessionTranscript(details)}
+        loading={false}
+        expandedProcessing={new Set(['invocation-1:activity:0', 'invocation-1:activity:1'])}
+        onToggleProcessing={() => undefined}
+      />,
+    );
+
+    const text = container.textContent ?? '';
+    expect(text.indexOf('Work before steering')).toBeLessThan(text.indexOf('Change direction'));
+    expect(text.indexOf('Change direction')).toBeLessThan(text.indexOf('Work after steering'));
+    expect(screen.getByText('Change direction').closest('article')).toHaveClass('user-message');
+    expect(screen.queryByText(/Steering/)).toBeNull();
+  });
+
   it('collapses completed processing while keeping the final response prominent and expandable', () => {
     const onToggle = vi.fn();
     render(

@@ -1,7 +1,7 @@
 import { ImportedTurnContent } from './ImportedTurnContent';
 import { SessionInteractions } from './SessionInteractions';
 import { AgentMarkdown } from './AgentMarkdown';
-import { ProcessingDisclosure } from './ProcessingDisclosure';
+import { InvocationActivityTimeline } from './InvocationActivityTimeline';
 import type { AgentIdentity, RuntimeInteractionResponseDto } from '../../application/agentSessions';
 import { AgentIdentityBadge } from '../../components/AgentIdentityBadge';
 import { RuntimeFailureGuidance } from '../agentProviders/RuntimeFailureGuidance';
@@ -85,18 +85,16 @@ export function AgentSessionInvocation({
             {providerChange && (
               <SessionTransitionIndicator transition={providerChange} onOpen={onOpenTransition} />
             )}
-            <ProcessingDisclosure
-              invocationId={invocation.id}
-              activity={invocation.processing}
-              running={invocation.isActive && !invocation.preparing}
-              expanded={expandedProcessing.has(invocation.id)}
-              onToggle={() => onToggleProcessing(invocation.id)}
-              safeOnly={safeActivityDetails}
-              heading={processingHeading}
+            <InvocationActivityTimeline
+              invocation={invocation}
+              expandedProcessing={expandedProcessing}
+              onToggleProcessing={onToggleProcessing}
+              safeActivityDetails={safeActivityDetails}
+              processingHeading={processingHeading}
             />
             {invocation.interactions?.length ? (
               <SessionInteractions
-                interactions={invocation.interactions}
+                interactions={invocation.interactions.filter(({ kind }) => kind === 'request')}
                 onRespond={onRespondToRequest}
               />
             ) : null}

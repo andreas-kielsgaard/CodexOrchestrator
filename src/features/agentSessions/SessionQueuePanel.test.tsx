@@ -134,6 +134,7 @@ function controller(overrides: Partial<AgentSessionWorkspaceController> = {}) {
     sending: false,
     canceling: false,
     error: null,
+    steeringQueue: [],
     expandedProcessing: new Set<string>(),
     setDraft: vi.fn(),
     setWorkingDirectory: vi.fn(),
@@ -247,6 +248,36 @@ describe('SessionQueuePanel', () => {
     expect(screen.getByText('+1 more')).toBeVisible();
     expect(container.querySelectorAll('.session-queue li')).toHaveLength(2);
     expect(screen.queryByText('Prepare device')).not.toBeInTheDocument();
+  });
+
+  it('puts steering first and omits device and worktree details from compact rows', () => {
+    const { container } = render(
+      <SessionQueuePanel
+        queue={fixture()}
+        steeringEntries={[
+          {
+            id: 'steering-1',
+            invocationId: 'active-invocation',
+            sequence: 5,
+            kind: 'steering',
+            state: 'accepted',
+            content: { text: 'Change direction now' },
+            result: null,
+          },
+        ]}
+        controller={controller()}
+        onChooseTarget={() => {}}
+      />,
+    );
+
+    const rows = container.querySelectorAll('.session-queue li');
+    expect(rows[0]).toHaveClass('is-steering');
+    expect(rows[0]).toHaveTextContent('Change direction now');
+    expect(rows[0]).toHaveTextContent('Steering next');
+    const messageRow = screen.getByText('Do the next task').closest('li');
+    expect(messageRow).toHaveTextContent('Queued');
+    expect(messageRow).not.toHaveTextContent('Laptop');
+    expect(messageRow).not.toHaveTextContent('C:\\repo');
   });
 
   it('does not render an executing message as future queue work', () => {

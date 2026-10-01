@@ -578,6 +578,7 @@ export function StandaloneAgentSessionScreen({
   const queuePanel = session.queue ? (
     <SessionQueuePanel
       queue={session.queue}
+      steeringEntries={session.steeringQueue}
       controller={session}
       onChooseTarget={(queueEntry) =>
         setTargetPicker({

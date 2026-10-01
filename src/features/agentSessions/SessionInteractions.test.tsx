@@ -69,7 +69,7 @@ it('sends an explicit offered approval response and disables settled requests', 
   expect(screen.getByRole('button', { name: 'Decline' })).toBeDisabled();
 });
 
-it('shows rejected or uncertain steering as durable text without response controls', () => {
+it('leaves steering presentation to the transcript timeline', () => {
   render(
     <SessionInteractions
       interactions={[
@@ -85,8 +85,8 @@ it('shows rejected or uncertain steering as durable text without response contro
       ]}
     />,
   );
-  expect(screen.getByText('Keep this correction')).toBeInTheDocument();
-  expect(screen.getByText('No acknowledgement')).toBeInTheDocument();
+  expect(screen.queryByText('Keep this correction')).toBeNull();
+  expect(screen.queryByText('No acknowledgement')).toBeNull();
   expect(screen.queryByRole('button')).toBeNull();
 });
 

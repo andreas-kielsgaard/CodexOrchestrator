@@ -57,7 +57,8 @@ export interface TranscriptOutcome {
   message: string | null;
 }
 
-export type TranscriptAnchorKind = 'submitted_input' | 'activity' | 'final_response' | 'outcome';
+export type TranscriptAnchorKind =
+  'submitted_input' | 'activity' | 'steering' | 'final_response' | 'outcome';
 
 /** A durable pointer into one persisted Agent Session invocation. */
 export interface TranscriptAnchor {
@@ -76,6 +77,7 @@ export interface TranscriptFinalResponse {
 export type ProjectedTranscriptContent =
   | { anchor: TranscriptAnchor; kind: 'submitted_input'; text: string }
   | { anchor: TranscriptAnchor; kind: 'activity'; activity: TranscriptActivity }
+  | { anchor: TranscriptAnchor; kind: 'steering'; interaction: SessionInteractionDto }
   | { anchor: TranscriptAnchor; kind: 'final_response'; response: TranscriptFinalResponse }
   | { anchor: TranscriptAnchor; kind: 'outcome'; outcome: TranscriptOutcome };
 
@@ -449,11 +451,28 @@ export function projectedTranscriptContent(
           left.recordedAt.localeCompare(right.recordedAt) ||
           left.id.localeCompare(right.id),
       )
-      .map((item): ProjectedTranscriptContent => ({
+      .map((item): Extract<ProjectedTranscriptContent, { kind: 'activity' }> => ({
         anchor: eventAnchor(transcript.sessionId, invocation.id, 'activity', item.id),
         kind: 'activity',
         activity: item,
       }));
+    const steering = (invocation.interactions ?? [])
+      .filter((interaction) => interaction.kind === 'steering')
+      .map((interaction): Extract<ProjectedTranscriptContent, { kind: 'steering' }> => ({
+        anchor: eventAnchor(transcript.sessionId, invocation.id, 'steering', interaction.id),
+        kind: 'steering',
+        interaction,
+      }));
+    const timeline = [...activity, ...steering].sort((left, right) => {
+      const leftSequence =
+        left.kind === 'activity' ? left.activity.sequence : left.interaction.sequence;
+      const rightSequence =
+        right.kind === 'activity' ? right.activity.sequence : right.interaction.sequence;
+      return (
+        leftSequence - rightSequence ||
+        (left.anchor.runtimeEventId ?? '').localeCompare(right.anchor.runtimeEventId ?? '')
+      );
+    });
     const final = invocation.finalResponse
       ? [
           {
@@ -468,7 +487,7 @@ export function projectedTranscriptContent(
       kind: 'outcome',
       outcome: invocation.outcome,
     };
-    return [input, ...activity, ...final, outcome];
+    return [input, ...timeline, ...final, outcome];
   });
 }
 

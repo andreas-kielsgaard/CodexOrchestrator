@@ -19,6 +19,7 @@ import type {
   AgentSessionProfileClient,
   PinnedAgentSessionProfileDto,
   RuntimeInteractionResponseDto,
+  SessionInteractionDto,
   NewAgentImageAttachmentDto,
 } from '../../application/agentSessions';
 import type {
@@ -86,6 +87,7 @@ export interface AgentSessionWorkspaceController {
   steeringAvailable?: boolean;
   queue?: SessionQueueViewDto | null;
   queuePresentation?: SessionQueuePresentation;
+  steeringQueue: readonly SessionInteractionDto[];
   reorderQueue?(entryIds: readonly string[]): Promise<void>;
   enqueueTargetOperation?(request: TargetSwitchRequestDto, beforeEntryId?: string): Promise<void>;
   compact?(): Promise<void>;
@@ -226,6 +228,7 @@ export function useAgentSession(
   const [sending, setSending] = useState(false);
   const [canceling, setCanceling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [optimisticSteering, setOptimisticSteering] = useState<SessionInteractionDto[]>([]);
   const [expandedProcessing, setExpandedProcessing] = useState<Set<string>>(() => new Set());
   const transcriptProjection = useRef(new AgentSessionTranscriptProjectionCache());
   const selectedIdRef = useRef<string | null>(null);
@@ -360,6 +363,7 @@ export function useAgentSession(
   const selectSession = useCallback(
     async (sessionId: string) => {
       selectedIdRef.current = sessionId;
+      setOptimisticSteering([]);
       if (!historySource) setFallbackDetails(null);
       setCurrentProfile(null);
       setPreparation(null);
@@ -382,6 +386,7 @@ export function useAgentSession(
     (cached = readCachedComposerDraft(composerCacheKeyRef.current), hydrateComposer = true) => {
       loadGenerationRef.current += 1;
       selectedIdRef.current = null;
+      setOptimisticSteering([]);
       setFallbackDetails(null);
       setPreparation(null);
       setQueue(null);
@@ -618,16 +623,32 @@ export function useAgentSession(
         !client.steerSession
       )
         return;
+      const inputId = crypto.randomUUID();
+      const optimistic: SessionInteractionDto = {
+        id: inputId,
+        invocationId,
+        sequence: Number.MAX_SAFE_INTEGER,
+        kind: 'steering',
+        state: 'pending',
+        content: { text: submittedText },
+        result: null,
+      };
+      setOptimisticSteering((current) => [optimistic, ...current]);
       setSending(true);
       setError(null);
       try {
         const outcome = await client.steerSession({
           sessionId,
           invocationId,
-          inputId: crypto.randomUUID(),
+          inputId,
           text: submittedText,
           ...(attachments.length ? { attachments } : {}),
         });
+        setOptimisticSteering((current) =>
+          outcome.state === 'rejected'
+            ? current.filter(({ id }) => id !== inputId)
+            : current.map((item) => (item.id === inputId ? outcome : item)),
+        );
         if (outcome.state === 'accepted') {
           if (draftRef.current.trim() === submittedText) {
             draftRef.current = '';
@@ -641,6 +662,7 @@ export function useAgentSession(
         }
         await loadSelected(sessionId, true);
       } catch (caught) {
+        setOptimisticSteering((current) => current.filter(({ id }) => id !== inputId));
         setError(errorMessage(caught));
       } finally {
         if (mountedRef.current) setSending(false);
@@ -701,6 +723,25 @@ export function useAgentSession(
       queuePresentation.queuedInvocationIds,
     );
   }, [details, preparation, queuePresentation]);
+  const steeringQueue = useMemo(() => {
+    const activeInvocationId = transcript?.activeInvocationId;
+    if (!activeInvocationId) return [];
+    const visibleStates = new Set(['pending', 'accepted', 'uncertain']);
+    const entries = new Map<string, SessionInteractionDto>();
+    for (const interaction of details?.interactions ?? [])
+      if (
+        interaction.invocationId === activeInvocationId &&
+        interaction.kind === 'steering' &&
+        visibleStates.has(interaction.state)
+      )
+        entries.set(interaction.id, interaction);
+    for (const interaction of optimisticSteering)
+      if (interaction.invocationId === activeInvocationId && visibleStates.has(interaction.state))
+        entries.set(interaction.id, interaction);
+    return [...entries.values()].sort(
+      (left, right) => right.sequence - left.sequence || right.id.localeCompare(left.id),
+    );
+  }, [details?.interactions, optimisticSteering, transcript?.activeInvocationId]);
 
   useEffect(() => {
     if (details) {
@@ -908,6 +949,7 @@ export function useAgentSession(
     queue,
     queuePresentation,
     ...queueControls,
+    steeringQueue,
     selectedSessionId,
     details,
     transcript,

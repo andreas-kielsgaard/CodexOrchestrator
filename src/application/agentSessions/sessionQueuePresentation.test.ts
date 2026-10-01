@@ -157,4 +157,5 @@ describe('presentSessionQueue', () => {
 
     expect(result.futureEntries.map(({ item }) => item.entry.id)).toContain('entry-running');
   });
+
 });

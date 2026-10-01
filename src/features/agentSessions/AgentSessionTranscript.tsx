@@ -132,6 +132,9 @@ function projectVisibleInvocations(
     const activityIds = new Set(
       items.filter((item) => item.kind === 'activity').map((item) => item.activity.id),
     );
+    const steeringIds = new Set(
+      items.filter((item) => item.kind === 'steering').map((item) => item.interaction.id),
+    );
     const final = items.find((item) => item.kind === 'final_response');
     return [
       {
@@ -152,6 +155,9 @@ function projectVisibleInvocations(
           : undefined,
         processing: invocation.processing.filter((item) => activityIds.has(item.id)),
         technical: [],
+        interactions: invocation.interactions?.filter(
+          (interaction) => interaction.kind === 'request' || steeringIds.has(interaction.id),
+        ),
         finalResponse: final?.kind === 'final_response' ? final.response : null,
         showInput: items.some((item) => item.kind === 'submitted_input'),
         showOutcome: items.some((item) => item.kind === 'outcome'),

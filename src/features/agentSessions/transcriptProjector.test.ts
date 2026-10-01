@@ -188,6 +188,38 @@ describe('projectAgentSessionTranscript', () => {
     ).toEqual(content.slice(1, 3));
   });
 
+  it('includes steering in the durable chronological content projection', () => {
+    const source = details('running', [
+      event(1, 'processing_update', 'Before'),
+      event(4, 'processing_update', 'After'),
+    ]);
+    source.interactions = [
+      {
+        id: 'steering-1',
+        invocationId: 'invocation-1',
+        sequence: 3,
+        kind: 'steering',
+        state: 'accepted',
+        content: { text: 'Redirect' },
+        result: null,
+      },
+    ];
+
+    const content = projectedTranscriptContent(projectAgentSessionTranscript(source));
+
+    expect(content.map((item) => item.kind)).toEqual([
+      'submitted_input',
+      'activity',
+      'steering',
+      'activity',
+      'outcome',
+    ]);
+    expect(content[2].anchor).toMatchObject({
+      kind: 'steering',
+      runtimeEventId: 'steering-1',
+    });
+  });
+
   it('returns no content for stale or reversed anchors', () => {
     const projected = projectAgentSessionTranscript(
       details('completed', [event(1, 'processing_update', 'Thinking')]),

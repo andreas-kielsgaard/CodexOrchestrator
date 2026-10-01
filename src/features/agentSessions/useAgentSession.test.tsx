@@ -24,18 +24,53 @@ beforeEach(() => window.localStorage.clear());
 
 describe('conversation state', () => {
   it('steers an active turn through the shared client without another domain delivery', async () => {
-    const steerSession = vi.fn().mockResolvedValue({ state: 'accepted' });
+    let acceptSteering!: (value: {
+      id: string;
+      invocationId: string;
+      sequence: number;
+      kind: 'steering';
+      state: 'accepted';
+      content: { text: string };
+      result: null;
+    }) => void;
+    const steerSession = vi.fn(
+      (_command: { inputId: string }) =>
+        new Promise<Parameters<typeof acceptSteering>[0]>((resolve) => {
+          acceptSteering = resolve;
+        }),
+    );
     const client = Object.assign(new FakeAgentSessionClient({ running: true }), { steerSession });
     const sendExistingMessage = vi.fn();
     const { result } = renderHook(() => useConversationHost(client, { sendExistingMessage }));
     await waitFor(() => expect(result.current.loading).toBe(false));
     act(() => result.current.setDraft('Change direction'));
-    await act(() => result.current.steer?.());
+    let steering!: Promise<void>;
+    act(() => {
+      steering = result.current.steer?.() ?? Promise.resolve();
+    });
+    await waitFor(() => expect(result.current.steeringQueue).toHaveLength(1));
+    expect(result.current.steeringQueue[0]).toMatchObject({
+      state: 'pending',
+      content: { text: 'Change direction' },
+    });
     expect(steerSession).toHaveBeenCalledWith({
       sessionId: 'session-1',
       invocationId: 'invocation-1',
       inputId: expect.any(String),
       text: 'Change direction',
+    });
+    await act(async () => {
+      const inputId = steerSession.mock.calls[0][0].inputId;
+      acceptSteering({
+        id: inputId,
+        invocationId: 'invocation-1',
+        sequence: 3,
+        kind: 'steering',
+        state: 'accepted',
+        content: { text: 'Change direction' },
+        result: null,
+      });
+      await steering;
     });
     expect(sendExistingMessage).not.toHaveBeenCalled();
     expect(client.sent).toEqual([]);

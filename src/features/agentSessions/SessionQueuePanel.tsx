@@ -1,4 +1,4 @@
-import { AlertCircle, Circle, Clock3 } from 'lucide-react';
+import { AlertCircle, Circle, Clock3, CornerDownRight } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { presentSessionQueue } from '../../application/agentSessions/sessionQueuePresentation';
 import type {
@@ -7,6 +7,7 @@ import type {
   SessionQueueViewDto,
 } from '../../application/agentSessions/sessionQueue';
 import type { AgentSessionWorkspaceController } from './useAgentSession';
+import type { SessionInteractionDto } from '../../application/agentSessions';
 import { SessionQueueItemDialog } from './SessionQueueItemDialog';
 import { queueEntryState, queueEntryTitle } from './sessionQueueLabels';
 import './sessionQueue.css';
@@ -15,17 +16,19 @@ const terminalStates = new Set(['completed', 'canceled']);
 
 export function SessionQueuePanel({
   queue,
+  steeringEntries = [],
   controller,
   onChooseTarget,
 }: {
   readonly queue: SessionQueueViewDto;
+  readonly steeringEntries?: readonly SessionInteractionDto[];
   readonly controller: AgentSessionWorkspaceController;
   readonly onChooseTarget: (entry: SessionQueueEntryViewDto) => void;
 }) {
   const projected = useMemo(() => presentSessionQueue(queue).futureEntries, [queue]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [dragged, setDragged] = useState<string | null>(null);
-  if (!projected.length) return null;
+  if (!projected.length && !steeringEntries.length) return null;
 
   const ids = projected.map(({ item }) => item.entry.id);
   const hiddenIds = queue.entries
@@ -57,8 +60,11 @@ export function SessionQueuePanel({
 
   return (
     <>
-      <section className="session-queue" aria-label="Queued messages and target changes">
+      <section className="session-queue" aria-label="Queued messages, steering, and target changes">
         <ol>
+          {steeringEntries.map((interaction) => (
+            <SteeringLine interaction={interaction} key={interaction.id} />
+          ))}
           {projected.map((projection) => (
             <QueueLine
               key={projection.item.entry.id}
@@ -69,8 +75,10 @@ export function SessionQueuePanel({
             />
           ))}
         </ol>
-        {projected.length > 1 && (
-          <span className="session-queue__more">+{projected.length - 1} more</span>
+        {projected.length + steeringEntries.length > 1 && (
+          <span className="session-queue__more">
+            +{projected.length + steeringEntries.length - 1} more
+          </span>
         )}
       </section>
       {editingIndex >= 0 && (
@@ -85,6 +93,20 @@ export function SessionQueuePanel({
         />
       )}
     </>
+  );
+}
+
+function SteeringLine({ interaction }: { readonly interaction: SessionInteractionDto }) {
+  return (
+    <li className="is-steering" aria-label={`Steering: ${interaction.content.text ?? ''}`}>
+      <div className="session-queue__line">
+        <span className="session-queue__state" aria-hidden="true">
+          <CornerDownRight size={14} />
+        </span>
+        <strong>{interaction.content.text || 'Steering message'}</strong>
+        <small>Steering next</small>
+      </div>
+    </li>
   );
 }
 
