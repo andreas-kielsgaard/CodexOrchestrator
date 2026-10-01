@@ -16,6 +16,7 @@ import type { ProfileModelCatalogueDto } from '../../application/executionConfig
 import { selectedTargetQuickFeatures } from './selectedTargetQuickFeatures';
 import { useSessionTarget } from './useSessionTarget';
 import { SessionComposerToolbar } from './SessionComposerToolbar';
+import { contextUsage } from './sessionUsage';
 import { SessionPreparationPanel } from './SessionPreparationPanel';
 import { preparationPreview } from './preparationPreview';
 import { SessionQueuePanel } from './SessionQueuePanel';
@@ -575,9 +576,14 @@ export function StandaloneAgentSessionScreen({
     () => (previewOpen ? preparationPreview(targetDraft.selection, currentTarget) : null),
     [previewOpen, targetDraft.selection, currentTarget],
   );
+  const sessionContextUsage = useMemo(
+    () => contextUsage((session.details?.invocations ?? []).flatMap((entry) => entry.events)),
+    [session.details],
+  );
   const toolbar =
     executionTargetClient && profileClient && branchSource ? (
       <SessionComposerToolbar
+        contextUsage={sessionContextUsage}
         profiles={targetDraft.availableProfiles}
         selection={targetDraft.selection}
         deviceId={targetDraft.deviceId}

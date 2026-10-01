@@ -244,7 +244,7 @@ function MessageDetails({
             disabled={!text.trim() || saving}
             title="Steer the running turn using its current settings, or send next if idle"
           >
-            <Send size={15} aria-hidden="true" /> Send immediately
+            <Send size={15} aria-hidden="true" /> Steer Turn
           </button>
         )}
         <button type="submit" disabled={!text.trim() || saving}>

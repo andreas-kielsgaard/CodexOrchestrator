@@ -17,9 +17,7 @@ describe('AgentSessionScreen', () => {
     render(<AgentSessionScreen client={sessions} profileClient={profiles} />);
     await screen.findByText('Working', { selector: '.processing-disclosure summary span' });
     expect(screen.queryByText('Reading files')).not.toBeInTheDocument();
-    fireEvent.click(
-      screen.getByText('Working', { selector: '.processing-disclosure summary span' }),
-    );
+    fireEvent.click(screen.getByText('Show operations'));
     expect(screen.getByText('Reading files')).toBeVisible();
     expect(screen.queryByText('The final answer')).toBeNull();
 
@@ -34,9 +32,10 @@ describe('AgentSessionScreen', () => {
     });
     expect(reload).toHaveBeenCalledWith({ sessionId: 'session-1' });
     expect(await screen.findByText('The final answer')).toBeVisible();
-    expect(screen.getByText('Reading files')).toBeVisible();
-    fireEvent.click(screen.getByText('Worked'));
     expect(screen.queryByText('Reading files')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('Worked'));
+    fireEvent.click(screen.getByText('Show operations'));
+    expect(screen.getByText('Reading files')).toBeVisible();
   });
 
   it('ignores another Session update while reflecting an update for the selected Session', async () => {
@@ -77,11 +76,11 @@ describe('AgentSessionScreen', () => {
         });
     });
     await waitFor(() => expect(reload).toHaveBeenCalledWith({ sessionId: 'session-1' }));
-    expect(screen.queryByText('Selected update')).not.toBeInTheDocument();
+    expect(screen.getByText('Selected update')).toBeVisible();
     fireEvent.click(
       screen.getByText('Working', { selector: '.processing-disclosure summary span' }),
     );
-    expect(screen.getByText('Selected update')).toBeVisible();
+    expect(screen.queryByText('Selected update')).not.toBeInTheDocument();
     expect(reload).toHaveBeenCalledWith({ sessionId: 'session-1' });
   });
 

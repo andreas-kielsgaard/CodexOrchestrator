@@ -21,6 +21,9 @@ export function InvocationActivityTimeline({
     return (
       <ProcessingDisclosure
         invocationId={invocation.id}
+        startedAt={invocation.startedAt}
+        completedAt={invocation.completedAt}
+        usage={invocation.usage}
         activity={invocation.processing}
         running={invocation.isActive && !invocation.preparing}
         expanded={expandedProcessing.has(invocation.id)}
@@ -45,13 +48,23 @@ export function InvocationActivityTimeline({
     const items = activity.slice(start, activityIndex);
     const isLast = until === null;
     const disclosureId = `${invocation.id}:activity:${segment}`;
+    const hasOngoingTool = items.some(
+      (item) =>
+        item.kind === 'tool' &&
+        item.safeDetail?.kind === 'tool' &&
+        item.safeDetail.phase === 'started' &&
+        !item.completedAt,
+    );
     if (!items.length && !(isLast && invocation.isActive && !invocation.preparing)) return;
     content.push(
       <ProcessingDisclosure
         key={disclosureId}
         invocationId={disclosureId}
+        startedAt={invocation.startedAt}
+        completedAt={invocation.completedAt}
+        usage={invocation.usage}
         activity={items}
-        running={isLast && invocation.isActive && !invocation.preparing}
+        running={(isLast || hasOngoingTool) && invocation.isActive && !invocation.preparing}
         expanded={expandedProcessing.has(disclosureId)}
         onToggle={() => onToggleProcessing(disclosureId)}
         safeOnly={safeActivityDetails}

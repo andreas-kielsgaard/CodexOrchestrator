@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 pub(super) fn legacy_event(method: &str, params: &Value) -> Option<Value> {
     match method {
         "thread/tokenUsage/updated" => {
-            Some(json!({"type":"usage.updated","usage":params["tokenUsage"]["last"]}))
+            Some(json!({"type":"usage.updated","usage":params["tokenUsage"]["last"],"tokenUsage":params["tokenUsage"]}))
         }
         "turn/plan/updated" => Some(
             json!({"type":"item.updated","item":{"id":"turn-plan","type":"plan_update","text":params["explanation"],"plan":params["plan"]}}),
@@ -23,5 +23,18 @@ pub(super) fn legacy_event(method: &str, params: &Value) -> Option<Value> {
             )
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retains_context_capacity_and_cumulative_usage() {
+        let params = json!({"tokenUsage":{"last":{"inputTokens":10},"total":{"inputTokens":200},"modelContextWindow":272000}});
+        let event = legacy_event("thread/tokenUsage/updated", &params).unwrap();
+        assert_eq!(event["usage"]["inputTokens"], 10);
+        assert_eq!(event["tokenUsage"], params["tokenUsage"]);
     }
 }

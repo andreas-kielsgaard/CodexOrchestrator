@@ -70,6 +70,15 @@ export function reduceAgentSessionHistory(
     if (last && update.event.sequence !== last.sequence + 1) return { kind: 'reconcile' };
     const next = replaceInvocation(details, update.invocationId, (current) => ({
       ...current,
+      invocation:
+        current.invocation.status === 'pending' &&
+        update.event.normalized?.kind === 'processing_started'
+          ? {
+              ...current.invocation,
+              status: 'running',
+              startedAt: current.invocation.startedAt ?? update.event.recordedAt,
+            }
+          : current.invocation,
       events: [...current.events, update.event],
     }));
     return next ? { kind: 'changed', details: next } : { kind: 'reconcile' };

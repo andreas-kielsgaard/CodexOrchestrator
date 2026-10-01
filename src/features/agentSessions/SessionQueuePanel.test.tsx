@@ -157,7 +157,7 @@ describe('SessionQueuePanel', () => {
         onChooseTarget={() => {}}
       />,
     );
-    const button = screen.getByRole('button', { name: 'Send immediately: Do the next task' });
+    const button = screen.getByRole('button', { name: 'Steer Turn: Do the next task' });
     expect(button.textContent).toBe('');
     fireEvent.click(button);
     expect(sendQueueEntryNow).toHaveBeenCalledWith('message-entry');
@@ -179,7 +179,7 @@ describe('SessionQueuePanel', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
       target: { value: 'Updated correction' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Send immediately' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Steer Turn' }));
     await waitFor(() =>
       expect(sendQueueEntryNow).toHaveBeenCalledWith('message-entry', {
         submittedText: 'Updated correction',
@@ -191,7 +191,7 @@ describe('SessionQueuePanel', () => {
     expect(updateQueuedMessage).not.toHaveBeenCalled();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     sendQueueEntryNow.mockResolvedValue(true);
-    fireEvent.click(screen.getByRole('button', { name: 'Send immediately' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Steer Turn' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 

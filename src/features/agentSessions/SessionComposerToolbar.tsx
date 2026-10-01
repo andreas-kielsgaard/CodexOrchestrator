@@ -10,7 +10,10 @@ import { effectiveSessionOptions, selectionForModel } from './effectiveSessionOp
 import { targetWorktreeLabel } from '../../application/executionTargets/presentation';
 import { ComposerHoverGroup } from './ComposerHoverGroup';
 import './sessionPreparation.css';
+import { ContextUsageIndicator } from './ContextUsageIndicator';
+import type { ContextUsage } from './sessionUsage';
 export interface SessionComposerToolbarProps {
+  contextUsage?: ContextUsage | null;
   profiles: readonly CapabilityProfileDto[];
   selection: SessionExecutionSelectionDto | null;
   deviceId: string | null;
@@ -128,9 +131,12 @@ export function SessionComposerToolbar(props: SessionComposerToolbarProps) {
         label="Model and reasoning settings"
         className="composer-runtime-group"
         summary={
-          <span>
-            {effective.model?.label ?? 'Model'} · {effective.reasoningMode ?? 'Reasoning'}
-          </span>
+          <>
+            <span>
+              {effective.model?.label ?? 'Model'} · {effective.reasoningMode ?? 'Reasoning'}
+            </span>
+            <ContextUsageIndicator usage={props.contextUsage} />
+          </>
         }
       >
         <div
@@ -138,6 +144,7 @@ export function SessionComposerToolbar(props: SessionComposerToolbarProps) {
           role="group"
           aria-label="Model and reasoning"
         >
+          <ContextUsageIndicator usage={props.contextUsage} />
           <label>
             <span>Model</span>
             <select

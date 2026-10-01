@@ -4,7 +4,7 @@ import { projectAgentSessionTranscript } from './transcriptProjector';
 import { runtimeEvent, sessionDetails } from './testFixtures';
 
 describe('AgentSessionTranscript', () => {
-  it('keeps running work collapsed until the user opens it', () => {
+  it('opens running work by default', () => {
     renderTranscript(
       projectAgentSessionTranscript(
         sessionDetails('running', [
@@ -13,8 +13,8 @@ describe('AgentSessionTranscript', () => {
         ]),
       ),
     );
-    expect(screen.queryByText('Inspecting files')).not.toBeInTheDocument();
-    expect(screen.queryByText('I found the issue')).not.toBeInTheDocument();
+    expect(screen.getByText('Inspecting files')).toBeVisible();
+    expect(screen.getByText('I found the issue')).toBeVisible();
     expect(screen.getByText('Working')).toBeInTheDocument();
   });
 
@@ -48,6 +48,36 @@ describe('AgentSessionTranscript', () => {
     expect(text.indexOf('Change direction')).toBeLessThan(text.indexOf('Work after steering'));
     expect(screen.getByText('Change direction').closest('article')).toHaveClass('user-message');
     expect(screen.queryByText(/Steering/)).toBeNull();
+  });
+
+  it('keeps a tool that started before steering fully visible while it is still running', () => {
+    const command = runtimeEvent(1, 'tool_activity', 'command execution');
+    command.rawPayload = { item: { id: 'live-command', command: 'npm test' } };
+    command.normalized!.toolActivity = {
+      kind: 'command',
+      phase: 'started',
+      itemId: 'live-command',
+      server: null,
+      tool: null,
+      status: 'in_progress',
+      resultClassification: 'unknown',
+    };
+    const details = sessionDetails('running', [command]);
+    details.interactions = [
+      {
+        id: 'steer',
+        invocationId: 'invocation-1',
+        sequence: 2,
+        kind: 'steering',
+        state: 'accepted',
+        content: { text: 'Keep going' },
+        result: null,
+      },
+    ];
+    renderTranscript(projectAgentSessionTranscript(details));
+    expect(screen.getByText('npm test')).toBeVisible();
+    expect(screen.getByText('Running')).toBeVisible();
+    expect(screen.getByText('Keep going')).toBeVisible();
   });
 
   it('collapses completed processing while keeping the final response prominent and expandable', () => {
@@ -137,6 +167,7 @@ describe('AgentSessionTranscript', () => {
     );
 
     expect(screen.getByText('I found the relevant files.')).toBeVisible();
+    fireEvent.click(screen.getByText('Show operations'));
     expect(screen.getByText('Ran npm test -- --run')).toBeVisible();
     expect(screen.queryByText('Agent update')).not.toBeInTheDocument();
     expect(screen.queryByText('Tool')).not.toBeInTheDocument();
@@ -200,6 +231,7 @@ describe('AgentSessionTranscript', () => {
       />,
     );
 
+    fireEvent.click(screen.getByText('2 actions · 2 file edits'));
     fireEvent.click(screen.getByText('Edited 2 files'));
     expect(screen.getByText(/src\/app\.ts/)).toHaveTextContent('src/app.ts — Edit');
     expect(screen.getByText(/src\/new\.ts/)).toHaveTextContent('src/new.ts — Create');

@@ -51,6 +51,7 @@ describe('AgentSessionTurnInspector', () => {
     const recordedSteps = screen.getByText('Recorded steps');
     expect(recordedSteps).toBeVisible();
     fireEvent.click(recordedSteps);
+    fireEvent.click(screen.getByText('Show operations'));
     expect(screen.getByText('workspace / read_file · completed · succeeded')).toBeVisible();
     expect(screen.queryByText('provider secret query')).toBeNull();
     expect(screen.queryByText('raw secret result')).toBeNull();

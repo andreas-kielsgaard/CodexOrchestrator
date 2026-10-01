@@ -3,6 +3,7 @@ import {
   type SessionPreparationDto,
 } from '../../application/agentSessions/preparation';
 import { importedTranscript, type ImportedTranscript } from './importedTranscript';
+import { turnUsage } from './sessionUsage';
 import type { SessionInteractionDto } from '../../application/agentSessions';
 import type {
   AgentDiagnosticDto,
@@ -87,6 +88,7 @@ export interface TranscriptAnchorRange {
 }
 
 export interface ProjectedInvocation {
+  usage?: import('../../application/agentSessions').AgentRuntimeUsageDto | null;
   preparing?: boolean;
   imported?: ImportedTranscript;
   interactions?: readonly SessionInteractionDto[];
@@ -244,6 +246,7 @@ function projectInvocation(
     createdAt: invocation.createdAt,
     startedAt: invocation.startedAt,
     completedAt: invocation.completedAt,
+    usage: turnUsage(orderedEvents),
     processing: coalesceLifecycleActivities(processing),
     technical,
     diagnostics: sortedDiagnostics(invocation.diagnostics),
@@ -304,6 +307,7 @@ function updateInvocationProjection(
   const invocation = entry.invocation;
   return {
     ...cached.projected,
+    usage: turnUsage(events),
     preparing,
     interactions,
     status: invocation.status,

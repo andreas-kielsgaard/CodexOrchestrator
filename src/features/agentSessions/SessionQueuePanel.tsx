@@ -161,7 +161,7 @@ function QueueLine({
           <button
             type="button"
             className="session-queue__send-now"
-            aria-label={`Send immediately: ${queueEntryTitle(item)}`}
+            aria-label={`Steer Turn: ${queueEntryTitle(item)}`}
             title="Steer the running turn using its current settings, or send next if idle"
             disabled={sending}
             onClick={() => {
