@@ -32,7 +32,12 @@ export function useSessionNavigation(
     }
   }, [model]);
   useEffect(() => {
-    const ids = navigationGroups(model).map((g) => g.id);
+    const ids = [
+      ...navigationGroups(model).map((g) => g.id),
+      ...navigationFolders(model)
+        .filter((f) => f.node.role === 'branch')
+        .map((f) => f.node.id),
+    ];
     const added = ids.filter((id) => !knownGroups.current.has(id));
     knownGroups.current = new Set(ids);
     if (added.length) setExpanded((current) => new Set([...current, ...added]));

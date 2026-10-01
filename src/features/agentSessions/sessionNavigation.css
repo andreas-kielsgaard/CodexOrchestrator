@@ -340,3 +340,18 @@
 .agent-session-screen .resizable-split__separator:is(:hover, :focus-visible, :active)::after {
   background: #7c887d;
 }
+.session-container--branch {
+  border: 0;
+  border-left: 2px solid;
+  margin: 6px 0;
+  padding-left: 3px;
+}
+.session-container--branch > .session-block-heading {
+  font-size: 0.72rem;
+  min-height: 24px;
+  padding: 3px 6px;
+  color: #65736b;
+}
+.session-container--branch > .session-block-content {
+  padding: 0;
+}

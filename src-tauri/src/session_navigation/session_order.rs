@@ -34,6 +34,21 @@ pub(super) fn folder_id(
             return format!("repo:{repository_id}:sessions");
         }
     }
+    if matches!(placement, None | Some(SessionPlacement::Default)) {
+        if let Some(affinity) = data
+            .session_branches
+            .iter()
+            .find(|item| item.session_id == id.as_str())
+        {
+            if let Some(branch) = data
+                .branches
+                .iter()
+                .find(|branch| branch.id == affinity.branch_id)
+            {
+                return format!("repo:{}:sessions", branch.repository_id);
+            }
+        }
+    }
     "unfiled".into()
 }
 

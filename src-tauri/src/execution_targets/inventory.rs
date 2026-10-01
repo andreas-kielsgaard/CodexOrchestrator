@@ -118,6 +118,7 @@ fn profile_targets(
                         return None;
                     }
                     Some(TargetWorktree {
+                        created_at: instance.created_at,
                         worktree_id: instance.handle,
                         path: instance.path,
                         head: instance.head,

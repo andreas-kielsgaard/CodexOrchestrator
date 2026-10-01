@@ -5,6 +5,7 @@ import type { NavigationEntry } from '../../application/agentSessions/navigation
 import type { SessionNavigationController } from './useSessionNavigation';
 import type { SessionNavigationDrag } from './useSessionNavigationDrag';
 import { pendingRequestLabel } from './sessionAttention';
+import { branchColor } from '../../application/agentSessions/branchLayout';
 
 export function SessionEntry({
   entry,
@@ -41,6 +42,7 @@ export function SessionEntry({
       aria-selected={selected}
       tabIndex={tree.activeId === node.id ? 0 : -1}
       className={`session-tree-row session-entry${selected ? ' is-selected' : ''}`}
+      data-branch-layout-item={node.layout && !node.branchGrouped ? node.layout.id : undefined}
       data-insertion={drag.indicator?.id === node.id ? drag.indicator.side : undefined}
       title={node.ownerLabel ? `${node.summary.title}\n${node.ownerLabel}` : node.summary.title}
       onFocus={() => tree.setFocusedId(node.id)}
@@ -58,6 +60,13 @@ export function SessionEntry({
       }}
       {...drag.sessionProps(node)}
     >
+      {node.branch && !node.branchGrouped && (
+        <GitBranch
+          size={13}
+          style={{ color: branchColor(node.branch.id), flexShrink: 0 }}
+          aria-label={`Worktree branch ${node.branch.branchRef.replace(/^refs\/heads\//, '')}`}
+        />
+      )}
       <span className="session-tree-label">{node.summary.title}</span>
       {node.owner && onOpenWorkflow && (
         <button

@@ -60,6 +60,7 @@ fn repository(id: &str) -> RegisteredRepository {
 
 fn instance(root: &str, name: &str, branch: Option<&str>) -> WorktreeInstance {
     WorktreeInstance {
+        created_at: None,
         handle: format!("instance-{name}"),
         path: format!("{root}/{name}"),
         branch_ref: branch.map(str::to_owned),

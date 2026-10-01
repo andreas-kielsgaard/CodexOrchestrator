@@ -143,7 +143,8 @@ it('keeps devices provisional and returns to the previous query without insertin
   expect(screen.getByRole('listbox', { name: 'Devices' })).toBeVisible();
   await user.keyboard('{Enter}');
   await screen.findByRole('option', { name: /codex\/durable-review · review/ });
-  await user.keyboard('{Escape}{Escape}');
+  await user.click(screen.getByRole('button', { name: 'Back to quick features' }));
+  await user.click(screen.getByRole('button', { name: 'Back to quick features' }));
   expect(input).toHaveValue('/device');
   expect(screen.getByRole('listbox', { name: 'Quick features' })).toBeVisible();
   expect(client.listWorktreeChoices).toHaveBeenCalledTimes(2);
@@ -205,9 +206,9 @@ it('keeps slash queries local during inventory loading and ignores results after
   expect(input).toHaveValue('/feature/Remote Development');
   expect(send).not.toHaveBeenCalled();
   await user.keyboard('{Escape}');
-  expect(input).toHaveValue('/worktree');
+  expect(input).toHaveValue('/feature/Remote Development');
   await act(async () => resolve(localInventory));
-  expect(screen.getByRole('listbox', { name: 'Quick features' })).toBeVisible();
+  expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
   expect(screen.queryByRole('option', { name: /local-review/ })).not.toBeInTheDocument();
   expect(choose).not.toHaveBeenCalled();
 });

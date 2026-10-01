@@ -18,6 +18,7 @@ import { useComposerQuickMenu } from './useComposerQuickMenu';
 import { ComposerQuickMenu } from './ComposerQuickMenu';
 import { ComposerHoverGroup } from './ComposerHoverGroup';
 import './compactSessionChrome.css';
+import { useComposerAutosize } from './useComposerAutosize';
 
 export interface AgentSessionComposerProps {
   toolbar?: ReactNode;
@@ -57,6 +58,7 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
     inputDisabled,
     props.targetSource,
   );
+  useComposerAutosize(menu.textarea, props.draft);
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
     if (menu.open) {
@@ -257,7 +259,11 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
             menu.open && menu.items.length ? `${menuId}-${menu.selectedIndex}` : undefined
           }
           value={props.draft}
-          onChange={(event) => props.onDraftChange(event.target.value)}
+          onChange={(event) => {
+            menu.setCaret(event.target.selectionStart);
+            props.onDraftChange(event.target.value);
+          }}
+          onSelect={(event) => menu.setCaret(event.currentTarget.selectionStart)}
           onKeyDown={handleKeyDown}
           onPaste={(event) => void handlePaste(event)}
           placeholder={props.messagePlaceholder ?? 'What would you like the agent to do?'}

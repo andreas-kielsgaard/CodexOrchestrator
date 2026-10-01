@@ -69,7 +69,12 @@ fn folder_creation_uses_main_tree_and_pinned_profile_without_workflow_ownership(
         fixture.execution.instances.clone(),
         fixture.repository.clone(),
         sessions,
-        crate::session_navigation::order_repository::NavigationOrderRepository::new(database),
+        crate::session_navigation::order_repository::NavigationOrderRepository::new(database.clone()),
+        Arc::new(crate::execution_targets::ExecutionTargetService::new(
+            database,
+            Arc::new(crate::execution_targets::endpoints::ExecutionEndpoints::new(Default::default())),
+            fixture.sessions.capability_profiles.clone().unwrap(),
+        )),
     );
 
     use crate::session_navigation::order::NavigationOrderScope;

@@ -6,6 +6,7 @@ import type { SessionFolderTarget } from '../../application/agentSessions/organi
 import type { NavigationEntry } from '../../application/agentSessions/navigationView';
 import type { SessionNavigationController } from './useSessionNavigation';
 import type { SessionNavigationDrag } from './useSessionNavigationDrag';
+import { branchColor } from '../../application/agentSessions/branchLayout';
 
 export function SessionBlock({
   entry,
@@ -35,6 +36,11 @@ export function SessionBlock({
   return (
     <div
       className={`session-container session-container--${node.role}`}
+      data-session-layout={
+        node.role === 'section' && node.id.endsWith(':sessions') ? node.id : undefined
+      }
+      data-branch-layout-item={node.role === 'branch' ? node.id : undefined}
+      style={node.branch ? { borderColor: branchColor(node.branch.id) } : undefined}
       {...drag.dropProps(node.id)}
       onClick={(event) => {
         event.stopPropagation();
@@ -60,6 +66,7 @@ export function SessionBlock({
         {...drag.headerProps(node)}
       >
         {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        {node.branch && <GitBranch size={12} style={{ color: branchColor(node.branch.id) }} />}
         {node.role === 'repository' && <Folder size={16} />}
         <span className="session-tree-label">
           {node.label}
@@ -79,18 +86,20 @@ export function SessionBlock({
             <GitBranch size={15} />
           </button>
         )}
-        <button
-          className="folder-create session-icon-button"
-          aria-label={`New session in ${node.label}`}
-          draggable={false}
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.stopPropagation();
-            onNew(node.createTarget);
-          }}
-        >
-          <SquarePen size={15} />
-        </button>
+        {node.role !== 'branch' && (
+          <button
+            className="folder-create session-icon-button"
+            aria-label={`New session in ${node.label}`}
+            draggable={false}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onNew(node.createTarget);
+            }}
+          >
+            <SquarePen size={15} />
+          </button>
+        )}
       </div>
       {expanded && (
         <div role="group" className="session-block-content">

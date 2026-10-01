@@ -22,6 +22,14 @@ type DragSource =
   { kind: 'session'; id: string } | { kind: 'container'; item: NavigationOrderItem };
 type DropTarget =
   | {
+      kind: 'layout';
+      id: string;
+      side: 'before' | 'after';
+      scope: NavigationOrderScope;
+      orderedIds: readonly string[];
+      placement?: SessionPlacement;
+    }
+  | {
       kind: 'session';
       id: string;
       side: 'before' | 'after';
@@ -50,6 +58,66 @@ export function useSessionNavigationDrag(
   const folders = navigationFolders(model);
   const targetAt = (source: DragSource, x: number, y: number): DropTarget | null => {
     const element = document.elementFromPoint(x, y);
+    const layoutSurface = element?.closest<HTMLElement>('[data-session-layout]');
+    const sourceScope =
+      source.kind === 'container'
+        ? source.item.scope
+        : model.sessions.get(source.id)?.layout?.scope;
+    const destinationFolder = folders.find(
+      (folder) => folder.node.id === layoutSurface?.dataset.sessionLayout,
+    )?.node;
+    const layoutScope: NavigationOrderScope | undefined =
+      destinationFolder &&
+      destinationFolder.children.some((node) => node.kind === 'folder' && node.role === 'branch')
+        ? { kind: 'session_layout', folderId: destinationFolder.id }
+        : undefined;
+    if (
+      layoutSurface &&
+      layoutScope?.kind === 'session_layout' &&
+      (source.kind === 'session' || sourceScope?.kind === 'session_layout')
+    ) {
+      if (source.kind === 'container' && orderScopeKey(sourceScope!) !== orderScopeKey(layoutScope))
+        return null;
+      const sourceId = source.kind === 'container' ? source.item.id : `session:${source.id}`;
+      const item = element?.closest<HTMLElement>('[data-branch-layout-item]');
+      const targetId = item?.dataset.branchLayoutItem;
+      const rect = item?.getBoundingClientRect();
+      const branch = folders.find(
+        (folder) => folder.node.id === targetId && folder.node.role === 'branch',
+      )?.node;
+      const ids = navigationSiblings(model, layoutScope);
+      if (branch && source.kind === 'session' && rect && y > rect.top + 7 && y < rect.bottom - 7) {
+        if (model.sessions.get(source.id)?.branch?.id !== branch.id) return null;
+        return {
+          kind: 'layout',
+          id: branch.id,
+          side: 'after',
+          scope: layoutScope,
+          orderedIds: ids.filter((id) => id !== sourceId),
+        };
+      }
+      const anchor = targetId ?? ids.at(-1);
+      if (!anchor || anchor === sourceId) return null;
+      const side = rect && y < rect.top + rect.height / 2 ? 'before' : 'after';
+      return {
+        kind: 'layout',
+        id:
+          item?.querySelector<HTMLElement>('[data-navigation-header]')?.dataset.navigationHeader ??
+          (source.kind === 'session' && targetId?.startsWith('session:')
+            ? model.sessions.get(targetId.slice(8))?.id
+            : targetId) ??
+          layoutScope.folderId,
+        side,
+        scope: layoutScope,
+        orderedIds: insertNavigationSibling(ids, sourceId, anchor, side),
+        placement:
+          source.kind === 'session' &&
+          (!sourceScope || orderScopeKey(sourceScope) !== orderScopeKey(layoutScope))
+            ? destinationFolder?.placement
+            : undefined,
+      };
+    }
+    if (source.kind === 'container' && source.item.scope.kind === 'session_layout') return null;
     if (source.kind === 'session') {
       const surface = element?.closest<HTMLElement>('[data-session-placement]');
       if (!surface) return null;
@@ -168,7 +236,13 @@ export function useSessionNavigationDrag(
         event.preventDefault();
         event.stopPropagation();
         const target = targetAt(pending.source, event.clientX, event.clientY);
-        if (pending.source.kind === 'session' && target?.kind === 'session') {
+        if (target?.kind === 'layout') {
+          void (async () => {
+            if (target.placement && pending.source.kind === 'session')
+              await onMove(pending.source.id, target.placement);
+            await onReorder(target.scope, target.orderedIds);
+          })();
+        } else if (pending.source.kind === 'session' && target?.kind === 'session') {
           if (target.scope.kind === 'pinned') void onReorder(target.scope, target.orderedIds);
           else void onMove(pending.source.id, target.placement, target.orderedIds);
         } else if (pending.source.kind === 'container' && target?.kind === 'container') {

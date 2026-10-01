@@ -32,6 +32,8 @@
 }
 .agent-session-conversation .agent-session-composer {
   z-index: 6;
+  background: #fff;
+  border-top: 0;
   padding: 10px clamp(12px, 4cqw, 44px);
 }
 .agent-session-composer .session-composer-toolbar,

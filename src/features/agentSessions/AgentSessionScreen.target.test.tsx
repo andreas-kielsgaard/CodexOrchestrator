@@ -268,6 +268,7 @@ it('allows a failed existing Session to choose a new target in the command menu'
   );
   await user.keyboard('{Enter}');
   await user.keyboard('{Escape}');
+  await user.clear(input);
   fireEvent.change(input, { target: { value: '/worktree' } });
   expect(await screen.findByRole('option', { name: /^Worktree / })).toHaveAttribute(
     'aria-disabled',

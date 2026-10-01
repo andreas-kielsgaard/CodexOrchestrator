@@ -34,7 +34,7 @@ export interface SessionNavigationState {
     label: string;
     expanded: boolean;
     parentId: string | null;
-    role: 'repository' | 'section' | 'workflow';
+    role: 'repository' | 'section' | 'workflow' | 'branch';
     order: NavigationOrderItem;
     orderedSiblingIds: readonly string[];
     createTarget: SessionFolderTarget | null;

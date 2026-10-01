@@ -195,7 +195,18 @@ it('finds skills from the root and supports mouse selection without losing focus
   expect(send).not.toHaveBeenCalled();
 });
 
-it('keeps unknown commands local until Escape, while ordinary paths and prose still send', async () => {
+it('accepts an inline command while retaining text on either side of the caret', async () => {
+  const { input, user, send } = setup();
+  await user.type(input, 'Before /review after');
+  (input as HTMLTextAreaElement).setSelectionRange(14, 14);
+  fireEvent.select(input);
+  await screen.findByRole('option', { name: /review/ });
+  await user.keyboard('{Enter}');
+  expect(input).toHaveValue('Before $review  after');
+  expect(send).not.toHaveBeenCalled();
+});
+
+it('treats every slash as a command until Escape, including paths', async () => {
   const { input, user, send } = setup();
   await user.type(input, '/unknown');
   await screen.findByText('No matching choices');
@@ -206,6 +217,8 @@ it('keeps unknown commands local until Escape, while ordinary paths and prose st
   expect(send).toHaveBeenLastCalledWith('/unknown', expect.anything());
   await user.clear(input);
   await user.type(input, '/tmp/example{Enter}');
+  expect(send).toHaveBeenLastCalledWith('/unknown', expect.anything());
+  await user.keyboard('{Escape}{Enter}');
   expect(send).toHaveBeenLastCalledWith('/tmp/example', expect.anything());
 });
 

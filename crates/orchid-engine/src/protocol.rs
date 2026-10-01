@@ -140,6 +140,8 @@ pub struct RuntimeCapabilities {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorktreeInstance {
+    #[serde(default)]
+    pub created_at: Option<String>,
     pub handle: String,
     pub path: String,
     pub branch_ref: Option<String>,

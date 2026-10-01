@@ -67,10 +67,12 @@ export function useAgentSessionCollection(
       })
       .then(retain, failed);
     void navigation?.subscribeChanged?.(changed).then(retain, failed);
+    const inventoryRefresh = navigation ? setInterval(() => void refresh(false), 60000) : undefined;
     return () => {
       active = false;
       invalidatePending();
       clearTimeout(timer);
+      clearInterval(inventoryRefresh);
       stops.forEach((stop) => stop());
     };
   }, [client, navigation, reload, refresh, invalidatePending]);

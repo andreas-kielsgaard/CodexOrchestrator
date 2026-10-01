@@ -1,4 +1,6 @@
 import { applyNavigationOrder, type NavigationOrderItem } from './navigationOrder';
+import { branchLayout } from './branchLayout';
+import type { NavigationBranch } from './organization';
 import type { AgentSessionSummaryDto } from './contracts';
 import type {
   SessionFolderTarget,
@@ -23,6 +25,9 @@ export const selectionKey = (selection: SessionNavigationSelection): string =>
       ? selection.draftId
       : 'initial';
 export interface SessionNavigationRow {
+  readonly branch?: NavigationBranch;
+  readonly branchGrouped?: boolean;
+  readonly layout?: NavigationOrderItem;
   readonly kind: 'session';
   readonly id: string;
   readonly summary: AgentSessionSummaryDto;
@@ -33,7 +38,8 @@ export interface SessionNavigationRow {
 }
 export interface SessionNavigationFolder {
   readonly kind: 'folder';
-  readonly role: 'repository' | 'section' | 'workflow';
+  readonly role: 'repository' | 'section' | 'workflow' | 'branch';
+  readonly branch?: NavigationBranch;
   readonly order: NavigationOrderItem;
   readonly id: string;
   readonly label: string;
@@ -84,9 +90,19 @@ export function buildSessionNavigation(data: SessionNavigationData): SessionNavi
     const placement = metadata?.placement ?? { kind: 'default' };
     let folder =
       placement.kind === 'default' && owner ? `instance:${owner.instanceId}` : targetId(placement);
+    const branchId = data.sessionBranches?.find((item) => item.sessionId === summary.id)?.branchId;
+    const branch = data.branches?.find((item) => item.id === branchId);
+    if (placement.kind === 'default' && !owner && branch)
+      folder = `repo:${branch.repositoryId}:sessions`;
     if (!validFolders.has(folder)) folder = 'unfiled';
     const ownFolder = owner && folder === `instance:${owner.instanceId}`;
     const row: SessionNavigationRow = {
+      branch,
+      layout:
+        folder.endsWith(':sessions') &&
+        data.branches?.some((branch) => `repo:${branch.repositoryId}:sessions` === folder)
+          ? { scope: { kind: 'session_layout', folderId: folder }, id: `session:${summary.id}` }
+          : undefined,
       kind: 'session',
       id: `${folder}:session:${summary.id}`,
       summary,
@@ -167,7 +183,12 @@ export function buildSessionNavigation(data: SessionNavigationData): SessionNavi
             label: 'Sessions',
             createTarget: target,
             placement: target,
-            children: groups.get(`repo:${repo.id}:sessions`) ?? [],
+            children: branchLayout(
+              groups.get(`repo:${repo.id}:sessions`) ?? [],
+              data.branches ?? [],
+              repo.id,
+              data.orders,
+            ),
           },
           {
             kind: 'folder',

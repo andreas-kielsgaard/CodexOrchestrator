@@ -28,6 +28,8 @@ pub(crate) struct NavigationRepository {
     pub(crate) name: String,
 }
 pub(crate) struct SessionNavigationData {
+    pub(crate) branches: Vec<super::branch_inventory::NavigationBranch>,
+    pub(crate) session_branches: Vec<super::branch_inventory::SessionBranch>,
     pub(crate) summaries: Vec<AgentSessionSummary>,
     pub(crate) repositories: Vec<NavigationRepository>,
     pub(crate) instances: Vec<NavigationInstance>,
@@ -51,7 +53,9 @@ pub(crate) struct StartSessionRequest {
     pub(crate) folder_target: Option<SessionFolderTarget>,
 }
 pub(crate) struct SessionNavigationService {
-    catalog: Arc<RepositoryCatalog>,
+    pub(crate) branch_inventory: super::branch_inventory::BranchInventory,
+    pub(crate) execution_targets: Arc<crate::execution_targets::ExecutionTargetService>,
+    pub(crate) catalog: Arc<RepositoryCatalog>,
     instances: Arc<WorkflowInstanceStore>,
     repository: Arc<SqliteAgentSessionRepository>,
     sessions: Arc<AgentSessionApplication>,
@@ -64,8 +68,11 @@ impl SessionNavigationService {
         repository: Arc<SqliteAgentSessionRepository>,
         sessions: Arc<AgentSessionApplication>,
         orders: NavigationOrderRepository,
+        execution_targets: Arc<crate::execution_targets::ExecutionTargetService>,
     ) -> Self {
         Self {
+            branch_inventory: Default::default(),
+            execution_targets,
             catalog,
             instances,
             repository,
@@ -91,18 +98,23 @@ impl SessionNavigationService {
                 .list_logical_addresses()
                 .map_err(|e| e.to_string())?,
         )?;
+        let summaries = self
+            .repository
+            .list_session_summaries(ListAgentSessionsQuery {
+                availability: Some(AgentSessionAvailability::Available),
+                limit: None,
+            })
+            .map_err(|e| e.to_string())?;
+        let branches = self.branch_inventory.cached();
+        let session_branches = super::branch_inventory::session_branches(&summaries, &branches);
         Ok(SessionNavigationData {
+            branches,
+            session_branches,
             orders: self.orders.load()?,
             repositories,
             instances,
             owners,
-            summaries: self
-                .repository
-                .list_session_summaries(ListAgentSessionsQuery {
-                    availability: Some(AgentSessionAvailability::Available),
-                    limit: None,
-                })
-                .map_err(|e| e.to_string())?,
+            summaries,
             organization: self
                 .repository
                 .list_organization()
@@ -116,6 +128,24 @@ impl SessionNavigationService {
     ) -> Result<(), String> {
         let repositories = self.catalog.list_registered()?;
         let siblings: Vec<String> = match &scope {
+            NavigationOrderScope::SessionLayout { folder_id } => {
+                let data = self.load()?;
+                let rows = super::session_order::session_ids(&data, folder_id);
+                let unique: std::collections::HashSet<_> = ordered_ids.iter().collect();
+                if unique.len() != ordered_ids.len()
+                    || ordered_ids.iter().any(|id| {
+                        !data.branches.iter().any(|branch| {
+                            &branch.id == id
+                                && format!("repo:{}:sessions", branch.repository_id) == *folder_id
+                        }) && !id
+                            .strip_prefix("session:")
+                            .is_some_and(|id| rows.iter().any(|row| row == id))
+                    })
+                {
+                    return Err("Invalid branch layout entry".into());
+                }
+                return self.orders.save(&scope, &ordered_ids);
+            }
             NavigationOrderScope::Pinned => {
                 let data = self.load()?;
                 data.summaries

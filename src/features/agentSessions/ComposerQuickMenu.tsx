@@ -72,9 +72,7 @@ export function ComposerQuickMenu({
           {limitation}
         </p>
       ))}
-      <div className="composer-quick-menu__footer">
-        ↑↓ navigate · Enter select · Esc back or close
-      </div>
+      <div className="composer-quick-menu__footer">↑↓ navigate · Enter select · Esc close</div>
     </div>
   );
 }

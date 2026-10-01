@@ -152,7 +152,7 @@ pub(crate) fn run() {
                 execution_targets.devices.clone(),
             ));
             app.manage(crate::execution_targets::transport::ExecutionTargetTauriState(
-                execution_targets,
+                execution_targets.clone(),
             ));
             let session_event_adapter = Arc::new(
                 crate::agent_sessions::session_event_adapter::AgentSessionEventAdapter::new(
@@ -221,7 +221,7 @@ pub(crate) fn run() {
             })));
             *workflow_execution_notification.lock().map_err(|_| "Workflow notification registry is unavailable")? = Some(Arc::downgrade(&workflow_execution));
             app.manage(crate::session_navigation::transport::SessionNavigationTauriState(Arc::new(
-                crate::session_navigation::application::SessionNavigationService::new(repository_catalog.clone(), workflow_execution.instances.clone(), repository.clone(), application.clone(), crate::session_navigation::order_repository::NavigationOrderRepository::new(database.clone()))
+                crate::session_navigation::application::SessionNavigationService::new(repository_catalog.clone(), workflow_execution.instances.clone(), repository.clone(), application.clone(), crate::session_navigation::order_repository::NavigationOrderRepository::new(database.clone()), execution_targets.clone())
             )));
             app.manage(crate::workflows::execution_transport::WorkflowExecutionTauriState::new(workflow_execution.clone()));
             let (otp_mcp, otp_mcp_owner) =

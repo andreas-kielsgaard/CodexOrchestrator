@@ -74,6 +74,10 @@ pub fn list_worktrees(
                 .ok()?
                 .committed_at;
             Some(WorktreeInstance {
+                created_at: fs::metadata(location.path().join(".git"))
+                    .and_then(|metadata| metadata.created())
+                    .ok()
+                    .map(|time| chrono::DateTime::<chrono::Utc>::from(time).to_rfc3339()),
                 handle: item.id.as_str().into(),
                 path: location.path().to_string_lossy().into_owned(),
                 branch_ref: item.head_ref.map(|branch| branch.as_str().into()),

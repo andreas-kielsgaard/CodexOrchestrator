@@ -44,6 +44,83 @@ const props = () => ({
   onReload: vi.fn(),
 });
 
+function branchProps() {
+  const data = navigationData();
+  const branches = [
+    {
+      id: 'branch:old',
+      repositoryId: 'repo-a',
+      branchRef: 'refs/heads/old',
+      createdAt: '2026-09-01',
+      paths: [],
+    },
+    {
+      id: 'branch:new',
+      repositoryId: 'repo-a',
+      branchRef: 'refs/heads/new',
+      createdAt: '2026-10-01',
+      paths: [],
+    },
+  ];
+  return {
+    ...props(),
+    model: buildSessionNavigation({
+      ...data,
+      branches,
+      sessionBranches: [
+        { sessionId: 'session-1', branchId: 'branch:old' },
+        { sessionId: 'session-2', branchId: 'branch:new' },
+      ],
+    }),
+  };
+}
+
+it('reorders branch groups and can pull a conversation out without changing its execution placement', async () => {
+  const actions = branchProps();
+  render(<SessionSelector {...actions} />);
+  const old = await screen.findByRole('treeitem', { name: 'old' });
+  const next = screen.getByRole('treeitem', { name: 'new' });
+  dragTo(old, next);
+  expect(actions.onReorder).toHaveBeenLastCalledWith(
+    { kind: 'session_layout', folderId: 'repo:repo-a:sessions' },
+    expect.arrayContaining(['branch:old', 'branch:new']),
+  );
+  const scope = actions.onReorder.mock.lastCall![1];
+  expect(scope.slice(0, 2)).toEqual(['branch:old', 'branch:new']);
+  actions.onReorder.mockClear();
+  dragTo(screen.getByRole('treeitem', { name: 'Session 1' }), next);
+  expect(actions.onReorder.mock.lastCall![1].slice(0, 2)).toEqual([
+    'session:session-1',
+    'branch:new',
+  ]);
+  expect(actions.onMove).not.toHaveBeenCalled();
+});
+
+it('rejects unrelated conversations dropped inside a branch while allowing outside ordering', async () => {
+  const actions = branchProps();
+  render(<SessionSelector {...actions} />);
+  const next = await screen.findByRole('treeitem', { name: 'new' });
+  const surface = next.closest('[data-branch-layout-item]')!;
+  vi.spyOn(surface, 'getBoundingClientRect').mockReturnValue({
+    top: 0,
+    bottom: 100,
+    height: 100,
+    left: 0,
+    right: 200,
+    width: 200,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+  });
+  dragTo(screen.getByRole('treeitem', { name: 'Session 3' }), next, 50);
+  expect(actions.onMove).not.toHaveBeenCalled();
+  expect(actions.onReorder).not.toHaveBeenCalled();
+  dragTo(screen.getByRole('treeitem', { name: 'Session 1' }), next, 50);
+  expect(actions.onReorder).not.toHaveBeenCalled();
+  dragTo(screen.getByRole('treeitem', { name: 'Session 3' }), next, -1);
+  expect(actions.onReorder.mock.lastCall![1][0]).toBe('session:session-3');
+});
+
 it('renames a session from its context menu', async () => {
   const actions = props();
   render(<SessionSelector {...actions} />);
@@ -55,9 +132,7 @@ it('renames a session from its context menu', async () => {
   });
   fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
-  await waitFor(() =>
-    expect(actions.onRename).toHaveBeenCalledWith('session-1', 'Planning notes'),
-  );
+  await waitFor(() => expect(actions.onRename).toHaveBeenCalledWith('session-1', 'Planning notes'));
 });
 it('shows five sessions per folder, reveals more, and creates at a folder target', async () => {
   const actions = props();

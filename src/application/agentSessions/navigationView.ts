@@ -5,6 +5,7 @@ import type {
   SessionNavigationRow,
 } from './navigation';
 import { orderScopeKey, type NavigationOrderScope } from './navigationOrder';
+import { layoutId } from './branchLayout';
 
 export interface NavigationEntry {
   readonly id: string;
@@ -56,6 +57,12 @@ export function navigationSiblings(
   model: SessionNavigationModel,
   scope: NavigationOrderScope,
 ): string[] {
+  if (scope.kind === 'session_layout')
+    return (
+      navigationFolders(model)
+        .find((f) => f.node.id === scope.folderId)
+        ?.node.children.map(layoutId) ?? []
+    );
   if (scope.kind === 'pinned')
     return sessionContainers(model)
       .find((c) => c.id === 'pinned')!
@@ -111,7 +118,10 @@ export function sessionContainers(model: SessionNavigationModel) {
         rows: s.children.filter((n): n is SessionNavigationRow => n.kind === 'session'),
       })),
     ...navigationFolders(model)
-      .filter((f) => f.node.role === 'workflow' || f.node.id.endsWith(':sessions'))
+      .filter(
+        (f) =>
+          f.node.role === 'workflow' || f.node.role === 'branch' || f.node.id.endsWith(':sessions'),
+      )
       .map(({ node }) => ({
         id: node.id,
         placement: node.placement,

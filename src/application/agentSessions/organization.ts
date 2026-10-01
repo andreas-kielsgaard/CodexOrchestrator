@@ -26,12 +26,21 @@ export interface WorkflowSessionOwner {
   readonly nodeName: string;
 }
 export interface SessionNavigationData {
+  readonly branches?: readonly NavigationBranch[];
+  readonly sessionBranches?: readonly { readonly sessionId: string; readonly branchId: string }[];
   readonly summaries: readonly AgentSessionSummaryDto[];
   readonly repositories: readonly NavigationRepository[];
   readonly instances: readonly NavigationInstance[];
   readonly owners: readonly WorkflowSessionOwner[];
   readonly organization: readonly SessionOrganization[];
   readonly orders: readonly NavigationOrder[];
+}
+export interface NavigationBranch {
+  readonly id: string;
+  readonly repositoryId: string;
+  readonly branchRef: string;
+  readonly createdAt: string | null;
+  readonly paths: readonly string[];
 }
 export interface SessionNavigationClient {
   load(): Promise<SessionNavigationData>;

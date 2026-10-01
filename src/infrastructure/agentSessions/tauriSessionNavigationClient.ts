@@ -7,5 +7,11 @@ export const tauriSessionNavigationClient: SessionNavigationClient = {
     invoke('move_agent_session', { sessionId, placement, orderedIds }),
   pin: (sessionId, pinned) => invoke('pin_agent_session', { sessionId, pinned }),
   reorder: (scope, orderedIds) => invoke('reorder_session_navigation', { scope, orderedIds }),
-  subscribeChanged: async (listener) => listen('workflow-instance-updated', listener),
+  subscribeChanged: async (listener) => {
+    const stops = await Promise.all([
+      listen('workflow-instance-updated', listener),
+      listen('agent-session-navigation-changed', listener),
+    ]);
+    return () => stops.forEach((stop) => stop());
+  },
 };

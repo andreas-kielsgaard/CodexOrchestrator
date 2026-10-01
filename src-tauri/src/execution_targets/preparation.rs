@@ -260,6 +260,7 @@ impl ExecutionTargetService {
                 (
                     String::new(),
                     WorktreeInstance {
+                        created_at: None,
                         handle: workspace_id.into(),
                         path,
                         branch_ref: None,

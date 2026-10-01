@@ -7,10 +7,13 @@ import {
 } from './composerQuickActions';
 import type { ComposerQuickAction, ComposerQuickPage } from './composerQuickMenuTypes';
 import { composerTargetActions, type ComposerTargetSource } from './composerTargetActions';
+import { commandToken, preferredCommandIndex } from './composerCommandToken';
 
 interface NavigationFrame {
   readonly id: string;
   readonly query: string;
+  readonly start: number;
+  readonly caret: number;
   readonly token: number;
   readonly acceptsSlash?: boolean;
   readonly load?: () => Promise<ComposerQuickPage>;
@@ -28,14 +31,15 @@ export function useComposerQuickMenu(
 ) {
   const [frames, setFrames] = useState<readonly NavigationFrame[]>([]);
   const sequence = useRef(0);
-  const [dismissed, setDismissed] = useState<string | null>(null);
+  const [dismissed, setDismissed] = useState<number | null>(null);
+  const [caret, setCaret] = useState(draft.length);
   const [catalog, setCatalog] = useState<{
     context: string;
     data: AgentSessionQuickFeatures;
   } | null>(null);
   const [nativeError, setNativeError] = useState<string | null>(null);
   const [nativeLoading, setNativeLoading] = useState(false);
-  const [highlight, setHighlight] = useState(0);
+  const [highlight, setHighlight] = useState<number | null>(null);
   const [notice, setNotice] = useState('');
   const [refresh, setRefresh] = useState(0);
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -43,9 +47,10 @@ export function useComposerQuickMenu(
   const [navigationContext, setNavigationContext] = useState(context);
   const currentFrames = navigationContext === context ? frames : [];
   const frame = currentFrames.at(-1);
-  const query = (frame?.acceptsSlash ? /^\/([^\r\n]*)$/ : /^\/([^/\r\n]*)$/).exec(draft)?.[1];
+  const token = commandToken(draft, caret, frame?.acceptsSlash ? frame.start : undefined);
+  const query = token?.query;
   const open = Boolean(
-    (source || targets) && !disabled && query !== undefined && dismissed !== draft,
+    (source || targets) && !disabled && token !== null && dismissed !== token.start,
   );
   const load = source?.load;
   const nativeContext = source?.contextKey;
@@ -121,7 +126,7 @@ export function useComposerQuickMenu(
     }
   }, [query]);
   useEffect(() => {
-    setHighlight(0);
+    setHighlight(null);
   }, [query, frameToken, frame?.page, catalog]);
   useEffect(() => {
     if (!open) return;
@@ -130,13 +135,13 @@ export function useComposerQuickMenu(
         event.target instanceof Node &&
         !textarea.current?.closest('form')?.contains(event.target)
       ) {
-        setDismissed(draft);
+        setDismissed(draft.lastIndexOf('/', caret - 1));
         setFrames([]);
       }
     };
     document.addEventListener('pointerdown', dismissOutside);
     return () => document.removeEventListener('pointerdown', dismissOutside);
-  }, [open, draft]);
+  }, [open, draft, caret]);
 
   const data = catalog && catalog.context === nativeContext ? catalog.data : undefined;
   let actions: readonly ComposerQuickAction[] = [
@@ -152,7 +157,17 @@ export function useComposerQuickMenu(
     actions = step.load ? (step.page?.items ?? []) : (parent?.children ?? []);
   }
   const items = filterQuickActions(actions, query ?? '');
-  const selectedIndex = Math.min(highlight, Math.max(0, items.length - 1));
+  const selectedIndex = Math.min(
+    highlight ?? preferredCommandIndex(items, query ?? ''),
+    Math.max(0, items.length - 1),
+  );
+  const replaceToken = (replacement: string) => {
+    if (!token) return;
+    onDraftChange(draft.slice(0, token.start) + replacement + draft.slice(token.end));
+    const nextCaret = token.start + replacement.length;
+    setCaret(nextCaret);
+    requestAnimationFrame(() => textarea.current?.setSelectionRange(nextCaret, nextCaret));
+  };
   const loading = frame ? Boolean(frame.loading) : Boolean(source && nativeLoading);
   const error = frame ? frame.error : nativeError;
   const choose = (item: ComposerQuickAction | undefined) => {
@@ -170,29 +185,33 @@ export function useComposerQuickMenu(
         {
           id: item.id,
           query: draft,
+          start: token?.start ?? 0,
+          caret,
           token: ++sequence.current,
           acceptsSlash: item.acceptsSlash,
           load: item.loadChildren,
           loading: Boolean(item.loadChildren),
         },
       ]);
-      onDraftChange('/');
+      replaceToken('/');
     } else if (item.run) {
       const result = item.run();
-      onDraftChange(result.replacement);
+      replaceToken(result.replacement);
       setNotice(result.notice);
       setFrames([]);
+      setDismissed(token?.start ?? null);
     }
-    setHighlight(0);
+    setHighlight(null);
     textarea.current?.focus();
   };
   const back = () => {
     setFrames(currentFrames.slice(0, -1));
     onDraftChange(frame?.query ?? '/');
+    setCaret(frame?.caret ?? 1);
     textarea.current?.focus();
   };
   const dismiss = () => {
-    setDismissed(draft);
+    setDismissed(draft.lastIndexOf('/', caret - 1));
     setFrames([]);
     textarea.current?.focus();
   };
@@ -200,11 +219,10 @@ export function useComposerQuickMenu(
     if (!open || event.nativeEvent.isComposing || event.keyCode === 229) return false;
     if (event.key === 'Escape') {
       event.preventDefault();
-      if (currentFrames.length) back();
-      else dismiss();
+      dismiss();
       return true;
     }
-    if (event.key === 'Backspace' && draft === '/' && currentFrames.length) {
+    if (event.key === 'Backspace' && query === '' && currentFrames.length) {
       event.preventDefault();
       back();
       return true;
@@ -266,5 +284,6 @@ export function useComposerQuickMenu(
       choose(items[selectedIndex]);
     },
     setHighlight,
+    setCaret,
   };
 }

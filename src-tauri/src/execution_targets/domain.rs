@@ -111,6 +111,7 @@ pub(crate) struct SessionExecutionTarget {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TargetWorktree {
+    pub(crate) created_at: Option<String>,
     pub(crate) worktree_id: String,
     pub(crate) path: String,
     pub(crate) head: Option<String>,
