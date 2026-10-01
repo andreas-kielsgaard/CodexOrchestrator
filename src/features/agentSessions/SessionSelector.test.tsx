@@ -44,6 +44,21 @@ const props = () => ({
   onReload: vi.fn(),
 });
 
+it('uses filled completion dots only for done conversations and hollow dots for queued continuation', async () => {
+  const data = navigationData();
+  const summaries = data.summaries.map((s, index) => ({
+    ...s,
+    hasActiveInvocation: index !== 0,
+    completionState: index === 0 ? ('done' as const) : index === 1 ? ('continued' as const) : null,
+  }));
+  render(<SessionSelector {...props()} model={buildSessionNavigation({ ...data, summaries })} />);
+  expect(await screen.findByLabelText('Conversation finished')).toHaveClass('session-completion');
+  expect(screen.getByLabelText('Turn finished; queued actions continuing')).toHaveClass(
+    'session-completion--continued',
+  );
+  expect(screen.queryByLabelText('Working')).not.toBeInTheDocument();
+});
+
 function branchProps() {
   const data = navigationData();
   const branches = [
@@ -74,6 +89,16 @@ function branchProps() {
     }),
   };
 }
+it('creates a chat with the hovered branch selected', async () => {
+  const actions = branchProps(),
+    onNewBranch = vi.fn();
+  render(<SessionSelector {...actions} onNewBranch={onNewBranch} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'New session in old' }));
+  expect(onNewBranch).toHaveBeenCalledWith(
+    expect.objectContaining({ branchRef: 'refs/heads/old', repositoryId: 'repo-a' }),
+  );
+  expect(actions.onNew).not.toHaveBeenCalled();
+});
 
 it('reorders branch groups and can pull a conversation out without changing its execution placement', async () => {
   const actions = branchProps();

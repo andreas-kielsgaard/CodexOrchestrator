@@ -46,7 +46,7 @@ export function ProcessingDisclosure({
         <ElapsedTime
           startedAt={startedAt ?? activity[0]?.recordedAt}
           completedAt={completedAt}
-          running={running}
+          running={running && !completedAt}
         />
         <small>{activity.length ? activitySummary(activity) : 'Waiting for activity'}</small>
       </summary>

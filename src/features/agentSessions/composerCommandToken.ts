@@ -1,11 +1,16 @@
 import type { ComposerQuickAction } from './composerQuickMenuTypes';
 
-export function commandToken(draft: string, caret: number, nestedStart?: number) {
+export function commandToken(
+  draft: string,
+  caret: number,
+  nestedStart?: number,
+  choosingValue = false,
+) {
   const end = Math.min(caret, draft.length);
   const start = nestedStart ?? draft.lastIndexOf('/', end - 1);
   if (start < 0 || draft[start] !== '/') return null;
   const query = draft.slice(start + 1, end);
-  if (/[\r\n]/.test(query)) return null;
+  if ((choosingValue ? /[\r\n]/ : /\s/).test(query)) return null;
   return { start, end, query };
 }
 

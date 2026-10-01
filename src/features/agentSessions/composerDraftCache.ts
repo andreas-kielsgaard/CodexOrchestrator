@@ -7,6 +7,7 @@ const STORAGE_PREFIX = 'codex-orchestrator/composer-draft/v1/';
 const LAST_SENT_RUNTIME_KEY = 'global:last-sent-runtime';
 
 export interface CachedComposerDraft {
+  readonly branchDraftId?: string;
   readonly text?: string;
   readonly workingDirectory?: string;
   readonly executionSelection?: SessionExecutionSelectionDto | null;

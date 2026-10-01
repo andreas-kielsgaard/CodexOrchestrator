@@ -54,5 +54,7 @@ export const SessionSelector = memo(
     previous.onCopySession === next.onCopySession &&
     previous.onSetIdentity === next.onSetIdentity &&
     previous.onConfigure === next.onConfigure &&
-    previous.onOpenWorkflow === next.onOpenWorkflow,
+    previous.onOpenWorkflow === next.onOpenWorkflow &&
+    previous.onNewBranch === next.onNewBranch &&
+    previous.actionsClient === next.actionsClient,
 );

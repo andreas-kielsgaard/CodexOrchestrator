@@ -99,7 +99,7 @@
 .composer-hover-group__overlay {
   position: absolute;
   z-index: 20;
-  bottom: calc(100% + 8px);
+  bottom: 100%;
   left: 0;
   width: max-content;
   max-width: min(360px, 75cqw);
@@ -271,7 +271,8 @@
   margin: 0;
   padding: 5px 12px;
 }
-.turn-tool-event--running {
+.turn-tool-event--running,
+.turn-operation-group {
   border-left: 2px solid #83a795;
   padding-left: 10px;
 }
@@ -293,4 +294,26 @@
   border-radius: 8px;
   background: #fff2ed;
   color: #943c2d;
+}
+.session-quote-menu {
+  position: fixed;
+  z-index: 70;
+  border: 1px solid var(--border-color, #c7d0c9);
+  border-radius: 12px;
+  padding: 5px;
+  background: var(--surface-color, #fffefb);
+  box-shadow: 0 4px 18px #0002;
+}
+.session-quote-menu form {
+  display: flex;
+  gap: 4px;
+}
+.session-quote-menu input {
+  width: 210px;
+}
+.session-quote-menu button {
+  border: 0;
+  background: transparent;
+  padding: 8px;
+  border-radius: 8px;
 }

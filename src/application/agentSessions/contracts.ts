@@ -212,6 +212,7 @@ export interface AgentSessionDetailsDto {
 }
 
 export interface AgentSessionSummaryDto {
+  completionState?: 'done' | 'continued' | null;
   pendingRequestCount: number;
   id: AgentSessionIdDto;
   title: string;
@@ -307,6 +308,13 @@ export interface AgentSessionClient {
     text: string;
     attachments?: readonly NewAgentImageAttachmentDto[];
   }): Promise<SessionInteractionDto>;
+  editSteering?(input: {
+    sessionId: string;
+    invocationId: string;
+    inputId: string;
+    action: 'begin' | 'save' | 'resume' | 'cancel';
+    text?: string;
+  }): Promise<SessionInteractionDto>;
   respondToRuntimeRequest?(input: {
     sessionId: string;
     invocationId: string;
@@ -356,9 +364,13 @@ export interface SessionInteractionDto {
   id: string;
   invocationId: string;
   sequence: number;
+  recordedAt?: IsoDateTimeDto;
   kind: 'steering' | 'request';
   state:
     | 'pending'
+    | 'queued'
+    | 'editing'
+    | 'canceled'
     | 'accepted'
     | 'rejected'
     | 'uncertain'
@@ -367,6 +379,7 @@ export interface SessionInteractionDto {
     | 'expired'
     | 'unsupported';
   content: {
+    attachments?: AgentImageAttachmentDto[];
     permissions?: unknown;
     grantRoot?: string;
     text?: string;

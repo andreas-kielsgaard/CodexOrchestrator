@@ -47,7 +47,12 @@ export function useComposerQuickMenu(
   const [navigationContext, setNavigationContext] = useState(context);
   const currentFrames = navigationContext === context ? frames : [];
   const frame = currentFrames.at(-1);
-  const token = commandToken(draft, caret, frame?.acceptsSlash ? frame.start : undefined);
+  const token = commandToken(
+    draft,
+    caret,
+    frame?.acceptsSlash ? frame.start : undefined,
+    Boolean(frame),
+  );
   const query = token?.query;
   const open = Boolean(
     (source || targets) && !disabled && token !== null && dismissed !== token.start,

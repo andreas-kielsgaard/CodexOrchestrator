@@ -106,8 +106,15 @@ export function SessionEntry({
           title={pendingRequestLabel}
           aria-label={pendingRequestLabel}
         />
-      ) : node.summary.hasActiveInvocation ? (
-        <span className="session-active" aria-label="Working" />
+      ) : node.summary.completionState ? (
+        <span
+          className={`session-completion${node.summary.completionState === 'continued' ? ' session-completion--continued' : ''}`}
+          aria-label={
+            node.summary.completionState === 'continued'
+              ? 'Turn finished; queued actions continuing'
+              : 'Conversation finished'
+          }
+        />
       ) : null}
     </div>
   );

@@ -235,6 +235,7 @@ impl AgentSessionDetailsDto {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentSessionSummaryDto {
+    pub(crate) completion_state: Option<String>,
     pub(crate) pending_request_count: usize,
     pub(crate) id: AgentSessionId,
     pub(crate) title: String,
@@ -249,6 +250,7 @@ pub(crate) struct AgentSessionSummaryDto {
 impl From<AgentSessionSummary> for AgentSessionSummaryDto {
     fn from(value: AgentSessionSummary) -> Self {
         Self {
+            completion_state: value.completion_state,
             pending_request_count: value.pending_request_count,
             id: value.session.id,
             title: value.session.title,

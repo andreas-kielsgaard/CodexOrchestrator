@@ -90,6 +90,7 @@ export interface AgentSessionWorkspaceController {
   reorderQueue?(entryIds: readonly string[]): Promise<void>;
   enqueueTargetOperation?(request: TargetSwitchRequestDto, beforeEntryId?: string): Promise<void>;
   compact?(): Promise<void>;
+  runTargetOperation?(entryId: string): Promise<void>;
   updateQueuedMessage?(
     input: Omit<UpdateQueuedMessageInputDto, 'sessionId' | 'expectedRevision'>,
   ): Promise<void>;
@@ -100,6 +101,11 @@ export interface AgentSessionWorkspaceController {
   retryQueueEntry?(entryId: string): Promise<void>;
   cancelQueueEntry?(entryId: string): Promise<void>;
   steer?(attachments?: readonly NewAgentImageAttachmentDto[]): Promise<void>;
+  editSteering?(
+    interaction: SessionInteractionDto,
+    action: 'begin' | 'save' | 'resume' | 'cancel',
+    text?: string,
+  ): Promise<SessionInteractionDto>;
 
   reload(): Promise<void>;
   toggleProcessing(invocationId: string): void;
@@ -696,7 +702,7 @@ export function useAgentSession(
             ? current.filter(({ id }) => id !== inputId)
             : current.map((item) => (item.id === inputId ? outcome : item)),
         );
-        if (outcome.state === 'accepted') {
+        if (outcome.state === 'accepted' || outcome.state === 'queued') {
           clearSubmittedText(sendCacheKey, submittedText);
           if (selectedIdRef.current === sessionId && draftRef.current.trim() === submittedText) {
             draftRef.current = '';
@@ -775,24 +781,26 @@ export function useAgentSession(
     );
   }, [details, preparation, queuePresentation]);
   const steeringQueue = useMemo(() => {
-    const activeInvocationId = transcript?.activeInvocationId;
-    if (!activeInvocationId) return [];
-    const visibleStates = new Set(['pending', 'accepted', 'uncertain']);
+    const visibleStates = new Set([
+      'queued',
+      'pending',
+      'expired',
+      'editing',
+      'rejected',
+      'uncertain',
+    ]);
     const entries = new Map<string, SessionInteractionDto>();
     for (const interaction of details?.interactions ?? [])
-      if (
-        interaction.invocationId === activeInvocationId &&
-        interaction.kind === 'steering' &&
-        visibleStates.has(interaction.state)
-      )
+      if (interaction.kind === 'steering' && visibleStates.has(interaction.state))
         entries.set(interaction.id, interaction);
+    const durableIds = new Set((details?.interactions ?? []).map((i) => i.id));
     for (const interaction of optimisticSteering)
-      if (interaction.invocationId === activeInvocationId && visibleStates.has(interaction.state))
+      if (visibleStates.has(interaction.state) && !durableIds.has(interaction.id))
         entries.set(interaction.id, interaction);
     return [...entries.values()].sort(
       (left, right) => right.sequence - left.sequence || right.id.localeCompare(left.id),
     );
-  }, [details?.interactions, optimisticSteering, transcript?.activeInvocationId]);
+  }, [details?.interactions, optimisticSteering]);
 
   useEffect(() => {
     if (details) {
@@ -998,6 +1006,27 @@ export function useAgentSession(
     queuePresentation,
     ...queueControls,
     steeringQueue,
+    editSteering: client.editSteering
+      ? async (interaction, action, text) => {
+          const sessionId = selectedIdRef.current;
+          if (!sessionId) throw new Error('No conversation selected');
+          const result = await client.editSteering!({
+            sessionId,
+            invocationId: interaction.invocationId,
+            inputId: interaction.id,
+            action,
+            ...(text !== undefined ? { text } : {}),
+          });
+          if (selectedIdRef.current === sessionId) {
+            setOptimisticSteering((current) => [
+              ...current.filter((i) => i.id !== result.id),
+              result,
+            ]);
+            void loadSelected(sessionId, true);
+          }
+          return result;
+        }
+      : undefined,
     selectedSessionId,
     details,
     transcript,

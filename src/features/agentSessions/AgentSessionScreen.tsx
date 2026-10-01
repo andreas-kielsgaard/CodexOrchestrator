@@ -50,6 +50,7 @@ import {
 import type {
   SessionNavigationClient,
   SessionFolderTarget,
+  NavigationBranch,
 } from '../../application/agentSessions/organization';
 import type { TranscriptAnchorRange } from './transcriptProjector';
 import { AgentSessionHeaderActionsProvider, AgentSessionWorkspace } from './AgentSessionWorkspace';
@@ -220,6 +221,7 @@ export function StandaloneAgentSessionScreen({
     draftFolderTarget,
     branchSource,
     draftRepositoryId,
+    selection.kind === 'draft' ? selection.branchRef : undefined,
   );
   const { preserveOnAcknowledgement, adoptCurrent, acceptReady } = targetDraft;
   useEffect(() => {
@@ -320,6 +322,17 @@ export function StandaloneAgentSessionScreen({
       select({ kind: 'draft', draftId: crypto.randomUUID(), folderTarget }),
     [select],
   );
+  const onNewBranch = useCallback(
+    (branch: NavigationBranch) => {
+      select({
+        kind: 'draft',
+        draftId: crypto.randomUUID(),
+        folderTarget: { kind: 'repository', repositoryId: branch.repositoryId },
+        branchRef: branch.branchRef,
+      });
+    },
+    [select],
+  );
   const onRename = useCallback(
     async (sessionId: string, title: string) => {
       await collection.rename(sessionId, title);
@@ -363,9 +376,11 @@ export function StandaloneAgentSessionScreen({
     heading: 'Start with a message',
     guidance: targetDraft.target
       ? `This session will run in ${targetDraft.target.path} on ${targetDraft.target.execution.deviceName}.`
-      : folderLabel
-        ? `New session in ${folderLabel}. It starts in the repository’s main working tree unless you select a target worktree.`
-        : 'Choose a target worktree on this laptop or a remote device. To start in an empty local workspace, choose a local default in Capability Profiles.',
+      : selection.kind === 'draft' && selection.branchRef
+        ? `New session on ${selection.branchRef.replace(/^refs\/heads\//, '')}. Resolving its target worktree…`
+        : folderLabel
+          ? `New session in ${folderLabel}. It starts in the repository’s main working tree unless you select a target worktree.`
+          : 'Choose a target worktree on this laptop or a remote device. To start in an empty local workspace, choose a local default in Capability Profiles.',
   };
   const evidenceRange =
     focusEvidence &&
@@ -612,7 +627,10 @@ export function StandaloneAgentSessionScreen({
     />
   ) : null;
   const deviceActivityPanel = (
-    <SessionDeviceActivityList activities={session.queuePresentation?.deviceActivities ?? []} />
+    <SessionDeviceActivityList
+      activities={session.queuePresentation?.deviceActivities ?? []}
+      onRunNow={session.runTargetOperation}
+    />
   );
   const composerDialog = preview ? (
     <SessionPreparationPanel
@@ -783,6 +801,8 @@ export function StandaloneAgentSessionScreen({
               loading={collection.loading}
               onSelect={onSelect}
               onNew={onNew}
+              onNewBranch={onNewBranch}
+              actionsClient={navigationClient}
               onMove={collection.move}
               onPin={collection.pin}
               onRename={onRename}

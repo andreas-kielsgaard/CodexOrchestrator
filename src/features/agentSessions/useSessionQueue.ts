@@ -225,6 +225,17 @@ export function useSessionQueue({
     controls: {
       enqueueTargetOperation,
       compact,
+      runTargetOperation: queueClient?.runTargetOperation
+        ? async (entryId: string) => {
+            const sessionId = selectedIdRef.current;
+            if (!sessionId) return;
+            try {
+              setQueue(await queueClient.runTargetOperation!(sessionId, entryId));
+            } catch (cause) {
+              setError(errorMessage(cause));
+            }
+          }
+        : undefined,
       sendQueueEntryNow: queueClient?.sendQueueEntryNow ? sendQueueEntryNow : undefined,
       reorderQueue,
       updateQueuedMessage,

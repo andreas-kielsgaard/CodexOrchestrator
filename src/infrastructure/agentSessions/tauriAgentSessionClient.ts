@@ -77,6 +77,8 @@ export function createTauriAgentSessionClient(
       invokeCommand('retry_agent_session_preparation', { input: { invocationId } }),
     loadQueue: (sessionId) => invokeCommand('load_agent_session_queue', { input: { sessionId } }),
     sendQueueEntryNow: (input) => invokeCommand('send_queued_agent_session_message_now', { input }),
+    runTargetOperation: (sessionId, entryId) =>
+      invokeCommand('run_agent_session_target_operation', { input: { sessionId, entryId } }),
     enqueueTargetOperation: (input) =>
       invokeCommand('enqueue_agent_session_target_operation', { input }),
     enqueueCompaction: (sessionId) =>
@@ -105,6 +107,7 @@ export function createTauriAgentSessionClient(
     resolveWorkingDirectory: (sessionId, directory) =>
       invokeCommand('resolve_agent_session_working_directory', { sessionId, directory }),
     steerSession: (input) => invokeCommand('steer_agent_session', { input }),
+    editSteering: (input) => invokeCommand('edit_agent_session_steering', { input }),
     respondToRuntimeRequest: (input) =>
       invokeCommand('respond_to_agent_runtime_request', { input }),
 

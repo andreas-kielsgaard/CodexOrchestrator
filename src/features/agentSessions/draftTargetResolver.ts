@@ -18,14 +18,17 @@ export async function resolveDefaultDraftTarget(input: {
   readonly repositoryId: string;
   readonly selection: SessionExecutionSelectionDto;
   readonly sessionId?: string;
+  readonly branchRef?: string;
 }): Promise<{
   readonly selection: SessionExecutionSelectionDto;
   readonly branchChoice: DraftBranchChoice | null;
 }> {
   const graph = await input.source.branchGraph(input.repositoryId);
-  if (graph.referenceTarget?.kind !== 'branch')
+  if (!input.branchRef && graph.referenceTarget?.kind !== 'branch')
     throw new Error('The repository does not expose a default branch.');
-  const branchRef = graph.referenceTarget.branchRef;
+  const branchRef =
+    input.branchRef ??
+    (graph.referenceTarget?.kind === 'branch' ? graph.referenceTarget.branchRef : '');
   const branch = graph.targets.find(
     (item) => item.target.kind === 'branch' && item.target.branchRef === branchRef,
   );

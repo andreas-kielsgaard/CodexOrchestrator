@@ -5,8 +5,10 @@ import './sessionDeviceActivity.css';
 
 export function SessionDeviceActivityList({
   activities,
+  onRunNow,
 }: {
   readonly activities: readonly SessionQueueEntryViewDto[];
+  readonly onRunNow?: (entryId: string) => Promise<void>;
 }) {
   if (!activities.length) return null;
   return (
@@ -24,14 +26,27 @@ export function SessionDeviceActivityList({
           ).length;
           return (
             <li key={item.entry.id}>
-              <LoaderCircle
-                className="session-device-activity__spinner"
-                size={15}
-                aria-hidden="true"
-              />
+              {operation.phase !== 'pending' && (
+                <LoaderCircle
+                  className="session-device-activity__spinner"
+                  size={15}
+                  aria-hidden="true"
+                />
+              )}
               <span>
                 <b>{queueEntryTitle(item)}</b>
                 {current && <small>{targetActionLabel(current.kind)}</small>}
+                {operation.phase === 'pending' && (
+                  <>
+                    <small>Waiting for the next message</small>
+                    {operation.projectedPlan.steps.map((step) => (
+                      <small key={step.kind}>{targetActionLabel(step.kind)}</small>
+                    ))}
+                    {onRunNow && (
+                      <button onClick={() => void onRunNow(item.entry.id)}>Run now</button>
+                    )}
+                  </>
+                )}
               </span>
               <span
                 className="session-device-activity__count"

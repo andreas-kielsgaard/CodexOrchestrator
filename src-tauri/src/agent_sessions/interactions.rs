@@ -9,6 +9,7 @@ pub(crate) struct SessionInteraction {
     pub(crate) id: String,
     pub(crate) invocation_id: AgentInvocationId,
     pub(crate) sequence: u64,
+    pub(crate) recorded_at: chrono::DateTime<chrono::Utc>,
     pub(crate) kind: String,
     pub(crate) state: String,
     pub(crate) content: Value,
@@ -44,6 +45,12 @@ fn project_invocation_interactions(
                 continue;
             };
             let opened = match &record {
+                RuntimeControlRecord::SteeringQueued { input_id, .. } => Some((
+                    input_id.clone(),
+                    serde_json::to_value(&record).expect("control records serialize"),
+                    "steering",
+                    "queued",
+                )),
                 RuntimeControlRecord::SteeringPending { input_id, .. } => Some((
                     input_id.clone(),
                     serde_json::to_value(&record).expect("control records serialize"),
@@ -65,10 +72,13 @@ fn project_invocation_interactions(
                 _ => None,
             };
             if let Some((id, content, kind, state)) = opened {
+                interactions
+                    .retain(|i| !(i.invocation_id == invocation.invocation.id && i.id == id));
                 interactions.push(SessionInteraction {
                     id,
                     invocation_id: invocation.invocation.id.clone(),
                     sequence: event.sequence,
+                    recorded_at: event.recorded_at,
                     kind: kind.into(),
                     state: state.into(),
                     content,
@@ -92,15 +102,16 @@ fn project_invocation_interactions(
         if invocation.invocation.status.is_terminal() {
             for interaction in interactions.iter_mut().filter(|i| {
                 i.invocation_id == invocation.invocation.id
-                    && matches!(i.state.as_str(), "pending" | "responding")
+                    && matches!(i.state.as_str(), "pending" | "responding" | "queued")
             }) {
-                interaction.state =
-                    if interaction.kind == "steering" || interaction.state == "responding" {
-                        "uncertain"
-                    } else {
-                        "expired"
-                    }
-                    .into();
+                interaction.state = if interaction.state == "queued" {
+                    "expired"
+                } else if interaction.kind == "steering" || interaction.state == "responding" {
+                    "uncertain"
+                } else {
+                    "expired"
+                }
+                .into();
             }
         }
     }

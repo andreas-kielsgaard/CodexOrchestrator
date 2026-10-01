@@ -13,11 +13,22 @@ use std::{
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NavigationBranch {
+    pub(crate) worktrees: Vec<NavigationWorktree>,
     pub(crate) id: String,
     pub(crate) repository_id: String,
     pub(crate) branch_ref: String,
     pub(crate) created_at: Option<String>,
     pub(crate) paths: Vec<String>,
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NavigationWorktree {
+    pub(crate) device_id: String,
+    pub(crate) device_name: String,
+    pub(crate) path: String,
+    pub(crate) head: Option<String>,
+    pub(crate) created_at: Option<String>,
+    pub(crate) dirty: Option<bool>,
 }
 
 #[derive(Default)]
@@ -28,6 +39,9 @@ pub(crate) struct BranchInventory {
     refreshing: AtomicBool,
 }
 impl BranchInventory {
+    pub(crate) fn invalidate(&self) {
+        *self.refreshed.lock().unwrap() = None;
+    }
     pub(crate) fn cached(&self) -> Vec<NavigationBranch> {
         self.branches.lock().unwrap().clone()
     }
@@ -67,11 +81,20 @@ impl BranchInventory {
                     branch_ref,
                     created_at: None,
                     paths: vec![],
+                    worktrees: vec![],
                 });
             if created_at > entry.created_at {
-                entry.created_at = created_at;
+                entry.created_at = created_at.clone();
             }
             entry.paths.push(target.worktree.path.clone());
+            entry.worktrees.push(NavigationWorktree {
+                device_id: "local".into(),
+                device_name: "This device".into(),
+                path: target.worktree.path.clone(),
+                head: None,
+                created_at,
+                dirty: None,
+            });
         }
         if local.is_ok() {
             sources.insert("local".into(), result.into_values().collect());
@@ -111,8 +134,16 @@ impl BranchInventory {
                             id,
                             repository_id: repository.repository_id.clone(),
                             branch_ref: worktree.branch_ref,
-                            created_at: worktree.created_at,
-                            paths: vec![worktree.path],
+                            created_at: worktree.created_at.clone(),
+                            paths: vec![worktree.path.clone()],
+                            worktrees: vec![NavigationWorktree {
+                                device_id: profile.profile.execution.device_id.clone(),
+                                device_name: profile.profile.execution.device_name.clone(),
+                                path: worktree.path.clone(),
+                                head: worktree.head,
+                                created_at: worktree.created_at.clone(),
+                                dirty: Some(worktree.dirty),
+                            }],
                         });
                     }
                 }
@@ -135,6 +166,7 @@ impl BranchInventory {
                 .entry(branch.id.clone())
                 .or_insert_with(|| NavigationBranch {
                     paths: vec![],
+                    worktrees: vec![],
                     ..branch.clone()
                 });
             if branch.created_at > entry.created_at {
@@ -143,6 +175,15 @@ impl BranchInventory {
             for path in &branch.paths {
                 if !entry.paths.contains(path) {
                     entry.paths.push(path.clone());
+                }
+            }
+            for worktree in &branch.worktrees {
+                if !entry
+                    .worktrees
+                    .iter()
+                    .any(|w| w.device_id == worktree.device_id && w.path == worktree.path)
+                {
+                    entry.worktrees.push(worktree.clone());
                 }
             }
         }

@@ -116,6 +116,7 @@ export function useSessionTarget(
   folderTarget?: SessionFolderTarget | null,
   branchSource?: RepositoryBranchSource,
   repositoryId?: string | null,
+  requestedBranchRef?: string,
 ) {
   const [selection, setSelectionState] = useState<SessionExecutionSelectionDto | null>(null);
   const selectionRef = useRef(selection);
@@ -134,22 +135,33 @@ export function useSessionTarget(
   const cacheKey = composerDraftCacheKey(sessionId, folderTarget);
   const contextRef = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (contextRef.current === cacheKey) return;
-    contextRef.current = cacheKey;
+    const contextKey = requestedBranchRef
+      ? `${cacheKey}:${draftId}:${requestedBranchRef}`
+      : cacheKey;
+    if (contextRef.current === contextKey) return;
+    contextRef.current = contextKey;
     setHydratedCacheKey(null);
     if (sessionId && sessionId === acknowledgedSession.current) {
       acknowledgedSession.current = null;
       setHydratedCacheKey(cacheKey);
       return;
     }
-    const cachedSelection = readCachedComposerDraft(cacheKey)?.executionSelection ?? null;
-    const cachedBranchChoice = readCachedComposerDraft(cacheKey)?.branchChoice ?? null;
+    const cached = readCachedComposerDraft(cacheKey);
+    const newBranchDraft = requestedBranchRef && cached?.branchDraftId !== draftId;
+    if (newBranchDraft)
+      writeCachedComposerDraft(cacheKey, {
+        branchDraftId: draftId,
+        executionSelection: null,
+        branchChoice: null,
+      });
+    const cachedSelection = newBranchDraft ? null : (cached?.executionSelection ?? null);
+    const cachedBranchChoice = newBranchDraft ? null : (cached?.branchChoice ?? null);
     dirty.current = cachedSelection !== null;
     setSelectionState(cachedSelection);
     setBranchChoice(cachedBranchChoice);
     setDeviceId(cachedSelection?.execution.deviceId ?? null);
     setHydratedCacheKey(cacheKey);
-  }, [sessionId, cacheKey]);
+  }, [sessionId, cacheKey, draftId, requestedBranchRef]);
   useEffect(() => {
     if (
       sessionId ||
@@ -364,6 +376,7 @@ export function useSessionTarget(
       client,
       repositoryId,
       selection,
+      branchRef: requestedBranchRef,
     })
       .then(
         (resolved) => {
@@ -388,6 +401,7 @@ export function useSessionTarget(
     client,
     hydratedCacheKey,
     repositoryId,
+    requestedBranchRef,
     selection,
   ]);
   useEffect(() => {

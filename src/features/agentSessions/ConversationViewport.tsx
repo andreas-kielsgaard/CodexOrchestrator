@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { memo } from 'react';
 import { AlertCircle, X } from 'lucide-react';
 import { AgentSessionComposer } from './AgentSessionComposer';
+import { AddToChatSelection } from './AddToChatSelection';
 import type { ComposerQuickFeatures } from './composerQuickActions';
 import type { ComposerTargetSource } from './composerTargetActions';
 import type {
@@ -170,6 +171,16 @@ export function ConversationViewport({
           />
         )}
       </div>
+      {composerTarget && (
+        <AddToChatSelection
+          region={follow.containerRef}
+          onAdd={(text) => {
+            composerTarget.setDraft(
+              [composerTarget.draft.trimEnd(), text].filter(Boolean).join('\n\n'),
+            );
+          }}
+        />
+      )}
       {composerTarget?.queuePanel}
       {composerTarget && (
         <AgentSessionComposer

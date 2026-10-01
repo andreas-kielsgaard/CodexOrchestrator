@@ -4,10 +4,7 @@
 //! diagnostic evidence and never drive product decisions.
 //!
 //! The encoding is the one already stored in event history, so older records decode unchanged.
-use super::{
-    domain::AgentRuntimeEventSource,
-    runtime::RuntimeEventDraft,
-};
+use super::{domain::AgentRuntimeEventSource, runtime::RuntimeEventDraft};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -19,7 +16,9 @@ pub enum RuntimeControlRecord {
     TurnActive,
     /// A provider request awaiting the user.
     #[serde(rename = "runtime_request_opened")]
-    RequestOpened { request: super::interactions::RuntimeRequest },
+    RequestOpened {
+        request: super::interactions::RuntimeRequest,
+    },
     /// A provider request Orchid cannot answer; the provider has already declined it.
     #[serde(rename = "runtime_request_unsupported")]
     RequestUnsupported {
@@ -34,9 +33,13 @@ pub enum RuntimeControlRecord {
         message: Option<String>,
     },
     #[serde(rename = "session_steering_pending", rename_all = "camelCase")]
-    SteeringPending {
+    SteeringPending { input_id: String, text: String },
+    #[serde(rename = "session_steering_queued", rename_all = "camelCase")]
+    SteeringQueued {
         input_id: String,
         text: String,
+        #[serde(default)]
+        attachments: Vec<super::runtime::RuntimeImageAttachment>,
     },
     #[serde(rename = "session_steering_result")]
     SteeringResult {
@@ -46,7 +49,10 @@ pub enum RuntimeControlRecord {
         message: Option<String>,
     },
     /// Continuing without a working directory recovered the provider's own context directory.
-    #[serde(rename = "runtime_working_directory_resolved", rename_all = "camelCase")]
+    #[serde(
+        rename = "runtime_working_directory_resolved",
+        rename_all = "camelCase"
+    )]
     WorkingDirectoryResolved { cwd: String, thread_id: String },
     /// The provider process ended. Emitted by the adapter that owns the process; its absence
     /// means the invocation's own terminal outcome is the process outcome.
@@ -92,7 +98,10 @@ impl RuntimeControlRecord {
     pub fn is_durable_after_terminal(&self) -> bool {
         matches!(
             self,
-            Self::SteeringResult { .. } | Self::RequestResponse { .. } | Self::ProcessExit { .. }
+            Self::SteeringResult { .. }
+                | Self::SteeringQueued { .. }
+                | Self::RequestResponse { .. }
+                | Self::ProcessExit { .. }
         )
     }
 }
@@ -116,8 +125,9 @@ mod tests {
             json!({"kind":"runtime_process_exit","status":"completed","exitCode":0,"signal":null,"afterTurnCompletion":true,"evidence":"Exited"}),
         ];
         for payload in stored {
-            let record = RuntimeControlRecord::from_event(AgentRuntimeEventSource::Runtime, &payload)
-                .unwrap_or_else(|| panic!("{payload}"));
+            let record =
+                RuntimeControlRecord::from_event(AgentRuntimeEventSource::Runtime, &payload)
+                    .unwrap_or_else(|| panic!("{payload}"));
             let reencoded = record.into_draft().raw_payload;
             for (key, value) in payload.as_object().unwrap() {
                 if key == "target" {
@@ -138,13 +148,17 @@ mod tests {
 
     #[test]
     fn provider_evidence_and_unknown_kinds_are_not_control_records() {
-        let exit = json!({"kind":"runtime_process_exit","status":"completed","exitCode":0,"signal":null});
+        let exit =
+            json!({"kind":"runtime_process_exit","status":"completed","exitCode":0,"signal":null});
         assert!(RuntimeControlRecord::from_event(AgentRuntimeEventSource::Stdout, &exit).is_none());
         for payload in [
             json!({"kind":"runtime_transport","transport":"native"}),
             json!({"type":"item.completed","item":{"id":"1"}}),
         ] {
-            assert!(RuntimeControlRecord::from_event(AgentRuntimeEventSource::Runtime, &payload).is_none());
+            assert!(
+                RuntimeControlRecord::from_event(AgentRuntimeEventSource::Runtime, &payload)
+                    .is_none()
+            );
         }
     }
 }
