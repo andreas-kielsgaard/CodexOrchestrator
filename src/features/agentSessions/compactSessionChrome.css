@@ -317,3 +317,6 @@
   padding: 8px;
   border-radius: 8px;
 }
+.session-quote-menu button:hover {
+  background: var(--surface-hover);
+}
