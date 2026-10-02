@@ -90,7 +90,7 @@ describe('conversation state', () => {
       writes.mockClear();
       for (let i = 1; i <= 8; i++) act(() => result.current.setDraft('x'.repeat(i)));
       expect(writes).not.toHaveBeenCalled();
-      act(() => vi.advanceTimersByTime(180));
+      act(() => vi.advanceTimersByTime(500));
       expect(writes).toHaveBeenCalledTimes(1);
       act(() => result.current.setDraft('Final unsaved edit'));
       unmount();
@@ -464,6 +464,9 @@ function useConversationHost(
   });
   return {
     ...conversation,
+    get draft() {
+      return conversation.draftSource!.getSnapshot();
+    },
     startNewSession: () => {
       setSelected(null);
       setDraftId(crypto.randomUUID());

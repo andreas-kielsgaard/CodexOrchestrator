@@ -16,6 +16,7 @@ pub(crate) struct AgentSessionHistory {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AgentInvocationHistory {
+    pub(crate) last_event_sequence: Option<u64>,
     pub(crate) invocation: AgentInvocation,
     /// The application/process launch acknowledgement, if durably recorded. This is not
     /// inferred from invocation lifecycle fields or provider events.
@@ -59,6 +60,7 @@ pub(crate) struct ImportedTurnProvenance {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AgentSessionSummary {
+    pub(crate) latest_completed_id: Option<String>,
     pub(crate) completion_state: Option<String>,
     pub(crate) pending_request_count: usize,
     pub(crate) session: AgentSession,
@@ -420,6 +422,14 @@ pub(crate) trait AgentSessionRepository: Send + Sync {
         &self,
         session_id: &AgentSessionId,
     ) -> Result<Option<AgentSessionHistory>, RepositoryError>;
+
+    /// Display snapshot omits redundant provider streaming/ambient telemetry, not durable evidence.
+    fn load_session_display_history(
+        &self,
+        session_id: &AgentSessionId,
+    ) -> Result<Option<AgentSessionHistory>, RepositoryError> {
+        self.load_session_history(session_id)
+    }
 
     /// Lists consistently read session summaries using the repository's snapshot boundary.
     fn list_session_summaries(

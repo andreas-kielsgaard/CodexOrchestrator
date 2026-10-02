@@ -144,6 +144,20 @@ pub(crate) async fn reorder_session_navigation(
         .map_err(|error| error.to_string())?
 }
 #[tauri::command]
+pub(crate) async fn mark_agent_session_attention(
+    app: tauri::AppHandle,
+    state: State<'_, SessionNavigationTauriState>,
+    session_id: AgentSessionId,
+    unread: bool,
+) -> Result<(), String> {
+    let application = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || application.mark_attention(session_id, unread))
+        .await
+        .map_err(|e| e.to_string())??;
+    let _ = app.emit("agent-session-navigation-changed", ());
+    Ok(())
+}
+#[tauri::command]
 pub(crate) async fn start_direct_user_agent_session(
     state: State<'_, SessionNavigationTauriState>,
     input: StartSessionRequest,

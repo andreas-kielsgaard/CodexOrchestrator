@@ -317,3 +317,68 @@
   padding: 8px;
   border-radius: 8px;
 }
+.composer-paste-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+.composer-paste-menu {
+  position: fixed;
+}
+.composer-add-group .composer-hover-group__trigger {
+  width: 34px;
+  padding: 0;
+  border-radius: 50%;
+}
+.composer-add-group .composer-hover-group__overlay {
+  min-width: 180px;
+}
+.skill-reference {
+  display: inline;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  font: inherit;
+  line-height: inherit;
+  color: #407ebd;
+  background: transparent;
+  cursor: pointer;
+}
+.skill-reference:hover {
+  background: #dceafa;
+}
+.skill-details-dialog {
+  max-width: 760px;
+  max-height: 85vh;
+  overflow: auto;
+}
+.skill-details-dialog header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.skill-details-dialog dd {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+.composer-skill-mirror {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  padding: 6px 7px;
+  font-size: 0.9rem;
+  white-space: pre-wrap;
+  overflow: hidden;
+  pointer-events: none;
+  line-height: normal;
+}
+.composer-input-row:has(.composer-attachment-group) .composer-skill-mirror {
+  padding-right: 85px;
+}
+.composer-skill-mirror button {
+  pointer-events: auto;
+}
+.agent-session-composer textarea.composer-skill-input {
+  color: transparent;
+  caret-color: var(--text-color, #18251f);
+}

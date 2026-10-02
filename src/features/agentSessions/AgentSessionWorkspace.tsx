@@ -1,4 +1,6 @@
 import { projectSessionHistory } from './sessionHistoryProjector';
+import { SkillReferenceProvider } from './SkillReferences';
+import { ToolDetailsContext } from './ToolDetailsContext';
 import type { ComposerTargetSource } from './composerTargetActions';
 import { Check, ClipboardCopy } from 'lucide-react';
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
@@ -163,115 +165,121 @@ export function AgentSessionWorkspace({
     </div>
   );
   return (
-    <section
-      className={`agent-session-workspace${
-        showHeader || identityHeader ? '' : ' agent-session-workspace--header-hidden'
-      }${contextualChrome.settings ? ' agent-session-workspace--with-settings' : ''}${presentation.compactHeader ? ' agent-session-workspace--compact' : ''}`}
-      aria-label={presentation.ariaLabel ?? title}
-    >
-      {identityHeader ? (
-        <header className="agent-session-identity-header">
-          <div className="agent-session-identity-header__title">
-            {identityHeader.agentIdentity && (
-              <AgentIdentityMarker identity={identityHeader.agentIdentity} />
-            )}
-            <h2>
-              {identityHeader.agentIdentity
-                ? `${identityHeader.agentIdentity.name}: ${identityHeader.title}`
-                : identityHeader.title}
-            </h2>
-          </div>
-          <div className="agent-session-identity-header__actions">
-            {contextualChrome.actions}
-            {presentation.showCopyAction !== false && copyAction}
-            {activityStatus}
-          </div>
-        </header>
-      ) : showHeader ? (
-        <header className="agent-session-header">
-          <div>
-            {!presentation.compactHeader && <p className="eyebrow">Agent Session</p>}
-            <h2>{title}</h2>
-            {presentation.composer?.showWorkingDirectory &&
-              controller.details?.session.workingDirectory && (
-                <p
-                  className="session-working-directory"
-                  title={controller.details.session.workingDirectory}
-                >
-                  {controller.details.session.workingDirectory}
-                </p>
-              )}
-          </div>
-          <div className="agent-session-header__actions">
-            {contextualChrome.actions}
-            {presentation.showCopyAction !== false && copyAction}
-            {activityStatus}
-          </div>
-        </header>
-      ) : (
-        <div className="agent-session-utility-bar">
-          {contextualChrome.actions}
-          {presentation.showCopyAction !== false && copyAction}
-          {activityStatus}
-        </div>
-      )}
-      {contextualChrome.settings && (
-        <div className="agent-session-settings">{contextualChrome.settings}</div>
-      )}
-      {inspection ? (
-        <AgentSessionTurnInspector
-          sessionId={inspection.sessionId}
-          invocationId={inspection.invocationId}
-          transcript={controller.transcript}
-          loading={controller.loading}
-          error={controller.error}
-          agentIdentity={identityHeader?.agentIdentity}
-          ariaLabel="Supporting Agent Session passage"
-          transcriptRange={transcriptRange}
-        />
-      ) : (
-        <ConversationViewport
-          agentIdentity={identityHeader?.agentIdentity}
-          segments={segments}
-          loading={controller.loading}
-          expandedProcessing={controller.expandedProcessing}
-          onToggleProcessing={controller.toggleProcessing}
-          error={controller.error}
-          onClearError={controller.clearError}
-          emptyState={presentation.emptyState}
-          composerPresentation={
-            controller.details && !controller.details.session.workingDirectory
-              ? { ...presentation.composer, showWorkingDirectory: true }
-              : presentation.composer
-          }
-          composerTarget={{
-            toolbar: composerToolbar,
-            deviceActivityPanel,
-            queuePanel,
-            composerDialog,
-            quickFeatures: controller.quickFeatures,
-            targetSource,
-            steeringAvailable: controller.steeringAvailable,
-            needsWorkingDirectory: Boolean(
-              controller.details && !controller.details.session.workingDirectory,
-            ),
-            interactions: controller.details?.interactions,
-            respondToRequest: controller.respondToRequest,
-            sessionId: controller.selectedSessionId,
-            draft: controller.draft,
-            workingDirectory: controller.workingDirectory,
-            sending: controller.sending,
-            sendUnavailableReason: controller.submissionUnavailableReason ?? sendUnavailableReason,
-            active,
-            canceling: controller.canceling,
-            setDraft: controller.setDraft,
-            setWorkingDirectory: controller.setWorkingDirectory,
-            send: controller.send,
-            steer: controller.steer,
-            cancel: controller.cancel,
-          }}
-        />
-      )}
-    </section>
+    <ToolDetailsContext.Provider value={controller.loadEventDetails}>
+      <SkillReferenceProvider source={controller.quickFeatures}>
+        <section
+          className={`agent-session-workspace${
+            showHeader || identityHeader ? '' : ' agent-session-workspace--header-hidden'
+          }${contextualChrome.settings ? ' agent-session-workspace--with-settings' : ''}${presentation.compactHeader ? ' agent-session-workspace--compact' : ''}`}
+          aria-label={presentation.ariaLabel ?? title}
+        >
+          {identityHeader ? (
+            <header className="agent-session-identity-header">
+              <div className="agent-session-identity-header__title">
+                {identityHeader.agentIdentity && (
+                  <AgentIdentityMarker identity={identityHeader.agentIdentity} />
+                )}
+                <h2>
+                  {identityHeader.agentIdentity
+                    ? `${identityHeader.agentIdentity.name}: ${identityHeader.title}`
+                    : identityHeader.title}
+                </h2>
+              </div>
+              <div className="agent-session-identity-header__actions">
+                {contextualChrome.actions}
+                {presentation.showCopyAction !== false && copyAction}
+                {activityStatus}
+              </div>
+            </header>
+          ) : showHeader ? (
+            <header className="agent-session-header">
+              <div>
+                {!presentation.compactHeader && <p className="eyebrow">Agent Session</p>}
+                <h2>{title}</h2>
+                {presentation.composer?.showWorkingDirectory &&
+                  controller.details?.session.workingDirectory && (
+                    <p
+                      className="session-working-directory"
+                      title={controller.details.session.workingDirectory}
+                    >
+                      {controller.details.session.workingDirectory}
+                    </p>
+                  )}
+              </div>
+              <div className="agent-session-header__actions">
+                {contextualChrome.actions}
+                {presentation.showCopyAction !== false && copyAction}
+                {activityStatus}
+              </div>
+            </header>
+          ) : (
+            <div className="agent-session-utility-bar">
+              {contextualChrome.actions}
+              {presentation.showCopyAction !== false && copyAction}
+              {activityStatus}
+            </div>
+          )}
+          {contextualChrome.settings && (
+            <div className="agent-session-settings">{contextualChrome.settings}</div>
+          )}
+          {inspection ? (
+            <AgentSessionTurnInspector
+              sessionId={inspection.sessionId}
+              invocationId={inspection.invocationId}
+              transcript={controller.transcript}
+              loading={controller.loading}
+              error={controller.error}
+              agentIdentity={identityHeader?.agentIdentity}
+              ariaLabel="Supporting Agent Session passage"
+              transcriptRange={transcriptRange}
+            />
+          ) : (
+            <ConversationViewport
+              agentIdentity={identityHeader?.agentIdentity}
+              segments={segments}
+              loading={controller.loading}
+              expandedProcessing={controller.expandedProcessing}
+              onToggleProcessing={controller.toggleProcessing}
+              error={controller.error}
+              onClearError={controller.clearError}
+              emptyState={presentation.emptyState}
+              composerPresentation={
+                controller.details && !controller.details.session.workingDirectory
+                  ? { ...presentation.composer, showWorkingDirectory: true }
+                  : presentation.composer
+              }
+              composerTarget={{
+                toolbar: composerToolbar,
+                deviceActivityPanel,
+                queuePanel,
+                composerDialog,
+                quickFeatures: controller.quickFeatures,
+                targetSource,
+                steeringAvailable: controller.steeringAvailable,
+                needsWorkingDirectory: Boolean(
+                  controller.details && !controller.details.session.workingDirectory,
+                ),
+                interactions: controller.details?.interactions,
+                respondToRequest: controller.respondToRequest,
+                sessionId: controller.selectedSessionId,
+                draft: controller.draft,
+                draftSource: controller.draftSource,
+                workingDirectory: controller.workingDirectory,
+                sending: controller.sending,
+                sendUnavailableReason:
+                  controller.submissionUnavailableReason ?? sendUnavailableReason,
+                active,
+                canceling: controller.canceling,
+                setDraft: controller.setDraft,
+                setWorkingDirectory: controller.setWorkingDirectory,
+                send: controller.send,
+                steer: controller.steer,
+                cancel: controller.cancel,
+              }}
+            />
+          )}
+        </section>
+      </SkillReferenceProvider>
+    </ToolDetailsContext.Provider>
   );
 }

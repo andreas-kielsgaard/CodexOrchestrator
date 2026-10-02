@@ -446,6 +446,7 @@ impl AgentSessionRepository for FakeRepository {
             .filter(|invocation| &invocation.session_id == session_id)
             .cloned()
             .map(|invocation| AgentInvocationHistory {
+                last_event_sequence: None,
                 launch_accepted_at: state.launch_acceptances.get(&invocation.id).copied(),
                 events: state
                     .events
@@ -508,12 +509,14 @@ impl AgentSessionRepository for FakeRepository {
                         .then_with(|| right.id.cmp(&left.id))
                 });
                 AgentSessionSummary {
+                    latest_completed_id: None,
                     completion_state: None,
                     pending_request_count: super::interactions::pending_request_count(
                         &invocations
                             .iter()
                             .map(|invocation| {
                                 crate::agent_sessions::ports::AgentInvocationHistory {
+                                    last_event_sequence: None,
                                     invocation: (*invocation).clone(),
                                     launch_accepted_at: None,
                                     events: state

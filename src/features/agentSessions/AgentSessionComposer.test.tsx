@@ -344,7 +344,7 @@ it('attaches an image without text, previews it, and sends portable content', as
   Object.defineProperty(image, 'arrayBuffer', {
     value: async () => new Uint8Array([1, 2, 3]).buffer,
   });
-  await userEvent.setup().upload(screen.getByLabelText('Image files'), image);
+  await userEvent.setup().upload(screen.getByLabelText('Attachment files'), image);
   expect(await screen.findByRole('img', { name: 'diagram.png' })).toBeVisible();
   await userEvent.setup().click(screen.getByRole('button', { name: 'Send' }));
   expect(send).toHaveBeenCalledTimes(1);
@@ -362,14 +362,14 @@ it('shows one compact attachment preview and reveals the collection and removal 
     Object.defineProperty(file, 'arrayBuffer', { value: async () => bytes.buffer });
     return file;
   });
-  await user.upload(screen.getByLabelText('Image files'), files);
-  await screen.findByRole('img', { name: 'first.png' });
-  const preview = screen.getByRole('button', { name: 'Attached images' });
+  await user.upload(screen.getByLabelText('Attachment files'), files);
+  await screen.findByRole('img', { name: 'second.png' });
+  const preview = screen.getByRole('button', { name: 'Attachments' });
   expect(preview).toHaveTextContent('+1');
-  expect(screen.queryByRole('img', { name: 'second.png' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('img', { name: 'first.png' })).not.toBeInTheDocument();
   expect(preview.closest('.composer-input-row')).toBeInTheDocument();
   await user.hover(preview);
-  expect(screen.getByRole('img', { name: 'second.png' })).toBeVisible();
+  expect(screen.getByRole('img', { name: 'first.png' })).toBeVisible();
   await user.click(screen.getByRole('button', { name: 'Remove second.png' }));
   expect(preview).not.toHaveTextContent('+1');
   expect(screen.queryByRole('img', { name: 'second.png' })).not.toBeInTheDocument();
@@ -382,7 +382,8 @@ it('keeps active-turn cancellation reachable by keyboard when the Queue button i
   expect(screen.getByRole('button', { name: 'Queue' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
   await user.tab(); // Message
-  await user.tab(); // Attach images
+  await user.tab(); // Add attachment
+  await user.tab(); // Attach file
   await user.tab(); // Turn actions, even with an empty draft
   expect(screen.getByRole('button', { name: 'Cancel' })).toBeVisible();
   await user.tab();

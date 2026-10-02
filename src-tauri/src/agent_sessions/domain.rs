@@ -347,17 +347,16 @@ pub(crate) fn validate_invocation(invocation: &AgentInvocation) -> Result<(), Co
 
     if invocation.submitted_text.trim().is_empty() && invocation.attachments.is_empty() {
         return Err(ContractViolation::InvalidInvocationRecord {
-            reason: "an invocation requires text or an image",
+            reason: "an invocation requires text or an attachment",
         });
     }
     if invocation.attachments.len() > 4
         || invocation.attachments.iter().any(|image| {
             image.id.len() != 64
                 || !image.id.bytes().all(|value| value.is_ascii_hexdigit())
-                || !matches!(
-                    image.media_type.as_str(),
-                    "image/png" | "image/jpeg" | "image/gif" | "image/webp"
-                )
+                || image.media_type.is_empty()
+                || image.media_type.len() > 128
+                || image.name.trim().is_empty()
                 || image.data_base64.len() > 14 * 1024 * 1024
         })
     {

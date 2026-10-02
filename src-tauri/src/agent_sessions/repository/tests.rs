@@ -14,6 +14,152 @@ use std::{fs, path::PathBuf};
 use uuid::Uuid;
 
 #[test]
+fn display_history_omits_wire_fragments_but_preserves_raw_history_and_sequence_cursor() {
+    let repository = memory_repository();
+    let session = repository
+        .create_session(test_session("display", at(0)))
+        .unwrap();
+    let turn = repository
+        .create_pending_invocation(test_invocation("turn", &session.id, at(1)))
+        .unwrap();
+    repository
+        .append_event(unknown_event(
+            "control",
+            &turn.id,
+            0,
+            json!({"kind":"session_steering_queued","inputId":"s","text":"Keep this"}),
+            at(2),
+        ))
+        .unwrap();
+    repository.append_event(unknown_event("delta",&turn.id,1,json!({"method":"item/commandExecution/outputDelta","params":{"delta":"wire fragment"}}),at(3))).unwrap();
+    repository
+        .append_event(unknown_event(
+            "message",
+            &turn.id,
+            2,
+            json!({"kind":"agent_message","text":"Snapshot"}),
+            at(4),
+        ))
+        .unwrap();
+    let display = repository
+        .load_session_display_history(&session.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(display.invocations[0].events.len(), 2);
+    assert_eq!(display.invocations[0].last_event_sequence, Some(2));
+    assert_eq!(
+        repository
+            .load_session_history(&session.id)
+            .unwrap()
+            .unwrap()
+            .invocations[0]
+            .events
+            .len(),
+        3
+    );
+}
+
+#[test]
+fn large_action_payloads_are_deferred_and_exact_details_remain_session_scoped() {
+    let repository = memory_repository();
+    let session = repository
+        .create_session(test_session("details", at(0)))
+        .unwrap();
+    let turn = repository
+        .create_pending_invocation(test_invocation("turn", &session.id, at(1)))
+        .unwrap();
+    let output = "full-output".repeat(2000);
+    let mut event = unknown_event(
+        "large",
+        &turn.id,
+        0,
+        json!({"item":{"command":"test command","aggregated_output":output}}),
+        at(2),
+    );
+    event.normalized = Some(NormalizedRuntimeEvent {
+        kind: NormalizedRuntimeEventKind::ToolActivity,
+        text: Some("command execution".into()),
+        external_context_id: None,
+        usage: None,
+        details: None,
+        tool_activity: None,
+    });
+    repository.append_event(event.clone()).unwrap();
+    let preview = repository
+        .load_session_display_history(&session.id)
+        .unwrap()
+        .unwrap();
+    let raw = &preview.invocations[0].events[0].raw_payload;
+    assert_eq!(raw["_orchidDeferredEventId"], "large");
+    assert!(raw["item"]["aggregated_output"].as_str().unwrap().len() < 4096);
+    assert_eq!(
+        repository
+            .read_event_details(&session.id, "large")
+            .unwrap()
+            .unwrap()
+            .raw_payload,
+        event.raw_payload
+    );
+    assert!(repository
+        .read_event_details(&AgentSessionId::new("other").unwrap(), "large")
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn completion_attention_ignores_intermediary_output_and_acknowledges_finished_turns() {
+    let repository = memory_repository();
+    let session = repository
+        .create_session(test_session("dot", at(0)))
+        .unwrap();
+    let turn = repository
+        .create_pending_invocation(test_invocation("first", &session.id, at(1)))
+        .unwrap();
+    repository
+        .mark_invocation_running(&turn.id, at(1), options(), at(1))
+        .unwrap();
+    let state = || {
+        repository
+            .list_session_summaries(ListAgentSessionsQuery::default())
+            .unwrap()[0]
+            .completion_state
+            .clone()
+    };
+    repository
+        .append_event(unknown_event(
+            "comment",
+            &turn.id,
+            0,
+            json!({"kind":"agent_message","text":"Still working"}),
+            at(2),
+        ))
+        .unwrap();
+    assert_eq!(state(), None);
+    repository
+        .finish_invocation(
+            &turn.id,
+            InvocationCompletion {
+                status: AgentInvocationTerminalStatus::Completed,
+                completed_at: at(3),
+                exit_code: None,
+                signal: None,
+                runtime_error: None,
+            },
+            at(3),
+        )
+        .unwrap();
+    assert_eq!(state().as_deref(), Some("done"));
+    repository
+        .create_pending_invocation(test_invocation("second", &session.id, at(4)))
+        .unwrap();
+    assert_eq!(state().as_deref(), Some("continued"));
+    repository.mark_attention(&session.id, false).unwrap();
+    assert_eq!(state(), None);
+    repository.mark_attention(&session.id, true).unwrap();
+    assert_eq!(state().as_deref(), Some("continued"));
+}
+
+#[test]
 fn pending_request_summary_matches_durable_history_and_clears_at_completion() {
     let repository = memory_repository();
     let session = repository

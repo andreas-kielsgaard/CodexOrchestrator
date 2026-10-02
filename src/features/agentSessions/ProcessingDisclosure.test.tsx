@@ -2,6 +2,61 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { ProcessingDisclosure } from './ProcessingDisclosure';
 import { projectAgentSessionTranscript } from './transcriptProjector';
 import { runtimeEvent, sessionDetails } from './testFixtures';
+import { ToolDetailsContext } from './ToolDetailsContext';
+
+it('loads full durable action data only when the action is expanded', async () => {
+  const event = runtimeEvent(1, 'tool_activity', 'command');
+  event.rawPayload = {
+    _orchidDeferredEventId: event.id,
+    item: {
+      id: 'command-1',
+      type: 'command_execution',
+      command: 'npm test',
+      aggregatedOutput: 'preview',
+    },
+  };
+  event.normalized!.toolActivity = {
+    kind: 'command',
+    phase: 'completed',
+    itemId: 'command-1',
+    server: null,
+    tool: null,
+    status: 'completed',
+    resultClassification: 'succeeded',
+  };
+  const full = {
+    ...event,
+    rawPayload: {
+      item: {
+        id: 'command-1',
+        type: 'command_execution',
+        command: 'npm test',
+        aggregatedOutput: 'complete durable command output',
+      },
+    },
+  };
+  const load = vi.fn(async () => full);
+  const activity = projectAgentSessionTranscript(sessionDetails('completed', [event]))
+    .invocations[0].processing;
+  const { container } = render(
+    <ToolDetailsContext.Provider value={load}>
+      <ProcessingDisclosure
+        invocationId="deferred"
+        activity={activity}
+        expanded
+        onToggle={() => {}}
+        running={false}
+      />
+    </ToolDetailsContext.Provider>,
+  );
+  expect(load).not.toHaveBeenCalled();
+  fireEvent.click(container.querySelector('.turn-operation-group summary')!);
+  const detail = container.querySelector('.turn-tool-event details') as HTMLDetailsElement;
+  detail.open = true;
+  fireEvent(detail, new Event('toggle'));
+  expect(await screen.findByText('complete durable command output')).toBeVisible();
+  expect(load).toHaveBeenCalledWith(event.id);
+});
 
 it('groups completed actions around messages, keeps live command details visible, and collapses on completion', () => {
   vi.useFakeTimers();
@@ -80,4 +135,34 @@ it('groups completed actions around messages, keeps live command details visible
   } finally {
     vi.useRealTimers();
   }
+});
+
+it('places a counted failure indicator beside the action count', () => {
+  const events = [1, 2, 3].map((sequence) => {
+    const event = runtimeEvent(sequence, 'tool_activity', 'command');
+    event.normalized!.toolActivity = {
+      kind: 'command',
+      phase: 'completed',
+      itemId: `tool-${sequence}`,
+      server: null,
+      tool: null,
+      status: sequence < 3 ? 'failed' : 'completed',
+      resultClassification: sequence < 3 ? 'failed' : 'succeeded',
+    };
+    return event;
+  });
+  const activity = projectAgentSessionTranscript(sessionDetails('completed', events)).invocations[0]
+    .processing;
+  const { container } = render(
+    <ProcessingDisclosure
+      invocationId="failed-turn"
+      activity={activity}
+      expanded
+      onToggle={() => {}}
+      running={false}
+    />,
+  );
+  const summary = container.querySelector('.turn-operation-group summary')!;
+  expect(summary).toHaveTextContent('3 actions2 Failed');
+  expect(summary.children[1]).toHaveTextContent('2 Failed');
 });

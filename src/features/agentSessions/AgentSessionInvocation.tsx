@@ -1,4 +1,6 @@
 import { ImportedTurnContent } from './ImportedTurnContent';
+import { isImageAttachment } from './composerAttachments';
+import { SkillReferenceText } from './SkillReferences';
 import { SessionInteractions } from './SessionInteractions';
 import { AgentMarkdown } from './AgentMarkdown';
 import { InvocationActivityTimeline } from './InvocationActivityTimeline';
@@ -59,16 +61,28 @@ export function AgentSessionInvocation({
                     : 'You'}
                 </span>
               </header>
-              <p>{invocation.submittedText}</p>
+              <p>
+                <SkillReferenceText text={invocation.submittedText} />
+              </p>
               {invocation.attachments.length > 0 && (
                 <div className="transcript-image-attachments">
-                  {invocation.attachments.map((attachment) => (
-                    <img
-                      key={attachment.id}
-                      src={`data:${attachment.mediaType};base64,${attachment.dataBase64}`}
-                      alt={attachment.name}
-                    />
-                  ))}
+                  {invocation.attachments.map((attachment) =>
+                    isImageAttachment(attachment) ? (
+                      <img
+                        key={attachment.id}
+                        src={`data:${attachment.mediaType};base64,${attachment.dataBase64}`}
+                        alt={attachment.name}
+                      />
+                    ) : (
+                      <a
+                        key={attachment.id}
+                        download={attachment.name}
+                        href={`data:${attachment.mediaType};base64,${attachment.dataBase64}`}
+                      >
+                        {attachment.name}
+                      </a>
+                    ),
+                  )}
                 </div>
               )}
               {invocation.preparing && (

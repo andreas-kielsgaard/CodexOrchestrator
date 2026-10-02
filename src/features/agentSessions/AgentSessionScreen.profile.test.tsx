@@ -23,6 +23,7 @@ it('keeps session utilities in the conversation menu and configuration in a moda
   ).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Copy entire session' })).not.toBeInTheDocument();
   fireEvent.contextMenu(screen.getByRole('treeitem', { name: 'Durable session' }));
+  await user.hover(screen.getByRole('menuitem', { name: 'Copy ›' }));
   await user.click(screen.getByRole('menuitem', { name: 'Copy entire session' }));
   await waitFor(() => expect(copy).toHaveBeenCalledWith(expect.stringContaining('Do the work')));
   await openConfiguration(user);

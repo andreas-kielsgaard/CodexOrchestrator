@@ -52,6 +52,8 @@ export interface NavigationWorktree {
   readonly dirty: boolean | null;
 }
 export interface SessionNavigationClient {
+  createWorktree?(repositoryId: string, branchRef: string): Promise<unknown>;
+  markAttention?(sessionId: string, unread: boolean): Promise<void>;
   previewGitAction?(input: SessionGitActionInput): Promise<SessionGitPreview>;
   executeGitAction?(input: SessionGitActionInput, expected: SessionGitPreview): Promise<string>;
   inspectWorktree?(

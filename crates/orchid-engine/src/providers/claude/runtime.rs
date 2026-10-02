@@ -77,6 +77,14 @@ impl Invocation {
         attachments: &[crate::contracts::RuntimeImageAttachment],
     ) -> Result<(), RuntimePortError> {
         self.unanswered.fetch_add(1, Ordering::AcqRel);
+        let text = [
+            text,
+            &crate::providers::codex::file_attachment_context(attachments)?,
+        ]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
         let content = if attachments.is_empty() {
             json!(text)
         } else {
@@ -84,14 +92,21 @@ impl Invocation {
             if !text.is_empty() {
                 content.push(json!({"type": "text", "text": text}));
             }
-            content.extend(attachments.iter().map(|image| json!({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": image.media_type,
-                    "data": image.data_base64,
-                }
-            })));
+            content.extend(
+                attachments
+                    .iter()
+                    .filter(|a| crate::providers::codex::attachment_is_image(a))
+                    .map(|image| {
+                        json!({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": image.media_type,
+                                "data": image.data_base64,
+                            }
+                        })
+                    }),
+            );
             json!(content)
         };
         let written = self.connection.write(json!({
@@ -425,8 +440,10 @@ impl AgentRuntime for ClaudeRuntime {
         *invocation
             .prompt
             .lock()
-            .map_err(|_| unavailable("Prompt lock poisoned"))? =
-            Some((render_invocation_content(&request.content)?, request.attachments));
+            .map_err(|_| unavailable("Prompt lock poisoned"))? = Some((
+            render_invocation_content(&request.content)?,
+            request.attachments,
+        ));
         Ok(ready)
     }
 

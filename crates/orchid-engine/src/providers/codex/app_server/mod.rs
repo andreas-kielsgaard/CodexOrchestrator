@@ -166,7 +166,6 @@ impl Invocation {
         }
         Ok(())
     }
-
 }
 
 #[derive(Default)]
@@ -230,8 +229,12 @@ impl ProcessEventSink for Coordinator {
         invocation.connection.disconnected();
         let (classification, exit) = match &outcome {
             ProcessTerminalOutcome::Exited(exit) => (ProcessExitStatus::Completed, Some(exit)),
-            ProcessTerminalOutcome::Failed { exit, .. } => (ProcessExitStatus::Failed, exit.as_ref()),
-            ProcessTerminalOutcome::Canceled { exit } => (ProcessExitStatus::Canceled, exit.as_ref()),
+            ProcessTerminalOutcome::Failed { exit, .. } => {
+                (ProcessExitStatus::Failed, exit.as_ref())
+            }
+            ProcessTerminalOutcome::Canceled { exit } => {
+                (ProcessExitStatus::Canceled, exit.as_ref())
+            }
             ProcessTerminalOutcome::Interrupted { exit } => {
                 (ProcessExitStatus::Interrupted, exit.as_ref())
             }
@@ -572,7 +575,14 @@ fn initialize_turn(
             },
         ));
     }
-    let rendered = render_invocation_content(&request.content)?;
+    let rendered = [
+        render_invocation_content(&request.content)?,
+        super::file_attachment_context(&request.attachments)?,
+    ]
+    .into_iter()
+    .filter(|s| !s.is_empty())
+    .collect::<Vec<_>>()
+    .join("\n\n");
     let mut input = Vec::new();
     if !rendered.is_empty() {
         input.push(json!({"type":"text","text":rendered}));
@@ -629,7 +639,8 @@ fn native_skill_items(
                 skill.enabled
                     && skill.name == input.name
                     && (skill.path == input.path
-                        || canonical(&input.path).is_some_and(|path| canonical(&skill.path) == Some(path)))
+                        || canonical(&input.path)
+                            .is_some_and(|path| canonical(&skill.path) == Some(path)))
             });
             let skill = matches.next()?;
             matches.next().is_none().then(|| skill)
@@ -756,6 +767,11 @@ impl AgentRuntime for CodexAppServerRuntime {
         attachments: &[crate::contracts::RuntimeImageAttachment],
     ) -> Result<(), RuntimePortError> {
         let target = self.active_turn(id)?;
+        let text = [text, &super::file_attachment_context(attachments)?]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
         let mut input = Vec::new();
         if !text.is_empty() {
             input.push(json!({"type":"text","text":text}));

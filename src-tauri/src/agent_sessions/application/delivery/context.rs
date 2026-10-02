@@ -133,6 +133,7 @@ mod tests {
 
     fn history() -> AgentSessionHistory {
         let entry = |id: &str, text: &str, status, answer: Option<&str>| AgentInvocationHistory {
+            last_event_sequence: None,
             invocation: invocation(id, text, status),
             launch_accepted_at: None,
             events: answer

@@ -51,10 +51,13 @@ export const SessionSelector = memo(
     previous.organizing === next.organizing &&
     previous.onImport === next.onImport &&
     previous.onRename === next.onRename &&
+    previous.onMarkUnread === next.onMarkUnread &&
     previous.onCopySession === next.onCopySession &&
+    previous.onCopyMarkdown === next.onCopyMarkdown &&
     previous.onSetIdentity === next.onSetIdentity &&
     previous.onConfigure === next.onConfigure &&
     previous.onOpenWorkflow === next.onOpenWorkflow &&
     previous.onNewBranch === next.onNewBranch &&
+    previous.onCreateWorktree === next.onCreateWorktree &&
     previous.actionsClient === next.actionsClient,
 );

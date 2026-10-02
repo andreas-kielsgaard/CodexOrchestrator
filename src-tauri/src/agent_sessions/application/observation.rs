@@ -397,7 +397,9 @@ mod tests {
         events: Vec<AgentRuntimeEvent>,
     ) -> AgentInvocationHistory {
         AgentInvocationHistory {
-            invocation: AgentInvocation { attachments: vec![],
+            last_event_sequence: None,
+            invocation: AgentInvocation {
+                attachments: vec![],
                 id: crate::agent_sessions::domain::AgentInvocationId::new(id).unwrap(),
                 session_id: AgentSessionId::new("session").unwrap(),
                 submitted_text: "work".into(),

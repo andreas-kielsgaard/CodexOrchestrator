@@ -114,15 +114,20 @@ function protocolClient(socket) {
 
 function request(socket, payload) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(`Chrome DevTools Protocol ${payload.method} request timed out.`)),
-      60_000,
-    );
-    socket.addEventListener('message', (event) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      socket.removeEventListener('message', onMessage);
+      socket.removeEventListener('error', onError);
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Chrome DevTools Protocol ${payload.method} request timed out.`));
+    }, 60_000);
+    const onMessage = (event) => {
       try {
         const message = JSON.parse(String(event.data));
         if (message.id !== payload.id) return;
-        clearTimeout(timer);
+        cleanup();
         if (message.error) {
           reject(
             new Error(
@@ -133,18 +138,16 @@ function request(socket, payload) {
           resolve(message.result ?? {});
         }
       } catch (error) {
-        clearTimeout(timer);
+        cleanup();
         reject(error);
       }
-    });
-    socket.addEventListener(
-      'error',
-      () => {
-        clearTimeout(timer);
-        reject(new Error(`Chrome DevTools Protocol ${payload.method} socket failed.`));
-      },
-      { once: true },
-    );
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error(`Chrome DevTools Protocol ${payload.method} socket failed.`));
+    };
+    socket.addEventListener('message', onMessage);
+    socket.addEventListener('error', onError);
     socket.send(JSON.stringify(payload));
   });
 }

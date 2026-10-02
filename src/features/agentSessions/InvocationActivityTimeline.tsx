@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { ProcessingDisclosure } from './ProcessingDisclosure';
+import { SkillReferenceText } from './SkillReferences';
 import type { VisibleInvocation } from './AgentSessionTranscript';
 export function InvocationActivityTimeline({
   invocation,
@@ -90,7 +91,9 @@ export function InvocationActivityTimeline({
         <header>
           <span>You</span>
         </header>
-        <p>{interaction.content.text}</p>
+        <p>
+          <SkillReferenceText text={interaction.content.text!} />
+        </p>
       </article>,
     );
   });

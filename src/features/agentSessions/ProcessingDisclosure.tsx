@@ -1,8 +1,10 @@
 import type { TranscriptActivity } from './transcriptProjector';
-import { memo, useEffect, useState } from 'react';
+import { memo, useEffect, useState, useRef } from 'react';
 import type { AgentRuntimeUsageDto } from '../../application/agentSessions';
 import { AgentMarkdown } from './AgentMarkdown';
 import { presentToolActivity } from './toolActivityPresentation';
+import { useToolDetails } from './ToolDetailsContext';
+import { deferredEventIds, restoreDeferredPayload } from './deferredToolDetails';
 
 interface ProcessingDisclosureProps {
   startedAt?: string | null;
@@ -109,6 +111,7 @@ function OperationGroup({ items, safeOnly }: { items: TranscriptActivity[]; safe
   const [open, setOpen] = useState(false);
   let actions = 0;
   let files = 0;
+  const failedCount = items.filter((item) => presentToolActivity(item, safeOnly).failed).length;
   for (const item of items) {
     if (item.safeDetail?.kind === 'tool' && item.safeDetail.activity === 'file_change') {
       const detail = presentToolActivity(item, safeOnly).details.find(
@@ -136,13 +139,12 @@ function OperationGroup({ items, safeOnly }: { items: TranscriptActivity[]; safe
           }}
         >
           <span>{label}</span>
+          {failedCount > 0 && (
+            <span className="turn-tool-event__failure">{failedCount} Failed</span>
+          )}
           <span className="turn-operation-group__hint">
             {open ? 'Hide operations' : 'Show operations'}
           </span>
-          {items.some(
-            (item) =>
-              item.safeDetail?.kind === 'tool' && item.safeDetail.resultClassification === 'failed',
-          ) && <span className="turn-tool-event__failure">Failed</span>}
         </summary>
         {open && (
           <ol>
@@ -221,7 +223,54 @@ function ToolActivityItem({
   safeOnly: boolean;
   ongoing?: boolean;
 }) {
-  const presentation = presentToolActivity(item, safeOnly);
+  const load = useToolDetails();
+  const [fullEvents, setFullEvents] = useState(
+    new Map<string, import('../../application/agentSessions').AgentRuntimeEventDto>(),
+  );
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  const pending = useRef(false);
+  const hydrate = async () => {
+    const ids = deferredEventIds(item.rawPayload).filter((id) => !fullEvents.has(id));
+    if (safeOnly || !load || !ids.length || pending.current) return;
+    pending.current = true;
+    setLoadingDetails(true);
+    setDetailError(null);
+    try {
+      const events = await Promise.all(ids.map((id) => load(id)));
+      setFullEvents(
+        (current) => new Map([...current, ...events.map((event) => [event.id, event] as const)]),
+      );
+    } catch (cause) {
+      setDetailError(String(cause));
+    } finally {
+      pending.current = false;
+      setLoadingDetails(false);
+    }
+  };
+  useEffect(() => {
+    if (ongoing) void hydrate();
+  }, [ongoing, item.rawPayload, load]); // eslint-disable-line react-hooks/exhaustive-deps
+  const presentation = presentToolActivity(
+    fullEvents.size
+      ? {
+          ...item,
+          rawPayload: restoreDeferredPayload(item.rawPayload, fullEvents),
+          normalizedDetails: restoreDeferredPayload(item.normalizedDetails, fullEvents, true),
+        }
+      : item,
+    safeOnly,
+  );
+  const detailState = loadingDetails ? (
+    <p role="status">Loading full action details…</p>
+  ) : detailError ? (
+    <p role="alert">
+      {detailError}{' '}
+      <button type="button" onClick={() => void hydrate()}>
+        Retry
+      </button>
+    </p>
+  ) : null;
   const content = (
     <>
       <span className="turn-tool-event__icon" aria-hidden="true">
@@ -246,6 +295,7 @@ function ToolActivityItem({
       {ongoing ? (
         <>
           <div>{content}</div>
+          {detailState}
           <dl className="turn-tool-event__details">
             {presentation.details.map((detail) => (
               <div key={detail.label}>
@@ -256,8 +306,13 @@ function ToolActivityItem({
           </dl>
         </>
       ) : presentation.details.length ? (
-        <details>
+        <details
+          onToggle={(event) => {
+            if (event.currentTarget.open) void hydrate();
+          }}
+        >
           <summary>{content}</summary>
+          {detailState}
           <dl className="turn-tool-event__details">
             {presentation.details.map((detail) => (
               <div key={`${detail.label}:${detail.value}`}>

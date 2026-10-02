@@ -66,11 +66,13 @@ export function reduceAgentSessionHistory(
     if (entry.events.some((event) => event.id === update.event.id)) {
       return { kind: 'unchanged', details };
     }
-    const last = entry.events.at(-1);
-    if (!last && update.event.sequence > 1) return { kind: 'reconcile' };
-    if (last && update.event.sequence !== last.sequence + 1) return { kind: 'reconcile' };
+    const lastSequence = entry.lastEventSequence ?? entry.events.at(-1)?.sequence;
+    if (lastSequence === undefined && update.event.sequence > 1) return { kind: 'reconcile' };
+    if (lastSequence !== undefined && update.event.sequence !== lastSequence + 1)
+      return { kind: 'reconcile' };
     const next = replaceInvocation(details, update.invocationId, (current) => ({
       ...current,
+      lastEventSequence: update.event.sequence,
       invocation:
         current.invocation.status === 'pending' &&
         update.event.normalized?.kind === 'processing_started'

@@ -11,6 +11,9 @@ export interface ComposerQuickFeatures {
   readonly selection: PerMessageRuntimeSelection;
   readonly setSelection: (selection: PerMessageRuntimeSelection) => void;
   readonly compact?: () => Promise<void>;
+  readonly loadSkillDetails?: (
+    skillId: string,
+  ) => Promise<import('../../application/agentSessions/quickFeatures').AgentSkillDetails>;
 }
 
 export function sessionQuickActions(

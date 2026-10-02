@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 64;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 65;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 #[cfg(test)]
@@ -602,6 +602,7 @@ fn initialize_replacement_workflow_schema(connection: &Connection) -> Result<(),
 }
 
 fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
+    let attention_present: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_session_attention')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
     let execution_device_schema_is_present = connection
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('execution_devices','execution_device_activity_leases')",
@@ -720,7 +721,8 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         |row| row.get(0),
     ).map_err(|e|e.to_string())?;
     let transition_schema_present: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='agent_session_history_positions') AND EXISTS(SELECT 1 FROM pragma_table_info('agent_sessions') WHERE name='binding_owner_json')",[],|r|r.get(0)).map_err(|e|e.to_string())?;
-    Ok(transition_schema_present
+    Ok(attention_present
+        && transition_schema_present
         && execution_device_schema_is_present
         && preparation_schema_is_present
         && sister_worktree_schema_is_present

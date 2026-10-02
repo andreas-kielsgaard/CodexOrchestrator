@@ -1,4 +1,8 @@
 import { projectedQueueSource } from '../../application/agentSessions/sessionQueue';
+import { CreateSessionWorktreeDialog } from './CreateSessionWorktreeDialog';
+import type { SessionMarkdownMode } from './sessionMarkdownExport';
+import { exportSessionMarkdown } from './exportSessionMarkdown';
+import { fullActionDetails } from './deferredToolDetails';
 import type { AgentSessionImportClient } from '../../application/agentSessions/importContracts';
 import { capabilityProfileDeviceModels, withCapabilityProfileDeviceModels } from './routeModels';
 import { ImportCodexSessionDialog } from './ImportCodexSessionDialog';
@@ -164,6 +168,7 @@ export function StandaloneAgentSessionScreen({
   onOpenWorkflow,
 }: AgentSessionScreenProps) {
   const [importOpen, setImportOpen] = useState(false);
+  const [createWorktreeRepository, setCreateWorktreeRepository] = useState<string | null>(null);
   const [sessionDialog, setSessionDialog] = useState<{
     id: string;
     kind: 'identity' | 'configuration';
@@ -171,10 +176,23 @@ export function StandaloneAgentSessionScreen({
   const [identityError, setIdentityError] = useState<string | null>(null);
   const copyEntireSession = useCallback(
     async (sessionId: string) => {
-      const details = await client.loadSession({ sessionId });
+      const details = await (client.historySource?.ensure(sessionId) ??
+        client.loadSession({ sessionId }));
       await browserAgentSessionClipboard.writeText(
         formatAgentSessionContext(details, projectAgentSessionTranscript(details)),
       );
+    },
+    [client],
+  );
+  const copyMarkdown = useCallback(
+    async (sessionId: string, mode: SessionMarkdownMode) => {
+      const preview = await (client.historySource?.ensure(sessionId) ??
+        client.loadSession({ sessionId }));
+      const details =
+        mode === 'actionsPlus' && client.loadEventDetails
+          ? await fullActionDetails(preview, (id) => client.loadEventDetails!(sessionId, id))
+          : preview;
+      await browserAgentSessionClipboard.writeText(await exportSessionMarkdown(details, mode));
     },
     [client],
   );
@@ -310,13 +328,22 @@ export function StandaloneAgentSessionScreen({
 
   const model = useMemo(() => buildSessionNavigation(collection.data), [collection.data]);
   const [openRevision, setOpenRevision] = useState(0);
+  const markAttention = collection.markAttention;
   const onSelect = useCallback(
     (sessionId: string) => {
       select({ kind: 'session', sessionId });
       setOpenRevision((value) => value + 1);
+      void markAttention(sessionId, false);
     },
-    [select],
+    [select, markAttention],
   );
+  const selectedCompletionId = collection.summaries.find(
+    (s) => s.id === selectedSessionId,
+  )?.latestCompletedId;
+  const onMarkUnread = useCallback((id: string) => markAttention(id, true), [markAttention]);
+  useEffect(() => {
+    if (selectedSessionId) void markAttention(selectedSessionId, false);
+  }, [selectedSessionId, selectedCompletionId, markAttention]);
   const onNew = useCallback(
     (folderTarget: SessionFolderTarget | null) =>
       select({ kind: 'draft', draftId: crypto.randomUUID(), folderTarget }),
@@ -333,12 +360,14 @@ export function StandaloneAgentSessionScreen({
     },
     [select],
   );
+  const renameSession = collection.rename;
+  const reloadSession = session.reload;
   const onRename = useCallback(
     async (sessionId: string, title: string) => {
-      await collection.rename(sessionId, title);
-      if (sessionId === selectedSessionId) await session.reload();
+      await renameSession(sessionId, title);
+      if (sessionId === selectedSessionId) await reloadSession();
     },
-    [collection.rename, selectedSessionId, session.reload],
+    [renameSession, selectedSessionId, reloadSession],
   );
   const tree = useSessionNavigation(
     model,
@@ -695,6 +724,15 @@ export function StandaloneAgentSessionScreen({
     );
   return (
     <>
+      {createWorktreeRepository && branchSource && navigationClient && (
+        <CreateSessionWorktreeDialog
+          repositoryId={createWorktreeRepository}
+          source={branchSource}
+          client={navigationClient}
+          onClose={() => setCreateWorktreeRepository(null)}
+          onCreated={() => void collection.reload()}
+        />
+      )}
       {targetPicker && executionTargetClient && branchSource && (
         <SessionTargetDialog
           client={executionTargetClient}
@@ -805,8 +843,15 @@ export function StandaloneAgentSessionScreen({
               actionsClient={navigationClient}
               onMove={collection.move}
               onPin={collection.pin}
+              onCreateWorktree={
+                navigationClient?.createWorktree && branchSource
+                  ? setCreateWorktreeRepository
+                  : undefined
+              }
+              onMarkUnread={onMarkUnread}
               onRename={onRename}
               onCopySession={copyEntireSession}
+              onCopyMarkdown={copyMarkdown}
               onSetIdentity={
                 profileClient && client.updateIdentity
                   ? (id) => {

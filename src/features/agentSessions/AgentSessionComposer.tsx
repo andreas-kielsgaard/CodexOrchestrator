@@ -1,9 +1,10 @@
-import { Image, Plus, Send, Square, X } from 'lucide-react';
+import { FileText, Image, Plus, Send, Square, X } from 'lucide-react';
 import {
   useEffect,
   useId,
   useRef,
   useState,
+  useSyncExternalStore,
   type ChangeEvent,
   type DragEvent,
   type FormEvent,
@@ -19,12 +20,22 @@ import { ComposerQuickMenu } from './ComposerQuickMenu';
 import { ComposerHoverGroup } from './ComposerHoverGroup';
 import './compactSessionChrome.css';
 import { useComposerAutosize } from './useComposerAutosize';
+import type { ComposerDraftStore } from './composerDraftStore';
+import { SkillReferenceText, skillReferenceParts, useSkillReferences } from './SkillReferences';
+import {
+  isImageAttachment,
+  isLongPaste,
+  readBrowserAttachment,
+  readComposerClipboard,
+  textAttachment,
+} from './composerAttachments';
 
 export interface AgentSessionComposerProps {
   toolbar?: ReactNode;
   quickFeatures?: ComposerQuickFeatures;
   targetSource?: ComposerTargetSource;
   draft: string;
+  draftSource?: ComposerDraftStore;
   workingDirectory: string;
   isNewSession: boolean;
   sending: boolean;
@@ -45,10 +56,36 @@ export interface AgentSessionComposerProps {
 }
 
 export function AgentSessionComposer(props: AgentSessionComposerProps) {
+  const draft = useSyncExternalStore(
+    props.draftSource?.subscribe ?? (() => () => {}),
+    props.draftSource?.getSnapshot ?? (() => props.draft),
+    props.draftSource?.getSnapshot ?? (() => props.draft),
+  );
+  props = { ...props, draft };
+  const skills = useSkillReferences().skills;
+  const hasSkillReferences =
+    props.draft.includes('$') &&
+    skillReferenceParts(props.draft, skills).some((part) => part.skill);
+  const skillMirror = useRef<HTMLDivElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const [attachments, setAttachments] = useState<NewAgentImageAttachmentDto[]>([]);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [clipboardText, setClipboardText] = useState<string | null>(null);
+  const [pasteMenu, setPasteMenu] = useState<{ x: number; y: number } | null>(null);
+  const refreshClipboard = () =>
+    void readComposerClipboard()
+      .then((value) => setClipboardText(value.text))
+      .catch(() => setClipboardText(null));
+  const pasteAsFile = async () => {
+    try {
+      const { text } = await readComposerClipboard();
+      if (text) appendAttachments([await textAttachment(text)]);
+    } catch (cause) {
+      setAttachmentNotice(String(cause));
+    }
+    setPasteMenu(null);
+  };
   const menuId = useId();
   const inputDisabled = false;
   const menu = useComposerQuickMenu(
@@ -113,7 +150,7 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
         if (!combined.some((existing) => existing.dataBase64 === image.dataBase64))
           combined.push(image);
       }
-      if (current.length + next.length > 4) setAttachmentNotice('Up to 4 images per message.');
+      if (current.length + next.length > 4) setAttachmentNotice('Up to 4 attachments per message.');
       else setAttachmentNotice(null);
       return combined;
     });
@@ -123,7 +160,7 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
     const files = [...(event.target.files ?? [])];
     event.target.value = '';
     try {
-      appendAttachments(await Promise.all(files.map(readBrowserImage)));
+      appendAttachments(await Promise.all(files.map(readBrowserAttachment)));
     } catch (cause) {
       setAttachmentNotice(cause instanceof Error ? cause.message : String(cause));
     }
@@ -134,25 +171,53 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
     setDragging(false);
     if (!event.dataTransfer.files.length) return;
     try {
-      appendAttachments(await Promise.all([...event.dataTransfer.files].map(readBrowserImage)));
+      appendAttachments(
+        await Promise.all([...event.dataTransfer.files].map(readBrowserAttachment)),
+      );
     } catch (cause) {
       setAttachmentNotice(cause instanceof Error ? cause.message : String(cause));
     }
   };
   const handlePaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
     const itemFiles = [...event.clipboardData.items]
-      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .filter((item) => item.kind === 'file')
       .map((item) => item.getAsFile())
       .filter((file): file is File => file !== null);
-    const images = itemFiles.length
-      ? itemFiles
-      : [...event.clipboardData.files].filter((file) => file.type.startsWith('image/'));
-    if (!images.length) return;
+    const images = itemFiles.length ? itemFiles : [...event.clipboardData.files];
+    const text = event.clipboardData.getData?.('text/plain') ?? '';
+    if (!images.length && isLongPaste(text)) {
+      event.preventDefault();
+      try {
+        appendAttachments([await textAttachment(text)]);
+      } catch (cause) {
+        setAttachmentNotice(String(cause));
+      }
+      return;
+    }
+    if (!images.length) {
+      if (!text && '__TAURI_INTERNALS__' in window) {
+        event.preventDefault();
+        try {
+          const clipboard = await readComposerClipboard();
+          const { invoke } = await import('@tauri-apps/api/core');
+          appendAttachments(
+            await Promise.all(
+              clipboard.paths.map((path) =>
+                invoke<NewAgentImageAttachmentDto>('read_agent_session_image', { path }),
+              ),
+            ),
+          );
+        } catch (cause) {
+          setAttachmentNotice(String(cause));
+        }
+      }
+      return;
+    }
     event.preventDefault();
     try {
       const pasted = await Promise.all(
         images.map(async (file, index) => {
-          const attachment = await readBrowserImage(file);
+          const attachment = await readBrowserAttachment(file);
           return {
             ...attachment,
             name: file.name || `Pasted image ${index + 1}.${imageExtension(file.type)}`,
@@ -250,7 +315,17 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
       )}
       <div className="composer-input-row">
         <ComposerQuickMenu menu={menu} id={menuId} />
+        {hasSkillReferences && (
+          <div className="composer-skill-mirror" ref={skillMirror}>
+            <SkillReferenceText text={props.draft} />
+            {'\n'}
+          </div>
+        )}
         <textarea
+          className={hasSkillReferences ? 'composer-skill-input' : undefined}
+          onScroll={(event) => {
+            if (skillMirror.current) skillMirror.current.scrollTop = event.currentTarget.scrollTop;
+          }}
           ref={menu.textarea}
           aria-controls={menu.open ? menuId : undefined}
           aria-haspopup={props.quickFeatures || props.targetSource ? 'listbox' : undefined}
@@ -266,32 +341,64 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
           onSelect={(event) => menu.setCaret(event.currentTarget.selectionStart)}
           onKeyDown={handleKeyDown}
           onPaste={(event) => void handlePaste(event)}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            refreshClipboard();
+            setPasteMenu({ x: event.clientX, y: event.clientY });
+          }}
           placeholder={props.messagePlaceholder ?? 'What would you like the agent to do?'}
           aria-label={props.messageLabel ?? 'Message'}
           disabled={inputDisabled}
           rows={3}
         />
+        {pasteMenu && (
+          <div className="composer-paste-backdrop" onPointerDown={() => setPasteMenu(null)}>
+            <div
+              className="session-context-menu composer-paste-menu"
+              role="menu"
+              style={{ left: pasteMenu.x, top: pasteMenu.y }}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!clipboardText}
+                onClick={() => void pasteAsFile()}
+              >
+                Paste as text file
+              </button>
+            </div>
+          </div>
+        )}
         {attachments.length > 0 && (
           <ComposerHoverGroup
             className="composer-attachment-group"
-            label="Attached images"
+            label="Attachments"
             summary={
               <>
-                <img
-                  src={`data:${attachments[0].mediaType};base64,${attachments[0].dataBase64}`}
-                  alt={attachments[0].name}
-                />
+                {isImageAttachment(attachments[attachments.length - 1]) ? (
+                  <img
+                    src={`data:${attachments[attachments.length - 1].mediaType};base64,${attachments[attachments.length - 1].dataBase64}`}
+                    alt={attachments[attachments.length - 1].name}
+                  />
+                ) : (
+                  <FileText size={24} aria-label={attachments[attachments.length - 1].name} />
+                )}
                 {attachments.length > 1 && <span>+{attachments.length - 1}</span>}
               </>
             }
           >
-            <ul className="composer-attachments" aria-label="Attached images">
+            <ul className="composer-attachments" aria-label="Attachments">
               {attachments.map((attachment, index) => (
                 <li key={`${attachment.name}-${index}`}>
-                  <img
-                    src={`data:${attachment.mediaType};base64,${attachment.dataBase64}`}
-                    alt={attachment.name}
-                  />
+                  {isImageAttachment(attachment) ? (
+                    <img
+                      src={`data:${attachment.mediaType};base64,${attachment.dataBase64}`}
+                      alt={attachment.name}
+                    />
+                  ) : (
+                    <FileText size={24} aria-hidden="true" />
+                  )}
                   <span>{attachment.name}</span>
                   <button
                     type="button"
@@ -313,21 +420,25 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
           <input
             ref={picker}
             type="file"
-            aria-label="Image files"
-            accept="image/png,image/jpeg,image/gif,image/webp"
+            aria-label="Attachment files"
             multiple
             hidden
             onChange={(event) => void chooseImages(event)}
           />
-          <button
-            className="attach-image-button"
-            type="button"
-            aria-label="Attach images"
-            title="Attach images"
-            onClick={() => picker.current?.click()}
-          >
-            <Plus size={18} aria-hidden="true" />
-          </button>
+          <span onMouseEnter={refreshClipboard} onFocus={refreshClipboard}>
+            <ComposerHoverGroup
+              label="Add attachment"
+              summary={<Plus size={18} aria-hidden="true" />}
+              className="composer-add-group"
+            >
+              <button type="button" onClick={() => picker.current?.click()}>
+                Attach file
+              </button>
+              <button type="button" disabled={!clipboardText} onClick={() => void pasteAsFile()}>
+                Paste as text file
+              </button>
+            </ComposerHoverGroup>
+          </span>
           {props.toolbar}
         </div>
         <div className="composer-actions">
@@ -373,7 +484,7 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
       )}
       {dragging && (
         <div className="composer-drop-overlay">
-          <Image size={20} aria-hidden="true" /> Drop images to attach
+          <Image size={20} aria-hidden="true" /> Drop files to attach
         </div>
       )}
       {attachmentNotice && (
@@ -384,22 +495,6 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
       {props.sendUnavailableReason ? <p role="status">{props.sendUnavailableReason}</p> : null}
     </form>
   );
-}
-
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-const SUPPORTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
-
-async function readBrowserImage(file: File): Promise<NewAgentImageAttachmentDto> {
-  if (!SUPPORTED_IMAGE_TYPES.has(file.type))
-    throw new Error(`${file.name} is not a supported image.`);
-  if (file.size > MAX_IMAGE_BYTES) throw new Error(`${file.name} is larger than 10 MB.`);
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  let binary = '';
-  for (let offset = 0; offset < bytes.length; offset += 0x8000)
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
-  const id = [...digest].map((value) => value.toString(16).padStart(2, '0')).join('');
-  return { id, name: file.name, mediaType: file.type, dataBase64: btoa(binary) };
 }
 
 function imageExtension(mediaType: string): string {

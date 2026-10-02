@@ -9,7 +9,8 @@ use std::{error::Error, fmt, sync::Arc};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RuntimeInvocationRequest { pub session_id: AgentSessionId,
+pub struct RuntimeInvocationRequest {
+    pub session_id: AgentSessionId,
     pub invocation_id: AgentInvocationId,
     #[serde(default)]
     pub kind: RuntimeInvocationKind,
@@ -30,7 +31,7 @@ pub enum RuntimeInvocationKind {
     Compact,
 }
 
-/// Portable image bytes. The provider materializes these on the execution device.
+/// Portable attachment bytes. Images use native image input; other files materialize on the execution device.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeImageAttachment {

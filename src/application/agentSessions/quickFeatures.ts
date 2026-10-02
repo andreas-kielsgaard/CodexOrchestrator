@@ -16,9 +16,19 @@ export interface AgentSessionQuickFeatures {
     readonly description: string;
     /** Orchid's `$name` mention; the selected provider delivers the skill natively. */
     readonly invocationText: string;
+    readonly groupId?: string;
   }[];
   readonly defaults: { readonly model: string | null; readonly reasoningMode: string | null };
   readonly limitations: readonly string[];
+}
+
+export interface AgentSkillDetails {
+  readonly name: string;
+  readonly description: string;
+  readonly content: string;
+  readonly source: string;
+  readonly path: string;
+  readonly createdAt: string | null;
 }
 
 export interface LoadAgentSessionQuickFeaturesInput {

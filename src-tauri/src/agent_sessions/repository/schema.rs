@@ -1,6 +1,11 @@
 use rusqlite::Connection;
 
 pub(crate) const AGENT_SESSION_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS agent_session_attention (
+  session_id TEXT PRIMARY KEY REFERENCES agent_sessions(id) ON DELETE CASCADE,
+  seen_completed_id TEXT,
+  force_unread INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS agent_sessions (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,

@@ -21,6 +21,7 @@ import { useTranscriptFollow } from './useTranscriptFollow';
 import { pendingRequestLabel, pendingSessionRequests } from './sessionAttention';
 import type { AgentIdentity } from '../../application/agentSessions';
 import type { NewAgentImageAttachmentDto } from '../../application/agentSessions';
+import type { ComposerDraftStore } from './composerDraftStore';
 
 export interface ConversationViewportSegment {
   /** Caller-assigned causal position. Segments are rendered in this exact array order. */
@@ -47,6 +48,7 @@ export interface ConversationViewportComposerTarget {
   ): Promise<void>;
   sessionId: string | null;
   draft: string;
+  draftSource?: ComposerDraftStore;
   workingDirectory: string;
   sending: boolean;
   sendUnavailableReason?: string;
@@ -176,7 +178,9 @@ export function ConversationViewport({
           region={follow.containerRef}
           onAdd={(text) => {
             composerTarget.setDraft(
-              [composerTarget.draft.trimEnd(), text].filter(Boolean).join('\n\n'),
+              [(composerTarget.draftSource?.getSnapshot() ?? composerTarget.draft).trimEnd(), text]
+                .filter(Boolean)
+                .join('\n\n'),
             );
           }}
         />
@@ -188,6 +192,7 @@ export function ConversationViewport({
           quickFeatures={composerTarget.quickFeatures}
           targetSource={composerTarget.targetSource}
           draft={composerTarget.draft}
+          draftSource={composerTarget.draftSource}
           workingDirectory={composerTarget.workingDirectory}
           isNewSession={!composerTarget.sessionId}
           sending={composerTarget.sending}

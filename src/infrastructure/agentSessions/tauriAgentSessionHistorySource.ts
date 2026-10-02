@@ -6,6 +6,7 @@ import type {
   AgentSessionUpdateListener,
 } from '../../application/agentSessions';
 import { reduceAgentSessionHistory } from '../../application/agentSessions';
+import { isDisplayTelemetry } from './displayTelemetry';
 
 interface HistorySourceDependencies {
   load(sessionId: string): Promise<AgentSessionDetailsDto>;
@@ -15,6 +16,7 @@ interface HistorySourceDependencies {
 }
 
 interface HistoryEntry {
+  eventCursors: Map<string, number>;
   snapshot: AgentSessionHistorySnapshot;
   workingDetails: AgentSessionDetailsDto | null;
   listeners: Set<() => void>;
@@ -53,6 +55,7 @@ export function createAgentSessionHistorySource({
       return existing;
     }
     const created: HistoryEntry = {
+      eventCursors: new Map(),
       snapshot: initialSnapshot(),
       workingDetails: null,
       listeners: new Set(),
@@ -133,6 +136,12 @@ export function createAgentSessionHistorySource({
         };
         entry.loadPromise = undefined;
         entry.workingDetails = details;
+        entry.eventCursors = new Map(
+          details.invocations.flatMap((item) => {
+            const last = item.lastEventSequence ?? item.events.at(-1)?.sequence;
+            return last === undefined ? [] : [[item.invocation.id, last] as const];
+          }),
+        );
         entry.pendingChanges = [];
         entry.snapshot = {
           details,
@@ -179,13 +188,37 @@ export function createAgentSessionHistorySource({
     } else if ('invocationId' in update && entry.removedInvocationIds.has(update.invocationId))
       return;
     if (!entry.workingDetails) return;
-    const reduction = reduceAgentSessionHistory(entry.workingDetails, update);
+    let working = entry.workingDetails;
+    if (update.kind === 'event_persisted') {
+      const previous = entry.eventCursors.get(update.invocationId);
+      if (previous !== undefined && update.event.sequence <= previous) return;
+      if (
+        isDisplayTelemetry(update.event) &&
+        (previous === undefined
+          ? update.event.sequence <= 1
+          : update.event.sequence === previous + 1)
+      ) {
+        entry.eventCursors.set(update.invocationId, update.event.sequence);
+        return;
+      }
+      working = {
+        ...working,
+        invocations: working.invocations.map((item) =>
+          item.invocation.id === update.invocationId
+            ? { ...item, lastEventSequence: previous }
+            : item,
+        ),
+      };
+    }
+    const reduction = reduceAgentSessionHistory(working, update);
     if (reduction.kind === 'unchanged') return;
     if (reduction.kind === 'reconcile') {
       void refreshEntry(update.sessionId, entry).catch(() => undefined);
       return;
     }
     entry.workingDetails = reduction.details;
+    if (update.kind === 'event_persisted')
+      entry.eventCursors.set(update.invocationId, update.event.sequence);
     entry.pendingChanges.push(update);
     queuePublish(
       entry,

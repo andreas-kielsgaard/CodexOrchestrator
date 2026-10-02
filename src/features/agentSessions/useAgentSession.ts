@@ -1,4 +1,5 @@
 import { useSessionQueue } from './useSessionQueue';
+import { createComposerDraftStore, type ComposerDraftStore } from './composerDraftStore';
 import type { TargetSwitchRequestDto } from '../../application/agentSessions/sessionQueue';
 import type { AgentSessionQuickFeatures } from '../../application/agentSessions/quickFeatures';
 import { mergeSelectedQuickFeatures } from './selectedTargetQuickFeatures';
@@ -61,11 +62,15 @@ export interface AgentSessionWorkspaceController {
   submissionUnavailableReason?: string;
   retryPreparation?(): Promise<void>;
   quickFeatures?: ComposerQuickFeatures;
+  loadEventDetails?(
+    id: string,
+  ): Promise<import('../../application/agentSessions').AgentRuntimeEventDto>;
   quickCatalogue?: AgentSessionQuickFeatures;
   selectedSessionId: string | null;
   details: AgentSessionDetailsDto | null;
   transcript: ReturnType<typeof projectAgentSessionTranscript> | null;
   draft: string;
+  draftSource?: ComposerDraftStore;
   workingDirectory: string;
   loading: boolean;
   sending: boolean;
@@ -218,19 +223,21 @@ export function useAgentSession(
   const composerCacheKeyRef = useRef(composerCacheKey);
   const [fallbackDetails, setFallbackDetails] = useState<AgentSessionDetailsDto | null>(null);
   const details = historySource ? historySnapshot.details : fallbackDetails;
-  const [draft, setDraft] = useState(initialComposer.draft?.text ?? '');
+  const [draftSource] = useState(() => createComposerDraftStore(composerCacheKey));
+  const draft = draftSource.getSnapshot();
   const [hydratedComposerCacheKey, setHydratedComposerCacheKey] = useState<string | null>(
     initialComposer.key,
   );
   const draftRef = useRef(draft);
-  draftRef.current = draft;
+  const setDraft = useCallback(
+    (value: string) => {
+      draftRef.current = value;
+      draftSource.setText(value);
+    },
+    [draftSource],
+  );
   const [currentProfile, setCurrentProfile] = useState<PinnedAgentSessionProfileDto | null>(null);
   const [preparation, setPreparation] = useState<SessionPreparationDto | null>(null);
-  const pendingComposerWrite = useRef<{
-    key: string;
-    text: string;
-    workingDirectory: string;
-  } | null>(null);
   const sendingRef = useRef(false);
   const [workingDirectory, setWorkingDirectory] = useState(
     initialComposer.draft?.workingDirectory ?? '',
@@ -281,6 +288,17 @@ export function useAgentSession(
         : reload
           ? client.reloadSession({ sessionId })
           : client.loadSession({ sessionId });
+      void historyRequest.then(
+        () => {
+          if (
+            mountedRef.current &&
+            selectedIdRef.current === sessionId &&
+            generation === loadGenerationRef.current
+          )
+            setLoading(false);
+        },
+        () => undefined,
+      );
       const [next, prepared, current] = await Promise.all([
         historyRequest,
         options.preparedExecution && options.execution?.client.loadPreparation
@@ -397,7 +415,7 @@ export function useAgentSession(
       setCurrentProfile(null);
       setPreparation(null);
       setQueue(null);
-      setLoading(true);
+      setLoading(!historySource?.getSnapshot(sessionId).details);
       setError(null);
       try {
         await loadSelected(sessionId);
@@ -427,7 +445,7 @@ export function useAgentSession(
       setError(null);
       setLoading(false);
     },
-    [setQueue],
+    [setQueue, setDraft],
   );
 
   const draftKey = options.draftId ?? 'new';
@@ -436,6 +454,8 @@ export function useAgentSession(
   contextRef.current = contextKey;
   useEffect(() => {
     setHydratedComposerCacheKey(null);
+    draftSource.switchContext(composerCacheKey);
+    draftRef.current = draftSource.getSnapshot();
     const cached = readCachedComposerDraft(composerCacheKey);
     const hydrateComposer = composerCacheKeyRef.current !== composerCacheKey;
     composerCacheKeyRef.current = composerCacheKey;
@@ -444,33 +464,23 @@ export function useAgentSession(
       if (selectedIdRef.current !== selectedSessionId) void selectSession(selectedSessionId);
     } else startNewSession(cached, hydrateComposer);
     setHydratedComposerCacheKey(composerCacheKey);
-  }, [selectedSessionId, draftKey, composerCacheKey, selectSession, startNewSession]);
+  }, [
+    selectedSessionId,
+    draftKey,
+    composerCacheKey,
+    selectSession,
+    startNewSession,
+    draftSource,
+    setDraft,
+  ]);
 
   useEffect(() => {
     if (hydratedComposerCacheKey !== composerCacheKey) return;
-    pendingComposerWrite.current = { key: composerCacheKey, text: draft, workingDirectory };
-    const timer = window.setTimeout(() => {
-      writeCachedComposerDraft(composerCacheKey, { text: draft, workingDirectory });
-    }, 180);
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [composerCacheKey, draft, hydratedComposerCacheKey, workingDirectory]);
+    draftSource.setDirectory(workingDirectory);
+  }, [composerCacheKey, hydratedComposerCacheKey, workingDirectory, draftSource]);
 
   // Flush on navigation/unmount, not on each keystroke's effect cleanup.
-  useEffect(
-    () => () => {
-      const pending = pendingComposerWrite.current;
-      if (pending?.key === composerCacheKey) {
-        writeCachedComposerDraft(pending.key, {
-          text: pending.text,
-          workingDirectory: pending.workingDirectory,
-        });
-        pendingComposerWrite.current = null;
-      }
-    },
-    [composerCacheKey],
-  );
+  useEffect(() => () => draftSource.flush(), [draftSource]);
 
   const reload = useCallback(async () => {
     const sessionId = selectedIdRef.current;
@@ -489,9 +499,6 @@ export function useAgentSession(
   }, [loadSelected]);
 
   const clearSubmittedText = useCallback((key: string, submittedText: string) => {
-    const pending = pendingComposerWrite.current;
-    if (pending?.key === key && pending.text.trim() === submittedText.trim())
-      pendingComposerWrite.current = { ...pending, text: '' };
     if (readCachedComposerDraft(key)?.text?.trim() === submittedText.trim())
       clearCachedComposerText(key);
   }, []);
@@ -651,12 +658,13 @@ export function useAgentSession(
         if (mountedRef.current) setSending(false);
       }
     },
-    [client, details, loadSelected, options, workingDirectory, clearSubmittedText],
+    [client, details, loadSelected, options, workingDirectory, clearSubmittedText, setDraft],
   );
 
   const send = useCallback(
-    (attachments: readonly NewAgentImageAttachmentDto[] = []) => sendText(draft, true, attachments),
-    [draft, sendText],
+    (attachments: readonly NewAgentImageAttachmentDto[] = []) =>
+      sendText(draftRef.current, true, attachments),
+    [sendText],
   );
 
   const steer = useCallback(
@@ -725,7 +733,7 @@ export function useAgentSession(
         if (mountedRef.current) setSending(false);
       }
     },
-    [client, details, loadSelected, clearSubmittedText],
+    [client, details, loadSelected, clearSubmittedText, setDraft],
   );
 
   const cancel = useCallback(async () => {
@@ -962,6 +970,14 @@ export function useAgentSession(
     ({ invocation }) => invocation.status === 'running',
   )?.invocation.id;
   const runningTurnPreparing = preparation?.invocationId === runningInvocationId && preparing;
+  const loadEventDetails = useCallback(
+    (id: string) => {
+      if (!selectedSessionId || !client.loadEventDetails)
+        throw new Error('Action details unavailable');
+      return client.loadEventDetails(selectedSessionId, id);
+    },
+    [client, selectedSessionId],
+  );
   return {
     preparation,
     preparing,
@@ -982,6 +998,27 @@ export function useAgentSession(
             contextKey: quickFeatureKey,
             catalogue: quickCatalogue,
             load: loadQuickFeatures,
+            loadSkillDetails: quickFeaturesClient.loadSkillDetails
+              ? (skillId) =>
+                  quickFeaturesClient.loadSkillDetails!(
+                    {
+                      sessionId: selectedSessionId,
+                      workingDirectory: quickContext || null,
+                      ...(quickFolderTarget ? { folderTarget: quickFolderTarget } : {}),
+                      ...(quickExecutionTarget ? { executionTarget: quickExecutionTarget } : {}),
+                      ...(options.executionSelection
+                        ? {
+                            configuration: {
+                              provider: options.executionSelection.execution.provider,
+                              configurationId:
+                                options.executionSelection.execution.configurationRef,
+                            },
+                          }
+                        : {}),
+                    },
+                    skillId,
+                  )
+              : undefined,
             refresh: async () => {
               const catalogue = await refreshQuickFeatures();
               setQuickCatalogue(catalogue);
@@ -1029,8 +1066,12 @@ export function useAgentSession(
       : undefined,
     selectedSessionId,
     details,
+    loadEventDetails: selectedSessionId && client.loadEventDetails ? loadEventDetails : undefined,
     transcript,
-    draft,
+    get draft() {
+      return draftSource.getSnapshot();
+    },
+    draftSource,
     workingDirectory,
     loading: loading || historySnapshot.loading,
     sending,

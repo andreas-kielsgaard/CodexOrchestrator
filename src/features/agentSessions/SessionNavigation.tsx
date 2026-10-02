@@ -41,13 +41,16 @@ export function SessionNavigation({
   onOpenWorkflow,
   onMove,
   onPin,
+  onMarkUnread,
   onRename,
   onReorder,
   onCopySession,
+  onCopyMarkdown,
   onSetIdentity,
   onConfigure,
   organizing = true,
   onNewBranch,
+  onCreateWorktree,
   actionsClient,
 }: {
   model: SessionNavigationModel;
@@ -58,13 +61,19 @@ export function SessionNavigation({
   onNew(target: SessionFolderTarget | null): void;
   onMove(id: string, target: SessionPlacement, orderedIds?: readonly string[]): Promise<void>;
   onPin(id: string, pinned: boolean): Promise<void>;
+  onMarkUnread?(id: string): Promise<void>;
   onRename(id: string, title: string): Promise<void>;
   onReorder(scope: NavigationOrderScope, ids: readonly string[]): Promise<void>;
   onCopySession?(id: string): Promise<void>;
+  onCopyMarkdown?(
+    id: string,
+    mode: import('./sessionMarkdownExport').SessionMarkdownMode,
+  ): Promise<void>;
   onSetIdentity?(id: string): void;
   onConfigure?(id: string): void;
   organizing?: boolean;
   onNewBranch?(branch: NavigationBranch): void;
+  onCreateWorktree?(repositoryId: string): void;
   actionsClient?: SessionNavigationClient;
 }) {
   const [branchMenu, setBranchMenu] = useState<{
@@ -225,6 +234,18 @@ export function SessionNavigation({
           node={branchMenu.node}
           position={branchMenu}
           client={actionsClient}
+          onCreateWorktree={
+            onCreateWorktree
+              ? () => {
+                  const node = branchMenu.node;
+                  const id =
+                    node.branch?.repositoryId ??
+                    (node.placement.kind === 'repository' ? node.placement.repositoryId : '');
+                  setBranchMenu(null);
+                  if (id) onCreateWorktree(id);
+                }
+              : undefined
+          }
           onClose={() => setBranchMenu(null)}
           onAction={(action) => {
             setGitDialog({ node: branchMenu.node, action });
@@ -290,6 +311,14 @@ export function SessionNavigation({
             void onPin(menu.row.summary.id, !menu.row.pinned);
             closeMenu();
           }}
+          onMarkUnread={
+            onMarkUnread
+              ? () => {
+                  void onMarkUnread(menu.row.summary.id);
+                  closeMenu();
+                }
+              : undefined
+          }
           onRename={async (title) => {
             await onRename(menu.row.summary.id, title);
             closeMenu();
@@ -298,6 +327,9 @@ export function SessionNavigation({
             browserAgentSessionClipboard.writeText(formatSessionDeepLink(menu.row.summary.id))
           }
           onCopySession={onCopySession ? () => onCopySession(menu.row.summary.id) : undefined}
+          onCopyMarkdown={
+            onCopyMarkdown ? (mode) => onCopyMarkdown(menu.row.summary.id, mode) : undefined
+          }
           onSetIdentity={onSetIdentity ? () => onSetIdentity(menu.row.summary.id) : undefined}
           onConfigure={onConfigure ? () => onConfigure(menu.row.summary.id) : undefined}
         />

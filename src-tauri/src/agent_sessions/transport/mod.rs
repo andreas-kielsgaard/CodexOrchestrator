@@ -1,5 +1,6 @@
 //! Tauri state, commands, DTO mapping, and persisted update notifications.
 
+pub(crate) mod clipboard;
 mod dto;
 pub(crate) use dto::AgentSessionSummaryDto;
 pub(crate) mod interactions;

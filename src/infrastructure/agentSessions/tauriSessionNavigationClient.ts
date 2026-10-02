@@ -2,6 +2,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { SessionNavigationClient } from '../../application/agentSessions/organization';
 export const tauriSessionNavigationClient: SessionNavigationClient = {
+  createWorktree: (repositoryId, branchRef) =>
+    invoke('create_worktree_review_worktree', { input: { repositoryId, branchRef } }),
+  markAttention: (sessionId, unread) =>
+    invoke('mark_agent_session_attention', { sessionId, unread }),
   previewGitAction: (input) => invoke('preview_session_git_action', { input }),
   executeGitAction: (input, expected) => invoke('execute_session_git_action', { input, expected }),
   inspectWorktree: (repositoryId, branchRef, worktree) =>

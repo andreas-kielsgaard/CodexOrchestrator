@@ -15,12 +15,14 @@ export function BranchContextMenu({
   client,
   onClose,
   onAction,
+  onCreateWorktree,
 }: {
   node: SessionNavigationFolder;
   position: { x: number; y: number };
   client: SessionNavigationClient;
   onClose(): void;
   onAction(action: SessionGitAction): void;
+  onCreateWorktree?(): void;
 }) {
   const menu = useRef<HTMLDivElement>(null),
     card = useRef<HTMLDivElement>(null);
@@ -97,6 +99,7 @@ export function BranchContextMenu({
           role="menu"
           aria-label={`Branch actions for ${node.label}`}
           className="session-context-menu session-branch-menu"
+          data-side={position.x + 560 > window.innerWidth ? 'left' : 'right'}
           style={{
             left: Math.max(8, Math.min(position.x, window.innerWidth - 285)),
             top: Math.max(8, Math.min(position.y, window.innerHeight - 320)),
@@ -109,57 +112,67 @@ export function BranchContextMenu({
           >
             Create branch…
           </button>
+          {onCreateWorktree && (
+            <button role="menuitem" onClick={onCreateWorktree}>
+              Create worktree…
+            </button>
+          )}
           {node.branch && (
             <>
-              <button
-                role="menuitem"
-                aria-haspopup="menu"
-                aria-expanded={submenu === 'git'}
-                onMouseEnter={() => setSubmenu('git')}
-                onClick={() => setSubmenu(submenu === 'git' ? null : 'git')}
-              >
-                Git commands ›
-              </button>
-              {submenu === 'git' && (
-                <div role="menu" aria-label="Git commands" className="session-branch-submenu">
-                  {(['rename', 'delete', 'fetch', 'merge'] as const).map((action) => (
-                    <button
-                      key={action}
-                      role="menuitem"
-                      disabled={!client.previewGitAction}
-                      onClick={() => onAction(action)}
-                    >
-                      {gitActionLabels[action]}…
-                    </button>
-                  ))}
-                </div>
-              )}
-              <button
-                role="menuitem"
-                aria-haspopup="menu"
-                aria-expanded={submenu === 'worktrees'}
-                onMouseEnter={() => setSubmenu('worktrees')}
-                onClick={() => setSubmenu(submenu === 'worktrees' ? null : 'worktrees')}
-              >
-                Worktrees ›
-              </button>
-              {submenu === 'worktrees' && (
-                <div role="menu" aria-label="Worktrees" className="session-branch-submenu">
-                  {worktrees.map((w) => (
-                    <button
-                      key={`${w.deviceId}:${w.path}`}
-                      role="menuitem"
-                      onMouseEnter={(e) => show(w, e.currentTarget)}
-                      onMouseLeave={scheduleClose}
-                      onFocus={(e) => show(w, e.currentTarget)}
-                      onClick={(e) => show(w, e.currentTarget, true)}
-                    >
-                      {w.deviceName} · {w.path.split(/[\\/]/).filter(Boolean).at(-1)}
-                    </button>
-                  ))}
-                  {!worktrees.length && <p>No worktree instances available.</p>}
-                </div>
-              )}
+              <hr role="separator" />
+              <div className="session-submenu-anchor" onMouseLeave={() => setSubmenu(null)}>
+                <button
+                  role="menuitem"
+                  aria-haspopup="menu"
+                  aria-expanded={submenu === 'git'}
+                  onMouseEnter={() => setSubmenu('git')}
+                  onClick={() => setSubmenu(submenu === 'git' ? null : 'git')}
+                >
+                  Git commands ›
+                </button>
+                {submenu === 'git' && (
+                  <div role="menu" aria-label="Git commands" className="session-branch-submenu">
+                    {(['rename', 'delete', 'fetch', 'merge'] as const).map((action) => (
+                      <button
+                        key={action}
+                        role="menuitem"
+                        disabled={!client.previewGitAction}
+                        onClick={() => onAction(action)}
+                      >
+                        {gitActionLabels[action]}…
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="session-submenu-anchor" onMouseLeave={() => setSubmenu(null)}>
+                <button
+                  role="menuitem"
+                  aria-haspopup="menu"
+                  aria-expanded={submenu === 'worktrees'}
+                  onMouseEnter={() => setSubmenu('worktrees')}
+                  onClick={() => setSubmenu(submenu === 'worktrees' ? null : 'worktrees')}
+                >
+                  Worktrees ›
+                </button>
+                {submenu === 'worktrees' && (
+                  <div role="menu" aria-label="Worktrees" className="session-branch-submenu">
+                    {worktrees.map((w) => (
+                      <button
+                        key={`${w.deviceId}:${w.path}`}
+                        role="menuitem"
+                        onMouseEnter={(e) => show(w, e.currentTarget)}
+                        onMouseLeave={scheduleClose}
+                        onFocus={(e) => show(w, e.currentTarget)}
+                        onClick={(e) => show(w, e.currentTarget, true)}
+                      >
+                        {w.deviceName} · {w.path.split(/[\\/]/).filter(Boolean).at(-1)}
+                      </button>
+                    ))}
+                    {!worktrees.length && <p>No worktree instances available.</p>}
+                  </div>
+                )}
+              </div>
             </>
           )}
         </div>

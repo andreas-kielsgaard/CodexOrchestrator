@@ -8,18 +8,22 @@ import {
 import type { NavigationOrderScope } from '../../application/agentSessions/navigationOrder';
 import { sessionErrorMessage } from './sessionErrors';
 import { sessionSummaryChanged } from './sessionAttention';
+const collectionSnapshots = new WeakMap<object, ReturnType<typeof emptySessionNavigation>>();
 export function useAgentSessionCollection(
   client: AgentSessionClient,
   navigation?: SessionNavigationClient,
 ) {
-  const [data, setData] = useState(emptySessionNavigation);
-  const [loading, setLoading] = useState(true);
+  const owner = navigation ?? client;
+  const [data, setData] = useState(
+    () => collectionSnapshots.get(owner) ?? emptySessionNavigation(),
+  );
+  const [loading, setLoading] = useState(() => !collectionSnapshots.has(owner));
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
   const refresh = useCallback(
     async (showLoading = true) => {
       const request = ++generation.current;
-      if (showLoading) {
+      if (showLoading && !collectionSnapshots.has(owner)) {
         setLoading(true);
         setError(null);
       }
@@ -30,7 +34,10 @@ export function useAgentSessionCollection(
               ...emptySessionNavigation(),
               summaries: await client.listSessions({ availability: 'available' }),
             };
-        if (request === generation.current) setData(next);
+        if (request === generation.current) {
+          collectionSnapshots.set(owner, next);
+          setData(next);
+        }
       } catch (caught) {
         if (request === generation.current)
           setError(`Session list reload failed: ${sessionErrorMessage(caught)}`);
@@ -38,7 +45,7 @@ export function useAgentSessionCollection(
         if (request === generation.current) setLoading(false);
       }
     },
-    [client, navigation],
+    [client, navigation, owner],
   );
   const reload = useCallback(() => refresh(true), [refresh]);
   const invalidatePending = useCallback(() => {
@@ -116,6 +123,30 @@ export function useAgentSessionCollection(
     [client, refresh],
   );
   const clearError = useCallback(() => setError(null), []);
+  const markAttention = useCallback(
+    async (id: string, unread: boolean) => {
+      if (!navigation?.markAttention) return;
+      setData((current) => {
+        const next = {
+          ...current,
+          summaries: current.summaries.map((s) =>
+            s.id === id
+              ? {
+                  ...s,
+                  completionState: unread
+                    ? ((s.hasActiveInvocation ? 'continued' : 'done') as 'continued' | 'done')
+                    : null,
+                }
+              : s,
+          ),
+        };
+        collectionSnapshots.set(owner, next);
+        return next;
+      });
+      await mutate(() => navigation.markAttention!(id, unread));
+    },
+    [navigation, owner, mutate],
+  );
   return {
     data,
     summaries: data.summaries,
@@ -127,5 +158,6 @@ export function useAgentSessionCollection(
     reorder,
     pin,
     rename,
+    markAttention,
   };
 }

@@ -197,6 +197,7 @@ impl From<SendAgentSessionMessageResult> for SendAgentSessionMessageResultDto {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentInvocationDetailsDto {
+    pub(crate) last_event_sequence: Option<u64>,
     pub(crate) invocation: AgentInvocationDto,
     pub(crate) observation: AgentInvocationObservation,
     pub(crate) events: Vec<AgentRuntimeEventDto>,
@@ -222,6 +223,9 @@ impl AgentSessionDetailsDto {
                 .invocations
                 .into_iter()
                 .map(|history| AgentInvocationDetailsDto {
+                    last_event_sequence: history
+                        .last_event_sequence
+                        .or_else(|| history.events.last().map(|e| e.sequence)),
                     observation: project_invocation_observation(&history),
                     invocation: history.invocation,
                     events: history.events,
@@ -235,6 +239,7 @@ impl AgentSessionDetailsDto {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentSessionSummaryDto {
+    pub(crate) latest_completed_id: Option<String>,
     pub(crate) completion_state: Option<String>,
     pub(crate) pending_request_count: usize,
     pub(crate) id: AgentSessionId,
@@ -250,6 +255,7 @@ pub(crate) struct AgentSessionSummaryDto {
 impl From<AgentSessionSummary> for AgentSessionSummaryDto {
     fn from(value: AgentSessionSummary) -> Self {
         Self {
+            latest_completed_id: value.latest_completed_id,
             completion_state: value.completion_state,
             pending_request_count: value.pending_request_count,
             id: value.session.id,
@@ -423,6 +429,7 @@ mod tests {
                 updated_at: at,
             },
             invocations: vec![AgentInvocationHistory {
+                last_event_sequence: None,
                 invocation: AgentInvocation {
                     attachments: vec![],
                     id: invocation_id,

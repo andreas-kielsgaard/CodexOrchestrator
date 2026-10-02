@@ -15,7 +15,10 @@ mod mapping;
 mod organization;
 pub(crate) use organization::write_placement;
 pub(crate) use organization::SCHEMA as SESSION_ORGANIZATION_SCHEMA;
+mod attention;
+mod display_history;
 mod schema;
+mod summaries;
 
 #[cfg(test)]
 mod tests;
@@ -77,6 +80,7 @@ impl SqliteAgentSessionRepository {
     fn load_session_history_snapshot(
         &self,
         session_id: &AgentSessionId,
+        display: bool,
     ) -> Result<Option<AgentSessionHistory>, RepositoryError> {
         self.read("load Agent Session history", |connection| {
             let transaction = connection
@@ -91,10 +95,12 @@ impl SqliteAgentSessionRepository {
                 .map(|invocation| {
                     let launch_accepted_at =
                         invocation_launch_accepted_at_from(&transaction, &invocation.id)?;
-                    let events = list_events_from(&transaction, &invocation.id)?;
+                    let events = if display {display_history::events(&transaction,&invocation.id)?} else {list_events_from(&transaction, &invocation.id)?};
+                    let last_event_sequence = if display {transaction.query_row("SELECT MAX(sequence) FROM agent_session_runtime_events WHERE invocation_id=?1",[invocation.id.as_str()],|row|row.get::<_,Option<u64>>(0)).map_err(sql_unavailable("read display history cursor"))?} else {events.last().map(|event|event.sequence)};
                     let import_provenance =
                         import::imported_turn_from(&transaction, &invocation.id)?;
                     Ok(AgentInvocationHistory {
+                        last_event_sequence,
                         invocation,
                         launch_accepted_at,
                         events,
@@ -118,67 +124,7 @@ impl SqliteAgentSessionRepository {
         &self,
         query: ListAgentSessionsQuery,
     ) -> Result<Vec<AgentSessionSummary>, RepositoryError> {
-        self.read("list Agent Session summaries", |connection| {
-        let transaction = connection
-            .unchecked_transaction()
-            .map_err(sql_unavailable("begin Agent Session summary list"))?;
-        let sessions = list_sessions_from(&transaction, query)?;
-        let summaries = sessions
-            .into_iter()
-            .map(|session| {
-                let invocation_count = transaction
-                    .query_row(
-                        "SELECT COUNT(*) FROM agent_session_invocations WHERE session_id = ?1",
-                        params![session.id.as_str()],
-                        |row| row.get::<_, u64>(0),
-                    )
-                    .map_err(sql_unavailable("count Agent Session invocations"))?;
-                let latest = transaction
-                    .query_row(
-                        "SELECT status, submitted_text, id FROM agent_session_invocations WHERE session_id = ?1 ORDER BY created_at DESC, id DESC LIMIT 1",
-                        params![session.id.as_str()],
-                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
-                    )
-                    .optional()
-                    .map_err(sql_unavailable("load latest Agent Session invocation"))?;
-                let (latest_invocation_status, latest_submitted_text, pending_request_count) = match latest {
-                    Some((status, text, id)) => {
-                        let status = parse_status(&status)?;
-                        let count = if status.is_active() {
-                            let id = AgentInvocationId::new(id).map_err(contract_error)?;
-                            let invocation = get_invocation_from(&transaction, &id)?
-                                .ok_or_else(|| RepositoryError::new(RepositoryErrorKind::Unavailable, "Latest invocation disappeared"))?;
-                            super::interactions::pending_request_count(&[AgentInvocationHistory {
-                                invocation,
-                                launch_accepted_at: None,
-                                events: list_events_from(&transaction, &id)?,
-                                import_provenance: None,
-                            }])
-                        } else { 0 };
-                        (Some(status), Some(text), count)
-                    }
-                    None => (None, None, 0),
-                };
-                let (finished, unfinished) = transaction.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM agent_session_invocations WHERE session_id = ?1 AND status = 'completed'), EXISTS(SELECT 1 FROM agent_session_queue_entries WHERE session_id = ?1 AND state IN ('pending', 'executing', 'blocked'))",
-                    params![session.id.as_str()], |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?))
-                ).map_err(sql_unavailable("load Session completion state"))?;
-                let completion_state = if !finished { None } else if unfinished { Some("continued".into()) } else if latest_invocation_status.is_some_and(|s| s.is_terminal()) { Some("done".into()) } else { None };
-                Ok(AgentSessionSummary {
-                    completion_state,
-                    pending_request_count,
-                    session,
-                    invocation_count,
-                    latest_invocation_status,
-                    latest_submitted_text,
-                })
-            })
-            .collect::<Result<Vec<_>, RepositoryError>>()?;
-        transaction
-            .commit()
-            .map_err(sql_unavailable("commit Agent Session summary list"))?;
-        Ok(summaries)
-    })
+        summaries::list(self, query)
     }
 
     fn read<T>(
@@ -489,7 +435,14 @@ impl AgentSessionRepository for SqliteAgentSessionRepository {
         &self,
         session_id: &AgentSessionId,
     ) -> Result<Option<AgentSessionHistory>, RepositoryError> {
-        self.load_session_history_snapshot(session_id)
+        self.load_session_history_snapshot(session_id, false)
+    }
+
+    fn load_session_display_history(
+        &self,
+        session_id: &AgentSessionId,
+    ) -> Result<Option<AgentSessionHistory>, RepositoryError> {
+        self.load_session_history_snapshot(session_id, true)
     }
 
     fn list_session_summaries(

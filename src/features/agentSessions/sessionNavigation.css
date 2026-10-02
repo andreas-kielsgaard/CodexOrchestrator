@@ -371,14 +371,48 @@
   background: #e8e8e2;
 }
 .session-branch-submenu {
-  margin-left: 10px;
-  border-left: 1px solid #c9d2c9;
+  position: absolute;
+  left: calc(100% - 2px);
+  top: 0;
+  min-width: 220px;
+  padding: 4px;
+  background: var(--surface, #fffdf8);
+  border: 1px solid var(--border, #d7ddd5);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px #0002;
   max-height: 240px;
   overflow: auto;
 }
 .session-branch-menu {
   max-height: calc(100vh - 16px);
-  overflow: auto;
+  overflow: visible;
+}
+.session-copy-menu {
+  overflow: visible;
+}
+.session-copy-menu .session-branch-submenu {
+  min-width: 300px;
+  max-height: calc(100vh - 32px);
+}
+.session-submenu-anchor {
+  position: relative;
+}
+.session-submenu-anchor > button {
+  width: 100%;
+}
+.session-context-menu[data-side='left'] .session-branch-submenu {
+  left: auto;
+  right: calc(100% - 2px);
+}
+.session-context-menu hr {
+  border: 0;
+  border-top: 1px solid var(--border, #d7ddd5);
+  margin: 4px 0;
+}
+.session-context-menu button {
+  min-height: 30px;
+  padding: 6px 10px;
+  font-size: 0.8rem;
 }
 .session-worktree-card {
   position: fixed;

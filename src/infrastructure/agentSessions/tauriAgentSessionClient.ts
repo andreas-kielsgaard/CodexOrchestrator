@@ -94,6 +94,8 @@ export function createTauriAgentSessionClient(
     cancelQueueEntry: (sessionId, entryId) =>
       invokeCommand('cancel_agent_session_queue_entry', { input: { sessionId, entryId } }),
     loadQuickFeatures: (input) => invokeCommand('load_agent_session_quick_features', { input }),
+    loadSkillDetails: (input, skillId) =>
+      invokeCommand('read_agent_session_skill', { input, skillId }),
     startDirectUserSession: async (input) => {
       await ensureUpdateBridge();
       return invokeCommand('start_direct_user_agent_session', { input });
@@ -140,6 +142,8 @@ export function createTauriAgentSessionClient(
     },
 
     loadSession: load,
+    loadEventDetails: (sessionId, eventId) =>
+      invokeCommand('load_agent_session_event_details', { sessionId, eventId }),
     reloadSession: load,
 
     async subscribeUpdates(listener: AgentSessionUpdateListener): Promise<() => void> {
@@ -179,7 +183,10 @@ export function createTauriAgentSessionClient(
   return {
     ...core,
     historySource: createAgentSessionHistorySource({
-      load: (sessionId) => load({ sessionId }),
+      load: (sessionId) =>
+        invokeCommand<AgentSessionDetailsDto>('load_agent_session_display', {
+          query: { sessionId },
+        }),
       subscribe: (listener) => core.subscribeUpdates(listener),
     }),
   };

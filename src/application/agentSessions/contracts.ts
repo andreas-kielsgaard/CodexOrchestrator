@@ -197,6 +197,7 @@ export interface ImportedTurnProvenanceDto {
 }
 
 export interface AgentInvocationDetailsDto {
+  readonly lastEventSequence?: number | null;
   invocation: AgentInvocationDto;
   observation: AgentInvocationObservationDto;
   events: AgentRuntimeEventDto[];
@@ -212,6 +213,7 @@ export interface AgentSessionDetailsDto {
 }
 
 export interface AgentSessionSummaryDto {
+  latestCompletedId?: string | null;
   completionState?: 'done' | 'continued' | null;
   pendingRequestCount: number;
   id: AgentSessionIdDto;
@@ -331,6 +333,7 @@ export interface AgentSessionClient {
   ): Promise<AgentSessionDto>;
   listSessions(query?: ListAgentSessionsQueryDto): Promise<AgentSessionSummaryDto[]>;
   loadSession(query: LoadAgentSessionQueryDto): Promise<AgentSessionDetailsDto>;
+  loadEventDetails?(sessionId: string, eventId: string): Promise<AgentRuntimeEventDto>;
   reloadSession(query: LoadAgentSessionQueryDto): Promise<AgentSessionDetailsDto>;
   subscribeUpdates(listener: AgentSessionUpdateListener): Promise<() => void>;
   sendMessage(

@@ -104,7 +104,7 @@ export function formatAgentSessionContext(
   return `${lines.join('\n').trimEnd()}\n`;
 }
 
-function redactSensitiveText(value: string): string {
+export function redactSensitiveText(value: string): string {
   return value
     .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [REDACTED]')
     .replace(

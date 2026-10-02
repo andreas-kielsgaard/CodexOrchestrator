@@ -208,6 +208,16 @@ impl AgentSessionApplication {
             .map_err(AgentSessionApplicationError::repository)?
             .ok_or_else(|| AgentSessionApplicationError::not_found("Agent Session not found"))
     }
+
+    pub(crate) fn load_session_display(
+        &self,
+        id: &AgentSessionId,
+    ) -> Result<AgentSessionHistory, AgentSessionApplicationError> {
+        self.repository
+            .load_session_display_history(id)
+            .map_err(AgentSessionApplicationError::repository)?
+            .ok_or_else(|| AgentSessionApplicationError::not_found("Agent Session not found"))
+    }
 }
 
 pub(super) fn normalize_title(title: Option<&str>, fallback: &str) -> String {

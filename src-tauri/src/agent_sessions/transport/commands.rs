@@ -13,7 +13,7 @@ pub(crate) async fn read_agent_session_image(
         let metadata =
             std::fs::metadata(&path).map_err(|error| format!("Unable to read image: {error}"))?;
         if !metadata.is_file() || metadata.len() > MAX_IMAGE_BYTES {
-            return Err("Images must be files no larger than 10 MB".into());
+            return Err("Attachments must be files no larger than 10 MB".into());
         }
         let media_type = match path
             .extension()
@@ -25,7 +25,9 @@ pub(crate) async fn read_agent_session_image(
             Some("jpg" | "jpeg") => "image/jpeg",
             Some("gif") => "image/gif",
             Some("webp") => "image/webp",
-            _ => return Err("Supported images are PNG, JPEG, GIF, and WebP".into()),
+            Some("txt" | "md" | "csv" | "log") => "text/plain",
+            Some("pdf") => "application/pdf",
+            _ => "application/octet-stream",
         };
         let bytes =
             std::fs::read(&path).map_err(|error| format!("Unable to read image: {error}"))?;

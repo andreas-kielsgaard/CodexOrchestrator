@@ -62,6 +62,16 @@ pub(crate) struct SessionNavigationService {
     orders: NavigationOrderRepository,
 }
 impl SessionNavigationService {
+    pub(crate) fn read_event_details(
+        &self,
+        session: &crate::agent_sessions::domain::AgentSessionId,
+        id: &str,
+    ) -> Result<crate::agent_sessions::domain::AgentRuntimeEvent, String> {
+        self.repository
+            .read_event_details(session, id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "Action details not found in this session".into())
+    }
     pub(crate) fn new(
         catalog: Arc<RepositoryCatalog>,
         instances: Arc<WorkflowInstanceStore>,
@@ -120,6 +130,11 @@ impl SessionNavigationService {
                 .list_organization()
                 .map_err(|e| e.to_string())?,
         })
+    }
+    pub(crate) fn mark_attention(&self, id: AgentSessionId, unread: bool) -> Result<(), String> {
+        self.repository
+            .mark_attention(&id, unread)
+            .map_err(|e| e.to_string())
     }
     pub(crate) fn reorder(
         &self,
