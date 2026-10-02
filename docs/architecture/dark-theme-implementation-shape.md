@@ -71,6 +71,18 @@ Implemented the shared dark palette, migrated every audited stylesheet, removed 
 - Every reviewed final rendered style report found no small-text contrast failures or large bright presentation surfaces. These checks sample visible text and exclude disabled/faded elements; they do not establish every possible CSS cascade, keyboard interaction or content/identity color contrast.
 - External OS file/attachment dialogs and every populated runtime/catalog state were not visually exercised. Source coverage and automated theme checks cover their application styles; no provider execution or user acceptance is claimed.
 
-The implementation is local on `feature/dark-theme`; it has not been published or integrated.
+The initial implementation was completed locally on `feature/dark-theme`. The main integration is recorded below.
 
 Follow-up [design-guided regression review](dark-theme-regression-review.md) corrected Sprint connector contrast, added connector coverage, and passed 868 frontend tests plus 39 CLI inspector tests. The separately requested branch-drop change was withdrawn and fully rolled back.
+
+## Main integration, 2026-10-02
+
+Committed the theme as `f4e71b43`, integrated main `98796107` as `2f7c755a`, and aligned the new overlay controls as `61325cc5`. Resolved the two CSS conflicts by retaining the new operation-group selector and queue geometry alongside the theme tokens. Migrated main's new completion indicators, branch hover, worktree cards, Git dialogs and quote controls. The source was validated before fast-forwarding local main; the rebuilt release executable is included in the subsequent rebuild commit. Nothing was pushed.
+
+Final combined validation: 180 frontend files / 882 tests, 39 CLI inspector tests, frontend production build, Rust check, native release build, changed TypeScript lint, CSS formatting and diff checks passed. Existing React test warnings, Rust unused-code warnings and frontend chunk warnings remain.
+
+The additional review used real overlay components with disposable fixture clients in an isolated native WebView: branch menu, worktree card, Git preview, steering editor, quote menu and optional-comment form. All 78 rendered text/control samples passed contrast checks; minimum sampled contrast was 5.72:1. Branch hover, filled/hollow completion markers and keyboard focus were also inspected. The review caught browser-default bevelled buttons in the new Git/worktree controls, which now use explicit shared-palette styling.
+
+A bundled debug review variant of the final source, with a separate application identifier and data directory, passed startup and Agent Sessions navigation checks. Its native titlebar, document scheme and canvas were dark. The production release binary was built separately with the normal identifier. Provider execution and real Git mutations were not part of this review.
+
+Integration evidence and logs are retained under `.dev/dark-theme/` in `C:/Users/user/.codex/worktrees/dark-theme-main/Codex Orchestrator`. The production build is retained at `C:/Users/user/AppData/Local/CodexOrchestrator/dark-theme-main-20261002-final/output`.

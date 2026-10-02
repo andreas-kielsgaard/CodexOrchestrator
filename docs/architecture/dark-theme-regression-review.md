@@ -1,6 +1,6 @@
 # Dark theme regression review
 
-Reviewed on `feature/dark-theme`, 2026-10-01. Changes remain local and uncommitted.
+Initial review on `feature/dark-theme`, 2026-10-01. The [main integration record](dark-theme-implementation-shape.md#main-integration-2026-10-02) documents the subsequent committed integration, 882-test regression run and rebuilt executable. Nothing has been pushed.
 
 ## Design criteria
 
