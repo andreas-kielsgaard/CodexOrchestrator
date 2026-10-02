@@ -335,6 +335,27 @@
 }
 .composer-add-group .composer-hover-group__overlay {
   min-width: 180px;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+}
+.composer-add-group .composer-hover-group__overlay[hidden] {
+  display: none;
+}
+.composer-add-group .composer-hover-group__overlay > button {
+  width: 100%;
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.composer-add-group .composer-hover-group__overlay > button:not(:disabled):hover {
+  background: var(--surface-hover);
 }
 .skill-reference {
   display: inline;
@@ -359,6 +380,17 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+.skill-details-dialog header button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--control-border);
+  border-radius: 8px;
+  background: var(--control-background);
+  color: var(--text-primary);
+}
+.skill-details-dialog header button:hover {
+  background: var(--surface-hover);
 }
 .skill-details-dialog dd {
   margin: 0 0 8px;
