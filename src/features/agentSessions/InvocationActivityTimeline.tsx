@@ -15,7 +15,12 @@ export function InvocationActivityTimeline({
   readonly processingHeading?: string;
 }) {
   const steering = (invocation.interactions ?? [])
-    .filter((interaction) => interaction.kind === 'steering' && interaction.content.text?.trim())
+    .filter(
+      (interaction) =>
+        interaction.kind === 'steering' &&
+        interaction.state === 'accepted' &&
+        interaction.content.text?.trim(),
+    )
     .sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id));
   if (!steering.length)
     return (
@@ -55,13 +60,18 @@ export function InvocationActivityTimeline({
         item.safeDetail.phase === 'started' &&
         !item.completedAt,
     );
+    const boundaryAt = (index: number) =>
+      steering[index]?.recordedAt ??
+      activity.find((item) => item.sequence > (steering[index]?.sequence ?? Infinity))
+        ?.recordedAt ??
+      invocation.completedAt;
     if (!items.length && !(isLast && invocation.isActive && !invocation.preparing)) return;
     content.push(
       <ProcessingDisclosure
         key={disclosureId}
         invocationId={disclosureId}
-        startedAt={invocation.startedAt}
-        completedAt={invocation.completedAt}
+        startedAt={segment === 0 ? invocation.startedAt : boundaryAt(segment - 1)}
+        completedAt={isLast ? invocation.completedAt : boundaryAt(segment)}
         usage={invocation.usage}
         activity={items}
         running={(isLast || hasOngoingTool) && invocation.isActive && !invocation.preparing}

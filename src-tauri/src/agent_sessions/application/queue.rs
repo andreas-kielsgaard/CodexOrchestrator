@@ -183,7 +183,7 @@ impl AgentSessionApplication {
                 )
                 .map_err(AgentSessionApplicationError::repository)?;
             match result {
-                Ok(outcome) if outcome.state == "accepted" => {
+                Ok(outcome) if matches!(outcome.state.as_str(), "accepted" | "queued") => {
                     self.cancel_queue_entry(session_id, entry_id)?
                 }
                 Ok(outcome) => {
@@ -464,6 +464,44 @@ impl AgentSessionApplication {
         });
     }
 
+    pub(crate) fn run_target_operation_now(
+        &self,
+        session_id: &AgentSessionId,
+        entry_id: &str,
+    ) -> Result<(), AgentSessionApplicationError> {
+        let lane = self.queue_dispatch_lanes.lane(session_id);
+        let _guard = lane
+            .lock()
+            .map_err(|_| AgentSessionApplicationError::conflict("Session queue unavailable"))?;
+        let queue = self.load_session_queue(session_id)?;
+        let head = queue
+            .entries
+            .iter()
+            .find(|e| e.state.is_unfinished())
+            .ok_or_else(|| AgentSessionApplicationError::not_found("Queue entry not found"))?;
+        if head.id != entry_id || head.state != SessionQueueEntryState::Pending {
+            return Err(AgentSessionApplicationError::conflict(
+                "Only the next waiting operation can be started",
+            ));
+        }
+        let SessionQueueEntryItem::TargetOperation { operation_id } = &head.item else {
+            return Err(AgentSessionApplicationError::invalid(
+                "Not a target operation",
+            ));
+        };
+        self.repository
+            .set_queue_entry_state(
+                entry_id,
+                SessionQueueEntryState::Executing,
+                None,
+                self.clock.now(),
+            )
+            .map_err(AgentSessionApplicationError::repository)?;
+        self.start_head_target_operation(operation_id.clone())?;
+        self.notify_queue(session_id);
+        Ok(())
+    }
+
     pub(super) fn wake_all_session_queues(&self) {
         let sessions = self.repository.list_session_summaries(
             crate::agent_sessions::ports::ListAgentSessionsQuery::default(),
@@ -475,7 +513,7 @@ impl AgentSessionApplication {
         }
     }
 
-    fn dispatch_session_queue(
+    pub(super) fn dispatch_session_queue(
         &self,
         session_id: &AgentSessionId,
     ) -> Result<(), AgentSessionApplicationError> {
@@ -485,6 +523,14 @@ impl AgentSessionApplication {
             .map_err(|_| AgentSessionApplicationError::conflict("Session queue unavailable"))?;
         loop {
             let snapshot = self.load_session_queue(session_id)?;
+            let has_waiting_message = snapshot.entries.iter().any(|entry| {
+                entry.state == SessionQueueEntryState::Pending
+                    && matches!(
+                        entry.item,
+                        SessionQueueEntryItem::Message { .. }
+                            | SessionQueueEntryItem::Compaction { .. }
+                    )
+            });
             let Some(entry) = snapshot
                 .entries
                 .into_iter()
@@ -508,6 +554,17 @@ impl AgentSessionApplication {
             }
             match entry.item {
                 SessionQueueEntryItem::TargetOperation { operation_id } => {
+                    if self
+                        .load_session(session_id)?
+                        .invocations
+                        .iter()
+                        .any(|item| item.invocation.status == AgentInvocationStatus::Running)
+                    {
+                        return Ok(());
+                    }
+                    if entry.state == SessionQueueEntryState::Pending && !has_waiting_message {
+                        return Ok(());
+                    }
                     let operation = self
                         .repository
                         .target_operation(&operation_id)

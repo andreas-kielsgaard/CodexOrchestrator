@@ -26,3 +26,12 @@ it('prefers exact matches then prefixes without reordering the menu', () => {
     'plan',
   ]);
 });
+it('ends command selection on whitespace and allows another slash later', () => {
+  expect(commandToken('/plan ', 6)).toBeNull();
+  expect(commandToken('Use /plan more text', 19)).toBeNull();
+  expect(commandToken('Use /plan then /review', 22)).toEqual({
+    start: 15,
+    end: 22,
+    query: 'review',
+  });
+});

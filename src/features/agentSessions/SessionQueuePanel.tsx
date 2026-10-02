@@ -11,6 +11,7 @@ import type { SessionInteractionDto } from '../../application/agentSessions';
 import { SessionQueueItemDialog } from './SessionQueueItemDialog';
 import { queueEntryState, queueEntryTitle } from './sessionQueueLabels';
 import './sessionQueue.css';
+import { SteeringEditor } from './SteeringEditor';
 
 const terminalStates = new Set(['completed', 'canceled']);
 
@@ -27,8 +28,11 @@ export function SessionQueuePanel({
 }) {
   const projected = useMemo(() => presentSessionQueue(queue).futureEntries, [queue]);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [steeringEdit, setSteeringEdit] = useState<SessionInteractionDto | null>(null);
+  const [steeringError, setSteeringError] = useState<string | null>(null);
   const [dragged, setDragged] = useState<string | null>(null);
-  if (!projected.length && !steeringEntries.length) return null;
+  if (!projected.length && !steeringEntries.length && !steeringEdit) return null;
+  const visibleSteering = steeringEntries.filter((i) => i.id !== steeringEdit?.id);
 
   const ids = projected.map(({ item }) => item.entry.id);
   const hiddenIds = queue.entries
@@ -62,8 +66,24 @@ export function SessionQueuePanel({
     <>
       <section className="session-queue" aria-label="Queued messages, steering, and target changes">
         <ol>
-          {steeringEntries.map((interaction) => (
-            <SteeringLine interaction={interaction} key={interaction.id} />
+          {visibleSteering.map((interaction) => (
+            <SteeringLine
+              interaction={interaction}
+              key={interaction.id}
+              onEdit={
+                controller.editSteering &&
+                ['queued', 'editing', 'expired'].includes(interaction.state)
+                  ? async () => {
+                      try {
+                        setSteeringError(null);
+                        setSteeringEdit(await controller.editSteering!(interaction, 'begin'));
+                      } catch (cause) {
+                        setSteeringError(String(cause));
+                      }
+                    }
+                  : undefined
+              }
+            />
           ))}
           {projected.map((projection) => (
             <QueueLine
@@ -80,12 +100,20 @@ export function SessionQueuePanel({
             />
           ))}
         </ol>
-        {projected.length + steeringEntries.length > 1 && (
+        {projected.length + visibleSteering.length > 1 && (
           <span className="session-queue__more">
-            +{projected.length + steeringEntries.length - 1} more
+            +{projected.length + visibleSteering.length - 1} more
           </span>
         )}
       </section>
+      {steeringError && <p role="alert">{steeringError}</p>}
+      {steeringEdit && (
+        <SteeringEditor
+          interaction={steeringEdit}
+          controller={controller}
+          onClose={() => setSteeringEdit(null)}
+        />
+      )}
       {editingIndex >= 0 && (
         <SessionQueueItemDialog
           projection={projected[editingIndex]}
@@ -101,16 +129,42 @@ export function SessionQueuePanel({
   );
 }
 
-function SteeringLine({ interaction }: { readonly interaction: SessionInteractionDto }) {
+function SteeringLine({
+  interaction,
+  onEdit,
+}: {
+  readonly interaction: SessionInteractionDto;
+  onEdit?: () => Promise<void>;
+}) {
   return (
     <li className="is-steering" aria-label={`Steering: ${interaction.content.text ?? ''}`}>
-      <div className="session-queue__line">
+      <button
+        type="button"
+        className="session-queue__line"
+        disabled={!onEdit}
+        onClick={() => void onEdit?.()}
+        aria-label={`Edit steering: ${interaction.content.text ?? ''}`}
+      >
         <span className="session-queue__state" aria-hidden="true">
           <CornerDownRight size={14} />
         </span>
         <strong>{interaction.content.text || 'Steering message'}</strong>
-        <small>Steering next</small>
-      </div>
+        <small>
+          {interaction.state === 'queued'
+            ? 'Steering next'
+            : interaction.state === 'editing'
+              ? 'Editing paused'
+              : interaction.state === 'expired'
+                ? 'Turn ended before delivery'
+                : interaction.state === 'accepted'
+                  ? 'Delivered to agent'
+                  : interaction.state === 'uncertain'
+                    ? 'Delivery uncertain'
+                    : interaction.state === 'rejected'
+                      ? 'Delivery failed'
+                      : 'Delivering steering'}
+        </small>
+      </button>
     </li>
   );
 }

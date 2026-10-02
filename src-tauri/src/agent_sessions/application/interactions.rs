@@ -17,7 +17,10 @@ use std::{
 #[derive(Default)]
 pub(super) struct InteractionLanes(Mutex<HashMap<AgentInvocationId, Weak<Mutex<()>>>>);
 impl InteractionLanes {
-    fn lane(&self, id: &AgentInvocationId) -> Result<Arc<Mutex<()>>, AgentSessionApplicationError> {
+    pub(super) fn lane(
+        &self,
+        id: &AgentInvocationId,
+    ) -> Result<Arc<Mutex<()>>, AgentSessionApplicationError> {
         let mut lanes = self.0.lock().map_err(|_| {
             AgentSessionApplicationError::conflict("Interaction registry is unavailable")
         })?;
@@ -62,7 +65,7 @@ impl AgentSessionApplication {
         Ok(project_interactions(&history))
     }
 
-    pub(crate) fn steer_session(
+    pub(super) fn deliver_steering(
         &self,
         command: SteerAgentSessionCommand,
     ) -> Result<SessionInteraction, AgentSessionApplicationError> {
@@ -85,11 +88,11 @@ impl AgentSessionApplication {
             if existing.invocation_id != command.invocation_id
                 || existing.content["text"] != command.text
             {
-                return Err(AgentSessionApplicationError::conflict(
-                    "Input identity was already used for different content",
-                ));
+                return Ok(existing);
             }
-            return Ok(existing);
+            if existing.state != "queued" {
+                return Ok(existing);
+            }
         }
         self.require_active_interaction(&command.session_id, &command.invocation_id)?;
         if self
@@ -208,7 +211,7 @@ impl AgentSessionApplication {
         result.map_err(AgentSessionApplicationError::runtime)
     }
 
-    fn require_active_interaction(
+    pub(super) fn require_active_interaction(
         &self,
         session: &AgentSessionId,
         id: &AgentInvocationId,
@@ -226,7 +229,7 @@ impl AgentSessionApplication {
         Ok(())
     }
 
-    fn record_interaction(
+    pub(super) fn record_interaction(
         &self,
         id: &AgentInvocationId,
         record: RuntimeControlRecord,

@@ -203,19 +203,84 @@ fn steering_is_durable_and_does_not_create_a_workflow_delivery() {
         input_id: "steering-input".into(),
         text: "Use the revised requirements".into(),
     };
-    let accepted = fixture.sessions.steer_session(command.clone()).unwrap();
-    assert_eq!(accepted.state, "accepted");
+    let queued = fixture.sessions.steer_session(command.clone()).unwrap();
+    assert_eq!(queued.state, "queued");
     assert_eq!(
         fixture.sessions.steer_session(command.clone()).unwrap(),
-        accepted
+        queued
     );
     assert!(fixture
         .sessions
         .steer_session(super::super::SteerAgentSessionCommand {
             text: "Different content with the same identity".into(),
-            ..command
+            ..command.clone()
         })
         .is_err());
+    assert!(!fixture
+        .runtime
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|c| matches!(c, RuntimeCall::Steer(_, _))));
+    let edit = super::super::steering_queue::EditSteeringCommand {
+        session_id: launch.session_id.clone(),
+        invocation_id: launch.invocation_id.clone(),
+        input_id: command.input_id.clone(),
+        action: super::super::steering_queue::SteeringEditAction::Begin,
+        text: None,
+    };
+    assert_eq!(
+        fixture.sessions.edit_steering(edit.clone()).unwrap().state,
+        "editing"
+    );
+    fixture
+        .sessions
+        .steering_boundary(&launch.invocation_id, false);
+    assert!(!fixture
+        .runtime
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|c| matches!(c, RuntimeCall::Steer(_, _))));
+    fixture
+        .sessions
+        .edit_steering(super::super::steering_queue::EditSteeringCommand {
+            action: super::super::steering_queue::SteeringEditAction::Save,
+            text: Some("Revised requirements".into()),
+            ..edit.clone()
+        })
+        .unwrap();
+    let sink = fixture
+        .runtime
+        .active
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .1
+        .clone();
+    let mut message = text_event("A new progress message");
+    message.normalized.as_mut().unwrap().kind = NormalizedRuntimeEventKind::AgentMessage;
+    message.normalized.as_mut().unwrap().details = Some(json!({"role":"intermediate"}));
+    sink.emit_update(&launch.invocation_id, RuntimeUpdate::Event(message))
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let accepted = loop {
+        let interaction = fixture
+            .sessions
+            .session_interactions(&launch.session_id)
+            .unwrap()
+            .remove(0);
+        if interaction.state == "accepted" {
+            break interaction;
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    assert_eq!(accepted.content["text"], "Revised requirements");
+    assert!(fixture.sessions.edit_steering(edit).is_err());
     assert_eq!(fixture.launches().len(), 1);
     assert_eq!(fixture.runtime.calls.lock().unwrap().iter().filter(|call| matches!(call,
         RuntimeCall::Steer(id, input) if *id == launch.invocation_id && input == "steering-input"

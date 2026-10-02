@@ -461,7 +461,7 @@ export function projectedTranscriptContent(
         activity: item,
       }));
     const steering = (invocation.interactions ?? [])
-      .filter((interaction) => interaction.kind === 'steering')
+      .filter((interaction) => interaction.kind === 'steering' && interaction.state === 'accepted')
       .map((interaction): Extract<ProjectedTranscriptContent, { kind: 'steering' }> => ({
         anchor: eventAnchor(transcript.sessionId, invocation.id, 'steering', interaction.id),
         kind: 'steering',

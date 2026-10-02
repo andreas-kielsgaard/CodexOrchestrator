@@ -100,6 +100,41 @@ it('selects the sole matching worktree', async () => {
   });
   expect(result.branchChoice).toBeNull();
 });
+it('uses an explicitly requested branch instead of the repository default', async () => {
+  const graph = await source.branchGraph('repo');
+  const requestedSource: RepositoryBranchSource = {
+    ...source,
+    branchGraph: vi.fn(async () => ({
+      ...graph,
+      targets: [
+        ...graph.targets,
+        {
+          ...graph.targets[0],
+          target: {
+            kind: 'branch' as const,
+            repositoryId: 'repo',
+            branchRef: 'refs/heads/feature',
+          },
+          branchRef: 'refs/heads/feature',
+          displayName: 'feature',
+        },
+      ],
+    })),
+  };
+  const api = client([{ ...worktree('feature-tree'), branchRef: 'refs/heads/feature' }]);
+  const result = await resolveDefaultDraftTarget({
+    source: requestedSource,
+    client: api,
+    repositoryId: 'repo',
+    selection,
+    branchRef: 'refs/heads/feature',
+  });
+  expect(api.listTargets).toHaveBeenCalledWith('repo', 'refs/heads/feature');
+  expect(result.selection.workspace).toMatchObject({
+    kind: 'existing',
+    target: { branchRef: 'refs/heads/feature' },
+  });
+});
 
 it('creates the default branch on send when no worktree exists', async () => {
   const result = await resolveDefaultDraftTarget({

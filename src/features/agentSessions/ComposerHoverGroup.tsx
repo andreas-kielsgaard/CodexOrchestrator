@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 
 /** Anchored overlays retain their footprint and allow pointer travel into the controls. */
 export function ComposerHoverGroup({
@@ -15,26 +15,13 @@ export function ComposerHoverGroup({
   trigger?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-  const timeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const id = useId();
-  const clear = () => {
-    if (timeout.current) clearTimeout(timeout.current);
-    timeout.current = null;
-  };
   const show = () => {
-    clear();
     setOpen(true);
   };
   const hide = () => {
-    clear();
-    timeout.current = setTimeout(() => setOpen(false), 200);
+    setOpen(false);
   };
-  useEffect(
-    () => () => {
-      if (timeout.current) clearTimeout(timeout.current);
-    },
-    [],
-  );
   return (
     <div
       className={`composer-hover-group ${className}`}
@@ -42,10 +29,7 @@ export function ComposerHoverGroup({
       role={trigger ? 'group' : undefined}
       aria-label={trigger ? label : undefined}
       onMouseEnter={show}
-      onMouseLeave={(event) => {
-        const overlay = event.currentTarget.querySelector('.composer-hover-group__overlay');
-        if (!overlay?.contains(document.activeElement)) hide();
-      }}
+      onMouseLeave={hide}
       onFocus={show}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) hide();
@@ -66,7 +50,6 @@ export function ComposerHoverGroup({
             );
             (button ?? event.currentTarget).focus();
           }
-          clear();
           setOpen(false);
           event.stopPropagation();
         }

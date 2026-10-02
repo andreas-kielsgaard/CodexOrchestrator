@@ -3,6 +3,7 @@ import type {
   AgentSessionDetailsDto,
   AgentSessionUpdateDto,
 } from './contracts';
+import { applySteeringEvent } from './steeringProjection';
 
 export interface AgentSessionHistorySnapshot {
   readonly details: AgentSessionDetailsDto | null;
@@ -81,14 +82,34 @@ export function reduceAgentSessionHistory(
           : current.invocation,
       events: [...current.events, update.event],
     }));
-    return next ? { kind: 'changed', details: next } : { kind: 'reconcile' };
+    const interactions = applySteeringEvent(details.interactions, update.event);
+    return next
+      ? { kind: 'changed', details: interactions ? { ...next, interactions } : next }
+      : { kind: 'reconcile' };
   }
   if (update.kind === 'invocation_terminal' || update.kind === 'diagnostic_recorded') {
     const next = replaceInvocation(details, update.invocationId, (current) => ({
       ...current,
       invocation: update.invocation,
     }));
-    return next ? { kind: 'changed', details: next } : { kind: 'reconcile' };
+    return next
+      ? {
+          kind: 'changed',
+          details:
+            update.kind === 'invocation_terminal'
+              ? {
+                  ...next,
+                  interactions: next.interactions?.map((i) =>
+                    i.invocationId === update.invocationId &&
+                    i.kind === 'steering' &&
+                    i.state === 'queued'
+                      ? { ...i, state: 'expired' as const }
+                      : i,
+                  ),
+                }
+              : next,
+        }
+      : { kind: 'reconcile' };
   }
   if (update.kind === 'preparation_updated') {
     return { kind: 'unchanged', details };

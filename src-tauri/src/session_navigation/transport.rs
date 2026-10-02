@@ -15,6 +15,55 @@ use std::sync::Arc;
 use tauri::Emitter;
 use tauri::State;
 pub(crate) struct SessionNavigationTauriState(pub(crate) Arc<SessionNavigationService>);
+#[tauri::command]
+pub(crate) async fn preview_session_git_action(
+    state: State<'_, SessionNavigationTauriState>,
+    input: super::git_actions::GitActionInput,
+) -> Result<super::git_actions::GitActionPreview, String> {
+    let service = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || service.preview_git_action(&input))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+pub(crate) async fn execute_session_git_action(
+    app: tauri::AppHandle,
+    state: State<'_, SessionNavigationTauriState>,
+    input: super::git_actions::GitActionInput,
+    expected: super::git_actions::GitActionPreview,
+) -> Result<String, String> {
+    let service = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = service.execute_git_action(&input, &expected)?;
+        let refresh = service.clone();
+        let refreshed_app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            refresh
+                .branch_inventory
+                .refresh(&refresh.execution_targets, &refresh.catalog);
+            let _ = refreshed_app.emit("agent-session-navigation-changed", ());
+        });
+        let _ = app.emit("agent-session-navigation-changed", ());
+        Ok(result)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+pub(crate) async fn inspect_session_worktree(
+    state: State<'_, SessionNavigationTauriState>,
+    repository_id: String,
+    branch_ref: String,
+    device_id: String,
+    path: String,
+) -> Result<orchid_engine::protocol::WorktreeInspection, String> {
+    let service = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        service.inspect_navigation_worktree(&repository_id, &branch_ref, &device_id, &path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SessionNavigationDto {

@@ -14,6 +14,7 @@ export type SessionNavigationSelection =
   | {
       readonly kind: 'draft';
       readonly draftId: string;
+      readonly branchRef?: string;
       readonly folderTarget: SessionFolderTarget | null;
     };
 export const sessionIdOf = (selection: SessionNavigationSelection): string | null =>

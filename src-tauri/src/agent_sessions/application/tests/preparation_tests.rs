@@ -276,6 +276,9 @@ fn queued_send_now_steers_once_and_removes_only_the_accepted_message() {
         .get_invocation(&queued.invocation_id)
         .unwrap()
         .is_none());
+    assert_eq!(fixture.runtime.state.lock().unwrap().steering.len(), 0);
+    fixture.app.steering_boundary(&active.invocation_id, false);
+    fixture.wait(|| fixture.runtime.state.lock().unwrap().steering.len() == 1);
     assert_eq!(fixture.runtime.state.lock().unwrap().steering.len(), 1);
     assert_eq!(
         fixture.runtime.state.lock().unwrap().steering[0].1,
@@ -298,16 +301,10 @@ fn queued_send_now_steers_once_and_removes_only_the_accepted_message() {
 }
 
 #[test]
-fn queued_send_now_retains_rejected_messages_and_blocks_uncertain_delivery() {
+fn queued_send_now_retains_failed_steering_as_an_undelivered_interaction() {
     for (kind, expected) in [
-        (
-            RuntimePortErrorKind::NotActive,
-            crate::agent_sessions::queue::SessionQueueEntryState::Pending,
-        ),
-        (
-            RuntimePortErrorKind::Unavailable,
-            crate::agent_sessions::queue::SessionQueueEntryState::Blocked,
-        ),
+        (RuntimePortErrorKind::NotActive, "rejected"),
+        (RuntimePortErrorKind::Unavailable, "uncertain"),
     ] {
         let fixture = PreparationFixture::new();
         {
@@ -340,38 +337,33 @@ fn queued_send_now_retains_rejected_messages_and_blocks_uncertain_delivery() {
             .queue_entry_for_invocation(&queued.invocation_id)
             .unwrap()
             .unwrap();
-        assert!(fixture
+        fixture
             .app
             .send_queued_message_now(&active.session_id, &entry.id, view.revision, None)
-            .is_err());
-        assert_eq!(
+            .unwrap();
+        assert_eq!(fixture.runtime.state.lock().unwrap().steering.len(), 0);
+        fixture.app.steering_boundary(&active.invocation_id, false);
+        fixture.wait(|| {
             fixture
-                .repository
-                .queue_entry_for_invocation(&queued.invocation_id)
+                .app
+                .session_interactions(&active.session_id)
                 .unwrap()
-                .unwrap()
-                .state,
-            expected
-        );
+                .iter()
+                .any(|i| i.state == expected)
+        });
         assert!(fixture
             .repository
             .get_invocation(&queued.invocation_id)
             .unwrap()
-            .is_some());
-        if kind == RuntimePortErrorKind::NotActive {
-            fixture.runtime.state.lock().unwrap().steering_error = None;
-            let fresh = fixture.app.load_session_queue(&active.session_id).unwrap();
+            .is_none());
+        assert_eq!(
             fixture
                 .app
-                .send_queued_message_now(&active.session_id, &entry.id, fresh.revision, None)
-                .unwrap();
-            assert!(fixture
-                .repository
-                .get_invocation(&queued.invocation_id)
-                .unwrap()
-                .is_none());
-            assert_eq!(fixture.runtime.state.lock().unwrap().steering.len(), 2);
-        }
+                .session_interactions(&active.session_id)
+                .unwrap()[0]
+                .content["text"],
+            "Frozen submitted text"
+        );
     }
 }
 

@@ -11,6 +11,7 @@ export type RuntimeControlRecordKind =
   | 'runtime_request_unsupported'
   | 'runtime_request_response'
   | 'session_steering_pending'
+  | 'session_steering_queued'
   | 'session_steering_result'
   | 'runtime_working_directory_resolved'
   | 'runtime_process_exit';
@@ -21,6 +22,7 @@ const KINDS: readonly RuntimeControlRecordKind[] = [
   'runtime_request_unsupported',
   'runtime_request_response',
   'session_steering_pending',
+  'session_steering_queued',
   'session_steering_result',
   'runtime_working_directory_resolved',
   'runtime_process_exit',
@@ -34,4 +36,23 @@ export function runtimeControlRecordKind(
   const kind =
     payload && typeof payload === 'object' && 'kind' in payload ? payload.kind : undefined;
   return KINDS.find((candidate) => candidate === kind) ?? null;
+}
+
+export function runtimeSteeringRecord(event: Pick<AgentRuntimeEventDto, 'source' | 'rawPayload'>): {
+  kind: 'session_steering_queued' | 'session_steering_pending' | 'session_steering_result';
+  inputId?: string;
+  text?: string;
+  id?: string;
+  state?: import('./contracts').SessionInteractionDto['state'];
+  message?: string;
+  attachments?: import('./contracts').AgentImageAttachmentDto[];
+} | null {
+  const kind = runtimeControlRecordKind(event);
+  if (
+    kind !== 'session_steering_queued' &&
+    kind !== 'session_steering_pending' &&
+    kind !== 'session_steering_result'
+  )
+    return null;
+  return event.rawPayload as NonNullable<ReturnType<typeof runtimeSteeringRecord>>;
 }

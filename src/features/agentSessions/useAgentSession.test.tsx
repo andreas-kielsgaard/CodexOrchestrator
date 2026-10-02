@@ -170,6 +170,7 @@ describe('conversation state', () => {
     expect(sendExistingMessage).not.toHaveBeenCalled();
     expect(client.sent).toEqual([]);
     expect(result.current.draft).toBe('');
+    expect(result.current.steeringQueue).toEqual([]);
   });
 
   it('retains rejected steering text without sending a fallback turn', async () => {

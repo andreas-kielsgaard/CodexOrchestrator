@@ -1,8 +1,8 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ComposerHoverGroup } from './ComposerHoverGroup';
 
-it('opens above its trigger without removing it, and closes after 200ms outside the group', () => {
+it('opens above its trigger without removing it, and closes immediately outside the group', () => {
   vi.useFakeTimers();
   try {
     render(
@@ -17,14 +17,10 @@ it('opens above its trigger without removing it, and closes after 200ms outside 
     expect(overlay).toBeVisible();
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
     fireEvent.mouseLeave(trigger.parentElement!);
-    act(() => vi.advanceTimersByTime(199));
-    expect(overlay).toBeVisible();
-    // Traveling into the popup across the gap cancels dismissal.
+    expect(overlay).not.toBeVisible();
     fireEvent.mouseEnter(overlay);
-    act(() => vi.advanceTimersByTime(1));
     expect(overlay).toBeVisible();
     fireEvent.mouseLeave(trigger.parentElement!);
-    act(() => vi.advanceTimersByTime(200));
     expect(overlay).not.toBeVisible();
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
   } finally {

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, it } from 'vitest';
 import type { SessionQueueEntryViewDto } from '../../application/agentSessions/sessionQueue';
 import { SessionDeviceActivityList } from './SessionDeviceActivityList';
@@ -65,4 +65,29 @@ it('shows only compact active device action progress', () => {
   );
   expect(screen.getByText('Verify worktree')).toBeVisible();
   expect(screen.getByLabelText('1 of 2 actions complete')).toBeVisible();
+});
+it('shows planned actions while waiting and supports explicit execution', () => {
+  const run = vi.fn().mockResolvedValue(undefined);
+  render(
+    <SessionDeviceActivityList
+      activities={[
+        {
+          ...activity,
+          targetOperation: {
+            ...activity.targetOperation,
+            phase: 'pending',
+            projectedPlan: {
+              ...activity.targetOperation.projectedPlan,
+              steps: activity.targetOperation.actions,
+            },
+          },
+        },
+      ]}
+      onRunNow={run}
+    />,
+  );
+  expect(screen.getByText('Waiting for the next message')).toBeVisible();
+  expect(screen.getByText('Prepare device')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Run now' }));
+  expect(run).toHaveBeenCalledWith('entry');
 });

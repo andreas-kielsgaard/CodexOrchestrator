@@ -5,9 +5,17 @@
   width: min(820px, calc(100% - 32px));
   margin: 0 auto 6px;
   color: var(--text-primary);
+  height: 48px;
 }
 
 .session-queue > ol {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  box-sizing: border-box;
+  max-height: min(50vh, 400px);
+  overflow-y: auto;
   display: grid;
   gap: 2px;
   margin: 0;
@@ -90,7 +98,11 @@
   background: var(--surface-hover);
 }
 .session-queue__line {
+  cursor: pointer;
+}
+.session-queue__line:disabled {
   cursor: default;
+  opacity: 1;
 }
 
 .session-queue__state {

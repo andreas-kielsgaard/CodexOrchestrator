@@ -5,10 +5,14 @@ import { useCallback, useRef, useState, type KeyboardEvent } from 'react';
 import type {
   SessionNavigationModel,
   SessionNavigationRow,
+  SessionNavigationFolder,
 } from '../../application/agentSessions/navigation';
 import type {
   SessionFolderTarget,
   SessionPlacement,
+  NavigationBranch,
+  SessionNavigationClient,
+  SessionGitAction,
 } from '../../application/agentSessions/organization';
 import {
   navigationSiblings,
@@ -25,6 +29,8 @@ import type { SessionNavigationController } from './useSessionNavigation';
 import { useSessionNavigationDrag } from './useSessionNavigationDrag';
 import { SessionBlock } from './SessionBlock';
 import { SessionEntry } from './SessionEntry';
+import { BranchContextMenu } from './BranchContextMenu';
+import { SessionGitActionDialog } from './SessionGitActionDialog';
 
 export function SessionNavigation({
   model,
@@ -41,6 +47,8 @@ export function SessionNavigation({
   onSetIdentity,
   onConfigure,
   organizing = true,
+  onNewBranch,
+  actionsClient,
 }: {
   model: SessionNavigationModel;
   selectedSessionId: string | null;
@@ -56,13 +64,25 @@ export function SessionNavigation({
   onSetIdentity?(id: string): void;
   onConfigure?(id: string): void;
   organizing?: boolean;
+  onNewBranch?(branch: NavigationBranch): void;
+  actionsClient?: SessionNavigationClient;
 }) {
+  const [branchMenu, setBranchMenu] = useState<{
+    node: SessionNavigationFolder;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [gitDialog, setGitDialog] = useState<{
+    node: SessionNavigationFolder;
+    action: SessionGitAction;
+  } | null>(null);
   const [menu, setMenu] = useState<{ row: SessionNavigationRow; x: number; y: number } | null>(
     null,
   );
   const menuOrigin = useRef<HTMLElement | null>(null);
   const drag = useSessionNavigationDrag(model, organizing, onMove, onReorder);
   const openMenu = (row: SessionNavigationRow, x: number, y: number) => {
+    setBranchMenu(null);
     menuOrigin.current = tree.refs.current.get(row.id) ?? null;
     setMenu({ row, x, y });
   };
@@ -111,10 +131,12 @@ export function SessionNavigation({
       else tree.focus(row.parentId ?? undefined);
     } else if (
       (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) &&
-      row.node.kind === 'session'
+      (row.node.kind === 'session' || row.node.kind === 'folder')
     ) {
       const bounds = tree.refs.current.get(row.id)!.getBoundingClientRect();
-      openMenu(row.node, bounds.left + 20, bounds.bottom);
+      if (row.node.kind === 'session') openMenu(row.node, bounds.left + 20, bounds.bottom);
+      else if (actionsClient && (row.node.branch || row.node.id.endsWith(':sessions')))
+        setBranchMenu({ node: row.node, x: bounds.left + 20, y: bounds.bottom });
     } else if (event.key === 'Enter' || event.key === ' ') {
       if (row.node.kind === 'folder' || row.node.kind === 'group') tree.toggle(row.id);
       else if (row.node.kind === 'more') tree.showMore(row.node.folderId);
@@ -145,6 +167,15 @@ export function SessionNavigation({
             drag={drag}
             onNew={onNew}
             onOpenWorkflow={onOpenWorkflow}
+            onNewBranch={onNewBranch}
+            onMenu={
+              actionsClient
+                ? (node, x, y) => {
+                    setMenu(null);
+                    setBranchMenu({ node, x, y });
+                  }
+                : undefined
+            }
           >
             {render(entry.children)}
           </SessionBlock>
@@ -189,6 +220,26 @@ export function SessionNavigation({
     });
   return (
     <>
+      {branchMenu && actionsClient && (
+        <BranchContextMenu
+          node={branchMenu.node}
+          position={branchMenu}
+          client={actionsClient}
+          onClose={() => setBranchMenu(null)}
+          onAction={(action) => {
+            setGitDialog({ node: branchMenu.node, action });
+            setBranchMenu(null);
+          }}
+        />
+      )}
+      {gitDialog && actionsClient && (
+        <SessionGitActionDialog
+          node={gitDialog.node}
+          action={gitDialog.action}
+          client={actionsClient}
+          onClose={() => setGitDialog(null)}
+        />
+      )}
       {tree.view.sections.map((section) => (
         <section
           key={section.id}

@@ -49,6 +49,21 @@ pub(crate) struct QueueEntryAction {
     entry_id: String,
 }
 
+#[tauri::command]
+pub(crate) async fn run_agent_session_target_operation(
+    state: State<'_, AgentSessionTauriState>,
+    input: QueueEntryAction,
+) -> Result<SessionQueueView, String> {
+    let app = state.application.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        app.run_target_operation_now(&input.session_id, &input.entry_id)
+            .and_then(|_| app.load_session_queue_view(&input.session_id))
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SendQueuedMessageNowInput {

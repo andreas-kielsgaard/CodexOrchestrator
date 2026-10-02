@@ -256,6 +256,15 @@ it('allows draft model changes during a turn and still offers skills', async () 
   await user.keyboard('{Enter}');
   expect(input).toHaveValue('$review ');
 });
+it('ends slash command selection with space without inserting a command', async () => {
+  const { input, user, send } = setup();
+  await user.type(input, '/review');
+  await screen.findByRole('option', { name: /review/ });
+  await user.type(input, ' ');
+  expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  expect(input).toHaveValue('/review ');
+  expect(send).not.toHaveBeenCalled();
+});
 
 it('uses Ctrl+Enter for steering when available', async () => {
   const send = vi.fn();

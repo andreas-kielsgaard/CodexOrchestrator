@@ -17,6 +17,62 @@ fn local_selection(fixture: &PreparationFixture, name: &str) -> SessionExecution
 }
 
 #[test]
+fn an_empty_queue_holds_target_changes_until_a_message_or_explicit_run() {
+    for manual in [false, true] {
+        let fixture = PreparationFixture::new();
+        let queue = fixture
+            .app
+            .enqueue_session_target_operation(
+                &fixture.session.id,
+                TargetSwitchRequest::retarget(local_selection(&fixture, "deferred-switch")),
+                None,
+            )
+            .unwrap();
+        let entry = &queue.entries[0];
+        let SessionQueueEntryItem::TargetOperation { operation_id } = &entry.item else {
+            unreachable!()
+        };
+        fixture
+            .app
+            .dispatch_session_queue(&fixture.session.id)
+            .unwrap();
+        assert_eq!(
+            fixture
+                .repository
+                .target_operation(operation_id)
+                .unwrap()
+                .unwrap()
+                .phase,
+            TargetOperationPhase::Pending
+        );
+        assert_eq!(fixture.runtime.attempts(), 0);
+        if manual {
+            fixture
+                .app
+                .run_target_operation_now(&fixture.session.id, &entry.id)
+                .unwrap();
+        } else {
+            fixture
+                .app
+                .accept_prepared_message(fixture.input("after-deferred-switch"))
+                .unwrap();
+        }
+        fixture.wait(|| {
+            fixture
+                .repository
+                .target_operation(operation_id)
+                .unwrap()
+                .is_some_and(|op| op.phase == TargetOperationPhase::Completed)
+        });
+        if manual {
+            assert_eq!(fixture.runtime.attempts(), 0);
+        } else {
+            fixture.wait(|| fixture.runtime.attempts() == 1);
+        }
+    }
+}
+
+#[test]
 fn future_switch_waits_for_native_preparation_and_records_actual_execution_order() {
     let fixture = PreparationFixture::new();
     let first = fixture
@@ -52,6 +108,10 @@ fn future_switch_waits_for_native_preparation_and_records_actual_execution_order
     assert!(waiting.staged_target.is_none());
     let projection = waiting.projected_plan.clone();
     fixture.runtime.release(true);
+    fixture
+        .app
+        .accept_prepared_message(fixture.input("message-after-switch"))
+        .unwrap();
     fixture.wait(|| {
         fixture
             .repository
@@ -153,6 +213,10 @@ fn explicit_same_target_is_queued_then_disappears_without_history() {
         TargetOperationPhase::Pending
     );
     fixture.runtime.release(true);
+    fixture
+        .app
+        .accept_prepared_message(fixture.input("same-target-followup"))
+        .unwrap();
     fixture.wait(|| fixture.repository.target_operation(&id).unwrap().is_none());
     assert_eq!(
         fixture
@@ -477,6 +541,10 @@ fn migration_fixture(
     )
 }
 fn wait_migration(fixture: &PreparationFixture, operation_id: &str) {
+    let queue = fixture.app.load_session_queue(&fixture.session.id).unwrap();
+    if let Some(entry) = queue.entries.iter().find(|e| matches!(&e.item, SessionQueueEntryItem::TargetOperation {operation_id: id} if id == operation_id)) {
+        if entry.state == SessionQueueEntryState::Pending { fixture.app.run_target_operation_now(&fixture.session.id, &entry.id).unwrap(); }
+    }
     let started = std::time::Instant::now();
     loop {
         let operation = fixture
@@ -642,6 +710,10 @@ fn explicit_migration_blocks_a_dirty_destination_without_overwriting_it() {
     let SessionQueueEntryItem::TargetOperation { operation_id } = &queue.entries[0].item else {
         unreachable!()
     };
+    fixture
+        .app
+        .run_target_operation_now(&fixture.session.id, &queue.entries[0].id)
+        .unwrap();
     fixture.wait(|| {
         fixture
             .repository
@@ -709,6 +781,10 @@ fn a_disappeared_selected_folder_blocks_without_replacement() {
         .unwrap();
     std::fs::remove_dir(&path).unwrap();
     fixture.runtime.release(true);
+    fixture
+        .app
+        .accept_prepared_message(fixture.input("after-missing-switch"))
+        .unwrap();
     fixture.wait(|| {
         fixture
             .repository

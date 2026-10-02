@@ -34,7 +34,9 @@ export function presentSessionQueue(
   });
   const deviceActivities = queue.entries.filter(({ targetOperation }) =>
     targetOperation
-      ? targetOperation.phase === 'staging' || targetOperation.phase === 'activating'
+      ? targetOperation.phase === 'pending' ||
+        targetOperation.phase === 'staging' ||
+        targetOperation.phase === 'activating'
       : false,
   );
   const queuedInvocationIds = new Set(

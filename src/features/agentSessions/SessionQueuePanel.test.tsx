@@ -148,6 +148,42 @@ function controller(overrides: Partial<AgentSessionWorkspaceController> = {}) {
 }
 
 describe('SessionQueuePanel', () => {
+  it('pauses steering before opening its editor and removes it from the queue until saved', async () => {
+    const interaction = {
+      id: 's',
+      invocationId: 'invocation-1',
+      sequence: 1,
+      kind: 'steering' as const,
+      state: 'queued' as const,
+      content: { text: 'Original steering' },
+      result: null,
+    };
+    const editSteering = vi.fn().mockResolvedValue({ ...interaction, state: 'editing' });
+    const actions = { ...controller(), editSteering };
+    const { container } = render(
+      <SessionQueuePanel
+        queue={fixture()}
+        steeringEntries={[interaction]}
+        controller={actions}
+        onChooseTarget={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Edit steering: Original steering' }));
+    await screen.findByRole('heading', { name: 'Edit steering message' });
+    expect(editSteering).toHaveBeenCalledWith(interaction, 'begin');
+    expect(container.querySelector('.session-queue .is-steering')).toBeNull();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Steering message' }), {
+      target: { value: 'Revised steering' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save steering' }));
+    await waitFor(() =>
+      expect(editSteering).toHaveBeenLastCalledWith(
+        expect.objectContaining({ id: 's' }),
+        'save',
+        'Revised steering',
+      ),
+    );
+  });
   it('sends immediately from an icon without opening the editor', async () => {
     const sendQueueEntryNow = vi.fn(async () => true);
     render(
@@ -320,7 +356,7 @@ describe('SessionQueuePanel', () => {
     const rows = container.querySelectorAll('.session-queue li');
     expect(rows[0]).toHaveClass('is-steering');
     expect(rows[0]).toHaveTextContent('Change direction now');
-    expect(rows[0]).toHaveTextContent('Steering next');
+    expect(rows[0]).toHaveTextContent('Delivered to agent');
     const messageRow = screen.getByText('Do the next task').closest('li');
     expect(messageRow).toHaveTextContent('Queued');
     expect(messageRow).not.toHaveTextContent('Laptop');

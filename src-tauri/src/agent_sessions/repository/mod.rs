@@ -159,7 +159,13 @@ impl SqliteAgentSessionRepository {
                     }
                     None => (None, None, 0),
                 };
+                let (finished, unfinished) = transaction.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM agent_session_invocations WHERE session_id = ?1 AND status = 'completed'), EXISTS(SELECT 1 FROM agent_session_queue_entries WHERE session_id = ?1 AND state IN ('pending', 'executing', 'blocked'))",
+                    params![session.id.as_str()], |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?))
+                ).map_err(sql_unavailable("load Session completion state"))?;
+                let completion_state = if !finished { None } else if unfinished { Some("continued".into()) } else if latest_invocation_status.is_some_and(|s| s.is_terminal()) { Some("done".into()) } else { None };
                 Ok(AgentSessionSummary {
+                    completion_state,
                     pending_request_count,
                     session,
                     invocation_count,

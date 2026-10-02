@@ -2,7 +2,10 @@ import type { SessionWorkflowTarget } from '../../application/agentSessions/work
 import { ChevronDown, ChevronRight, Folder, SquarePen, GitBranch } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { SessionNavigationFolder } from '../../application/agentSessions/navigation';
-import type { SessionFolderTarget } from '../../application/agentSessions/organization';
+import type {
+  SessionFolderTarget,
+  NavigationBranch,
+} from '../../application/agentSessions/organization';
 import type { NavigationEntry } from '../../application/agentSessions/navigationView';
 import type { SessionNavigationController } from './useSessionNavigation';
 import type { SessionNavigationDrag } from './useSessionNavigationDrag';
@@ -16,6 +19,8 @@ export function SessionBlock({
   children,
   onNew,
   onOpenWorkflow,
+  onNewBranch,
+  onMenu,
 }: {
   entry: NavigationEntry;
   node: SessionNavigationFolder;
@@ -24,6 +29,8 @@ export function SessionBlock({
   children: ReactNode;
   onOpenWorkflow?(target: SessionWorkflowTarget): void;
   onNew(target: SessionFolderTarget | null): void;
+  onNewBranch?(branch: NavigationBranch): void;
+  onMenu?(node: SessionNavigationFolder, x: number, y: number): void;
 }) {
   const expanded = tree.expanded.has(node.id);
   const toggle = () => {
@@ -64,6 +71,16 @@ export function SessionBlock({
           tree.setFocusedId(node.id);
         }}
         {...drag.headerProps(node)}
+        onContextMenu={(event) => {
+          if (
+            !onMenu ||
+            !(node.branch || (node.role === 'section' && node.id.endsWith(':sessions')))
+          )
+            return;
+          event.preventDefault();
+          event.stopPropagation();
+          onMenu(node, event.clientX, event.clientY);
+        }}
       >
         {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         {node.branch && <GitBranch size={12} style={{ color: branchColor(node.branch.id) }} />}
@@ -86,7 +103,7 @@ export function SessionBlock({
             <GitBranch size={15} />
           </button>
         )}
-        {node.role !== 'branch' && (
+        {(node.role !== 'branch' || onNewBranch) && (
           <button
             className="folder-create session-icon-button"
             aria-label={`New session in ${node.label}`}
@@ -94,7 +111,8 @@ export function SessionBlock({
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation();
-              onNew(node.createTarget);
+              if (node.branch) onNewBranch?.(node.branch);
+              else onNew(node.createTarget);
             }}
           >
             <SquarePen size={15} />

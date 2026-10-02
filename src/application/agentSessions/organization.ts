@@ -36,13 +36,29 @@ export interface SessionNavigationData {
   readonly orders: readonly NavigationOrder[];
 }
 export interface NavigationBranch {
+  readonly worktrees?: readonly NavigationWorktree[];
   readonly id: string;
   readonly repositoryId: string;
   readonly branchRef: string;
   readonly createdAt: string | null;
   readonly paths: readonly string[];
 }
+export interface NavigationWorktree {
+  readonly deviceId: string;
+  readonly deviceName: string;
+  readonly path: string;
+  readonly head: string | null;
+  readonly createdAt: string | null;
+  readonly dirty: boolean | null;
+}
 export interface SessionNavigationClient {
+  previewGitAction?(input: SessionGitActionInput): Promise<SessionGitPreview>;
+  executeGitAction?(input: SessionGitActionInput, expected: SessionGitPreview): Promise<string>;
+  inspectWorktree?(
+    repositoryId: string,
+    branchRef: string,
+    worktree: NavigationWorktree,
+  ): Promise<SessionWorktreeInspection>;
   load(): Promise<SessionNavigationData>;
   move(
     sessionId: string,
@@ -52,6 +68,28 @@ export interface SessionNavigationClient {
   pin(sessionId: string, pinned: boolean): Promise<void>;
   reorder(scope: NavigationOrderScope, orderedIds: readonly string[]): Promise<void>;
   subscribeChanged?(listener: () => void): Promise<() => void>;
+}
+export type SessionGitAction = 'create' | 'rename' | 'delete' | 'fetch' | 'merge';
+export interface SessionGitActionInput {
+  repositoryId: string;
+  branchRef: string | null;
+  action: SessionGitAction;
+  value: string;
+  startPoint: string;
+}
+export interface SessionGitPreview {
+  path: string;
+  arguments: readonly string[];
+  status: string;
+}
+export interface SessionWorktreeInspection {
+  path: string;
+  branchRef: string | null;
+  head: string;
+  detached: boolean;
+  staged: { files: number; bytes: number };
+  unstaged: { files: number; bytes: number };
+  untracked: { files: number; bytes: number };
 }
 export const emptySessionNavigation = (): SessionNavigationData => ({
   summaries: [],

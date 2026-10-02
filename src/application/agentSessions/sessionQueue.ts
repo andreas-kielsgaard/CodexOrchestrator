@@ -132,6 +132,7 @@ export interface UpdateTargetOperationInputDto {
 }
 
 export interface SessionQueueClient {
+  runTargetOperation?(sessionId: string, entryId: string): Promise<SessionQueueViewDto>;
   loadQueue(sessionId: string): Promise<SessionQueueViewDto>;
   enqueueTargetOperation(input: {
     readonly sessionId: string;

@@ -508,6 +508,7 @@ impl AgentSessionRepository for FakeRepository {
                         .then_with(|| right.id.cmp(&left.id))
                 });
                 AgentSessionSummary {
+                    completion_state: None,
                     pending_request_count: super::interactions::pending_request_count(
                         &invocations
                             .iter()

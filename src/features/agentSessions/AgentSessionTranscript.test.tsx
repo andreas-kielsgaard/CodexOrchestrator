@@ -4,6 +4,53 @@ import { projectAgentSessionTranscript } from './transcriptProjector';
 import { runtimeEvent, sessionDetails } from './testFixtures';
 
 describe('AgentSessionTranscript', () => {
+  it('times steering work segments independently and hides held steering', () => {
+    const details = sessionDetails('completed', [
+      runtimeEvent(1, 'processing_update', 'First'),
+      runtimeEvent(4, 'processing_update', 'Second'),
+      runtimeEvent(7, 'processing_update', 'Third'),
+    ]);
+    details.invocations[0].invocation.startedAt = '2026-10-01T10:00:00Z';
+    details.invocations[0].invocation.completedAt = '2026-10-01T10:01:00Z';
+    details.interactions = [
+      {
+        id: 's1',
+        invocationId: 'invocation-1',
+        sequence: 3,
+        recordedAt: '2026-10-01T10:00:10Z',
+        kind: 'steering',
+        state: 'accepted',
+        content: { text: 'One' },
+        result: null,
+      },
+      {
+        id: 's2',
+        invocationId: 'invocation-1',
+        sequence: 6,
+        recordedAt: '2026-10-01T10:00:30Z',
+        kind: 'steering',
+        state: 'accepted',
+        content: { text: 'Two' },
+        result: null,
+      },
+      {
+        id: 's3',
+        invocationId: 'invocation-1',
+        sequence: 8,
+        kind: 'steering',
+        state: 'queued',
+        content: { text: 'Not delivered' },
+        result: null,
+      },
+    ];
+    renderTranscript(projectAgentSessionTranscript(details));
+    expect(screen.getAllByLabelText('Total working time').map((e) => e.textContent)).toEqual([
+      '10s',
+      '20s',
+      '30s',
+    ]);
+    expect(screen.queryByText('Not delivered')).not.toBeInTheDocument();
+  });
   it('opens running work by default', () => {
     renderTranscript(
       projectAgentSessionTranscript(

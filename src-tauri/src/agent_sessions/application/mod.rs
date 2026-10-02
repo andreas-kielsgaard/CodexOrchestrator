@@ -13,6 +13,7 @@ mod dependencies;
 mod diagnostics;
 mod direct_user;
 mod interactions;
+pub(crate) mod steering_queue;
 mod invocation;
 mod lifecycle;
 pub(crate) mod observation;
@@ -62,6 +63,7 @@ pub(crate) struct AgentSessionApplication {
     workspaces: Option<SessionWorkspaces>,
     product_skills: Arc<crate::execution_configuration::ProductSkillRoots>,
     interaction_lanes: Arc<interactions::InteractionLanes>,
+    steering_queue: Arc<steering_queue::PendingSteering>,
     capability_profiles: Option<Arc<crate::execution_configuration::CapabilityProfileService>>,
     endpoints: Option<Arc<crate::execution_targets::endpoints::ExecutionEndpoints>>,
     execution_target_service: Option<Arc<crate::execution_targets::ExecutionTargetService>>,
@@ -93,6 +95,7 @@ impl AgentSessionApplication {
             workspaces: None,
             product_skills: Default::default(),
             interaction_lanes: Arc::new(interactions::InteractionLanes::default()),
+            steering_queue: Arc::new(steering_queue::PendingSteering::default()),
             capability_profiles: None,
             endpoints: None,
             execution_target_service: None,

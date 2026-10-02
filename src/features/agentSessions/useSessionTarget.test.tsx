@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { repairClients, repairProfile } from '../workflowAuthoring/testFixtures';
 import { composerDraftCacheKey, writeCachedComposerDraft } from './composerDraftCache';
 import { remoteTarget, sessionTargetFixtures } from './sessionTargetFixtures';
@@ -9,6 +9,54 @@ import {
 } from './useSessionTarget';
 
 beforeEach(() => window.localStorage.clear());
+it('seeds a new branch draft once and retains later target choices on remount', async () => {
+  const folder = { kind: 'repository' as const, repositoryId: remoteTarget.repositoryId };
+  writeCachedComposerDraft(composerDraftCacheKey(null, folder), {
+    executionSelection: selectionForTarget(remoteTarget),
+  });
+  const first = renderHook(() =>
+    useSessionTarget(
+      undefined,
+      undefined,
+      null,
+      'branch-draft',
+      folder,
+      undefined,
+      remoteTarget.repositoryId,
+      'refs/heads/feature',
+    ),
+  );
+  expect(first.result.current.selection).toBeNull();
+  act(() => first.result.current.setTarget(remoteTarget));
+  first.unmount();
+  const second = renderHook(() =>
+    useSessionTarget(
+      undefined,
+      undefined,
+      null,
+      'branch-draft',
+      folder,
+      undefined,
+      remoteTarget.repositoryId,
+      'refs/heads/feature',
+    ),
+  );
+  await waitFor(() => expect(second.result.current.target).toEqual(remoteTarget));
+  second.unmount();
+  const third = renderHook(() =>
+    useSessionTarget(
+      undefined,
+      undefined,
+      null,
+      'next-branch-draft',
+      folder,
+      undefined,
+      remoteTarget.repositoryId,
+      'refs/heads/other',
+    ),
+  );
+  expect(third.result.current.selection).toBeNull();
+});
 
 it('requires a new choice when a cached worktree has disappeared', async () => {
   const folder = { kind: 'repository' as const, repositoryId: remoteTarget.repositoryId };

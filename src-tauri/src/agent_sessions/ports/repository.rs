@@ -59,6 +59,7 @@ pub(crate) struct ImportedTurnProvenance {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AgentSessionSummary {
+    pub(crate) completion_state: Option<String>,
     pub(crate) pending_request_count: usize,
     pub(crate) session: AgentSession,
     pub(crate) invocation_count: u64,

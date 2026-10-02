@@ -491,6 +491,7 @@ impl AgentSessionApplication {
                 )),
                 self.clone(),
             ));
+        persisted_sink = Arc::new(super::super::steering_queue::SteeringRuntimeUpdateSink::new(persisted_sink, self.clone()));
         if let Some(targets) = &self.execution_target_service {
             if destination.execution.is_remote() {
                 persisted_sink = Arc::new(DeviceActivityRuntimeUpdateSink::new(

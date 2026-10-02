@@ -6,6 +6,19 @@ use crate::agent_sessions::{
 use tauri::State;
 
 #[tauri::command]
+pub(crate) async fn edit_agent_session_steering(
+    state: State<'_, AgentSessionTauriState>,
+    input: crate::agent_sessions::application::steering_queue::EditSteeringCommand,
+) -> Result<SessionInteraction, String> {
+    let app = state.application.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        app.edit_steering(input).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub(crate) async fn steer_agent_session(
     state: State<'_, AgentSessionTauriState>,
     input: SteerAgentSessionCommand,
