@@ -5,7 +5,7 @@ import type { NavigationEntry } from '../../application/agentSessions/navigation
 import type { SessionNavigationController } from './useSessionNavigation';
 import type { SessionNavigationDrag } from './useSessionNavigationDrag';
 import { pendingRequestLabel } from './sessionAttention';
-import { branchColor } from '../../application/agentSessions/branchLayout';
+import { graphColorForKey as branchColor } from '../../theme/graphColors';
 
 export function SessionEntry({
   entry,

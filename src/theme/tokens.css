@@ -1,0 +1,69 @@
+/* Application palette. Feature styles own layout and consume these color roles. */
+:root {
+  color-scheme: dark;
+
+  --canvas: #141819;
+  --surface: #1b2022;
+  --surface-raised: #22292c;
+  --surface-muted: #181d1f;
+  --surface-hover: #2a3337;
+  --surface-selected: #233c33;
+  --control-background: #20272a;
+  --code-background: #151b1d;
+
+  --text-primary: #e5ebe8;
+  --text-secondary: #bdc8c2;
+  --text-muted: #a2b0a8;
+  --text-disabled: #83918a;
+  --text-on-accent: #f0f6f2;
+  --code-text: #d4dfd9;
+
+  --border: #39454a;
+  --border-subtle: #2e383c;
+  --border-strong: #596a70;
+  --control-border: #64767c;
+  --accent: #8dd5b3;
+  --accent-solid: #2f6b53;
+  --focus-ring: #e6bb7a;
+
+  --success: #91d7ab;
+  --success-surface: #20362b;
+  --success-border: #416c50;
+  --success-solid: #2e6947;
+  --warning: #ebc47c;
+  --warning-surface: #3b3020;
+  --warning-border: #826638;
+  --danger: #f0a5a0;
+  --danger-surface: #3c2629;
+  --danger-border: #8b5458;
+  --info: #9fc6ef;
+  --info-surface: #243347;
+  --info-border: #526d91;
+  --info-solid: #315f87;
+  --concern: #d3b2ec;
+  --concern-surface: #33283f;
+  --concern-border: #79618f;
+
+  --backdrop: rgb(5 9 10 / 70%);
+  --shadow-color: rgb(0 0 0 / 45%);
+  --shadow-color-strong: rgb(0 0 0 / 60%);
+  --surface-translucent: rgb(27 32 34 / 94%);
+  --surface-raised-translucent: rgb(34 41 44 / 94%);
+  --accent-ring: rgb(141 213 179 / 32%);
+  --info-ring: rgb(159 198 239 / 28%);
+  --warning-ring: rgb(235 196 124 / 32%);
+  --concern-ring: rgb(211 178 236 / 28%);
+
+  --graph-grid: #303a3e;
+  --graph-edge: #879a92;
+  --graph-lane-1: #87cbae;
+  --graph-lane-2: #c5aff0;
+  --graph-lane-3: #e6b080;
+  --graph-lane-4: #96c5e8;
+  --graph-lane-5: #e6a7c2;
+  --graph-lane-6: #c9cf8b;
+  --graph-lane-7: #8bd0d4;
+
+  --identity-default-background: #5f6f65;
+  --identity-default-foreground: #ffffff;
+}

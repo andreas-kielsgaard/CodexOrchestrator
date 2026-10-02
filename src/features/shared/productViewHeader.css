@@ -7,9 +7,9 @@
   align-items: center;
   gap: 14px;
   padding: 6px 12px;
-  border-bottom: 1px solid #c8d2d8;
-  background: #fffdf8;
-  box-shadow: 0 1px 0 rgb(23 33 27 / 3%);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: 0 1px 0 var(--shadow-color);
 }
 
 .product-view-header__title {
@@ -20,7 +20,7 @@
 }
 
 .product-view-header__title span {
-  color: #657680;
+  color: var(--text-muted);
   font-size: 0.66rem;
   font-weight: 700;
   letter-spacing: 0.035em;

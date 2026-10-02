@@ -1,9 +1,9 @@
 .validation-summary {
   padding: 11px 13px;
-  border: 1px solid #d6a89c;
+  border: 1px solid var(--border);
   border-radius: 9px;
-  background: #fff5f2;
-  color: #7a2e20;
+  background: var(--surface);
+  color: var(--danger);
   font-size: 0.75rem;
 }
 

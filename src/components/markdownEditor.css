@@ -1,16 +1,16 @@
 .markdown-editor {
   overflow: hidden;
-  border: 1px solid #cbd2ca;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .markdown-editor__mode {
   display: flex;
   gap: 3px;
   padding: 5px;
-  border-bottom: 1px solid #e0e4dd;
-  background: #f4f6f2;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
 }
 
 .markdown-editor__mode button {
@@ -20,7 +20,7 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #526058;
+  color: var(--text-secondary);
   font: inherit;
   font-size: 0.72rem;
   font-weight: 800;
@@ -29,9 +29,9 @@
 }
 
 .markdown-editor__mode button[aria-pressed='true'] {
-  background: #fff;
-  color: #245f48;
-  box-shadow: 0 1px 3px rgb(23 33 27 / 12%);
+  background: var(--surface-selected);
+  color: var(--accent);
+  box-shadow: 0 1px 3px var(--shadow-color);
 }
 
 .markdown-editor__rendered[hidden],
@@ -46,8 +46,8 @@
   padding: 13px 14px;
   border: 0;
   outline: 0;
-  background: #fff;
-  color: #283a30;
+  background: var(--surface);
+  color: var(--text-primary);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 0.78rem;
   line-height: 1.6;
@@ -55,14 +55,14 @@
 }
 
 .markdown-editor__plain:focus {
-  outline: 2px solid #39745a;
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 
 .markdown-editor__preview {
   min-height: 180px;
   padding: 16px;
-  color: #283a30;
+  color: var(--text-primary);
   font-size: 0.84rem;
   line-height: 1.65;
 }
@@ -121,13 +121,13 @@
 .markdown-content th,
 .markdown-content td {
   padding: 6px 9px;
-  border: 1px solid #d8ddd5;
+  border: 1px solid var(--border);
   text-align: left;
   white-space: nowrap;
 }
 
 .markdown-content a {
-  color: #245f48;
+  color: var(--accent);
 }
 
 .markdown-editor__rendered .markdown-editor__preview {

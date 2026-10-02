@@ -33,7 +33,7 @@
 
 .collapsible-section__toggle:hover,
 .collapsible-section__toggle:focus-visible {
-  background: rgb(80 100 88 / 8%);
+  background: var(--surface-raised-translucent);
 }
 
 .collapsible-section__toggle svg {

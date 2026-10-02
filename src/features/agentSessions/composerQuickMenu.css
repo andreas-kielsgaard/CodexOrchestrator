@@ -9,11 +9,11 @@
   right: 0;
   max-height: min(420px, 55vh);
   overflow: auto;
-  border: 1px solid var(--border-color, #d8ded9);
+  border: 1px solid var(--border);
   border-radius: 14px;
-  background: var(--surface, #fff);
-  color: var(--text-primary, #202921);
-  box-shadow: 0 12px 36px #14201926;
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: 0 12px 36px var(--shadow-color);
   padding: 6px;
 }
 .composer-quick-menu__heading {
@@ -30,7 +30,7 @@
   display: inline-flex;
   align-items: center;
   padding: 4px 7px;
-  border: 1px solid #d8ddd5;
+  border: 1px solid var(--control-border);
   border-radius: 6px;
   background: transparent;
   color: inherit;
@@ -51,8 +51,8 @@
   cursor: pointer;
 }
 .composer-quick-menu__option[data-highlighted='true'] {
-  background: #e9efe9;
-  outline: 1px solid #b4c8b8;
+  background: var(--surface-muted);
+  outline: 1px solid var(--focus-ring);
   outline-offset: -1px;
 }
 .composer-quick-menu__option[aria-disabled='true'] {
@@ -70,7 +70,7 @@
 }
 .composer-quick-menu__option small {
   display: block;
-  color: #536158;
+  color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.35;
   overflow-wrap: anywhere;
@@ -87,13 +87,13 @@
 .composer-quick-menu__footer {
   padding: 8px 10px 3px;
   font-size: 11px;
-  color: #536158;
+  color: var(--text-secondary);
 }
 .composer-quick-menu__limitation {
-  color: #775524;
+  color: var(--warning);
 }
 .composer-quick-notice {
   margin: 5px 0 0;
   font-size: 12px;
-  color: #39745a;
+  color: var(--accent);
 }

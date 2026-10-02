@@ -7,7 +7,7 @@
   flex-direction: column;
   overflow: hidden;
   overscroll-behavior: none;
-  background: #f4f6f8;
+  background: var(--surface);
 }
 
 .epic-plan-builder__back,
@@ -28,15 +28,15 @@
 }
 
 .epic-plan-builder__back {
-  color: #344854;
+  color: var(--text-secondary);
 }
 
 .epic-plan-builder__back:hover {
-  background: #edf1f4;
+  background: var(--surface-hover);
 }
 
 .epic-plan-builder__status {
-  color: #657680;
+  color: var(--text-muted);
   font-size: 0.66rem;
   font-weight: 700;
   letter-spacing: 0.035em;
@@ -49,12 +49,12 @@
 }
 
 .epic-plan-builder__cancel-draft {
-  border: 1px solid #d6afa4;
-  color: #8c3928;
+  border: 1px solid var(--border);
+  color: var(--warning);
 }
 
 .epic-plan-builder__cancel-draft:hover:not(:disabled) {
-  background: #fff5f2;
+  background: var(--warning-surface);
 }
 
 .epic-plan-builder__body {
@@ -73,10 +73,10 @@
   flex: 0 0 auto;
   margin: 0;
   padding: 8px 11px;
-  border: 1px solid #d6afa4;
+  border: 1px solid var(--border);
   border-radius: 7px;
-  background: #fff5f2;
-  color: #7a2e20;
+  background: var(--danger-surface);
+  color: var(--danger);
   font-size: 0.8rem;
 }
 
@@ -96,9 +96,9 @@
   min-width: 0;
   min-height: 0;
   height: 100%;
-  border: 1px solid #d5dce2;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fffdf8;
+  background: var(--surface);
   overflow: hidden;
 }
 
@@ -117,7 +117,7 @@
 }
 
 .epic-plan-builder__controls label {
-  color: #59655e;
+  color: var(--text-secondary);
   font-size: 0.76rem;
   font-weight: 780;
 }
@@ -126,7 +126,7 @@
   display: block;
   width: 100%;
   min-width: 0;
-  background: #fff;
+  background: var(--surface);
   font-weight: 650;
 }
 
@@ -134,7 +134,7 @@
   display: grid;
   gap: 8px;
   padding-top: 16px;
-  border-top: 1px solid #e0e4dd;
+  border-top: 1px solid var(--border);
 }
 
 .epic-plan-builder__plan-action,
@@ -145,10 +145,10 @@
   justify-content: center;
   gap: 7px;
   padding: 0 10px;
-  border: 1px solid #17211b;
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
-  background: #17211b;
-  color: #fffdf8;
+  background: var(--accent-solid);
+  color: var(--text-on-accent);
   font: inherit;
   font-size: 0.8rem;
   font-weight: 800;
@@ -156,12 +156,12 @@
 }
 
 .epic-plan-builder__initiate-action {
-  background: #fffdf8;
-  color: #17211b;
+  background: var(--surface);
+  color: var(--text-primary);
 }
 
 .epic-plan-builder__controls-actions p {
-  color: #718077;
+  color: var(--text-muted);
   font-size: 0.7rem;
   line-height: 1.35;
 }
@@ -201,8 +201,8 @@
   align-items: center;
   gap: 8px;
   padding: 0 12px;
-  border-bottom: 1px solid #e0e4dd;
-  background: #fffdf8;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
 }
 
 .epic-plan-builder__conversation .agent-session-identity-header {
@@ -237,12 +237,12 @@
 
 .epic-plan-builder__sprint {
   position: relative;
-  border-bottom: 1px solid #e4e9ed;
+  border-bottom: 1px solid var(--border);
 }
 
 .epic-plan-builder__proposal p {
   margin: 0;
-  color: #52616c;
+  color: var(--text-secondary);
   font-size: 0.86rem;
   line-height: 1.45;
 }
@@ -250,15 +250,15 @@
 .epic-plan-builder__proposal ul {
   margin: 9px 0 0;
   padding-left: 18px;
-  color: #40515d;
+  color: var(--text-secondary);
   font-size: 0.82rem;
 }
 
 .epic-plan-builder__empty {
   margin-top: 16px !important;
   padding: 12px;
-  border-left: 3px solid #8598a6;
-  background: #f1f4f6;
+  border-left: 3px solid var(--border-strong);
+  background: var(--surface);
 }
 
 .epic-plan-builder__sprint-toggle {
@@ -282,11 +282,11 @@
   align-items: baseline;
   gap: 9px;
   padding: 14px 0 8px;
-  color: #172532;
+  color: var(--text-primary);
 }
 
 .epic-plan-builder__sprint-heading > span {
-  color: #52616c;
+  color: var(--text-secondary);
   font-size: 0.7rem;
   font-weight: 800;
   line-height: 1.2;
@@ -304,7 +304,7 @@
 }
 
 .epic-plan-builder button:focus-visible {
-  outline: 3px solid #cf7b32;
+  outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -346,7 +346,7 @@
 
   .epic-plan-builder__proposal {
     border-top: 0;
-    border-left: 1px solid #d5dce2;
+    border-left: 1px solid var(--border);
     border-radius: 0 0 8px 8px;
   }
 

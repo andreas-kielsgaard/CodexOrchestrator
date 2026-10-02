@@ -5,7 +5,7 @@
   min-width: 0;
   height: 100%;
   min-height: 0;
-  color: #17211b;
+  color: var(--text-primary);
 }
 
 .worktree-review button,
@@ -17,7 +17,7 @@
 .worktree-review button:focus-visible,
 .worktree-review input:focus-visible,
 .worktree-review select:focus-visible {
-  outline: 3px solid #236b4b;
+  outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -26,9 +26,9 @@
   grid-template-columns: minmax(210px, 260px) minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
-  border: 1px solid #d8ddd5;
+  border: 1px solid var(--border);
   border-radius: 10px;
-  background: #f7f8f5;
+  background: var(--surface);
 }
 
 .worktree-review__navigator,
@@ -43,9 +43,9 @@
   gap: 16px;
   max-width: 680px;
   padding: 20px;
-  border: 1px solid #c9d2ca;
+  border: 1px solid var(--border);
   border-radius: 9px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .worktree-review__connect h2,
@@ -55,24 +55,24 @@
 
 .worktree-review__connect p {
   margin-top: 6px;
-  color: #536159;
+  color: var(--text-secondary);
   line-height: 1.5;
 }
 
 .worktree-review__navigator {
   padding: 18px 14px;
-  border-right: 1px solid #d8ddd5;
-  background: #eef1ec;
+  border-right: 1px solid var(--border);
+  background: var(--surface-muted);
 }
 
 .worktree-review__register-button {
   width: 100%;
   margin-top: 8px;
   padding: 8px 10px;
-  border: 1px solid #9ba9a0;
+  border: 1px solid var(--control-border);
   border-radius: 7px;
   background: transparent;
-  color: #244c38;
+  color: var(--accent);
   font-weight: 700;
   text-align: left;
 }
@@ -84,7 +84,7 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgb(12 24 17 / 58%);
+  background: var(--backdrop);
 }
 
 .worktree-review__modal {
@@ -94,10 +94,10 @@
   max-height: min(820px, calc(100vh - 48px));
   padding: 22px;
   overflow-y: auto;
-  border: 1px solid #aab7ae;
+  border: 1px solid var(--border);
   border-radius: 12px;
-  background: #f7f8f5;
-  box-shadow: 0 24px 70px rgb(0 0 0 / 28%);
+  background: var(--surface);
+  box-shadow: 0 24px 70px var(--shadow-color-strong);
 }
 
 .worktree-review__build-dialog {
@@ -125,7 +125,7 @@
 .worktree-review__registration-heading p,
 .worktree-review__discovery-status {
   margin-top: 5px;
-  color: #536159;
+  color: var(--text-secondary);
   line-height: 1.45;
 }
 
@@ -133,9 +133,9 @@
   display: grid;
   gap: 12px;
   padding: 16px;
-  border: 1px solid #d0d8d1;
+  border: 1px solid var(--border);
   border-radius: 9px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .worktree-review__registration-section form {
@@ -150,7 +150,7 @@
   gap: 3px;
   padding: 10px 12px;
   border-radius: 7px;
-  background: #eef1ec;
+  background: var(--surface-muted);
   font-size: 0.86rem;
 }
 
@@ -168,7 +168,7 @@
   display: grid;
   gap: 9px;
   padding: 12px;
-  border: 1px solid #dde2dd;
+  border: 1px solid var(--border);
   border-radius: 8px;
 }
 
@@ -181,18 +181,18 @@
 
 .worktree-review__registration-repository span,
 .worktree-review__local-instance span {
-  color: #607068;
+  color: var(--text-muted);
   font-size: 0.8rem;
 }
 
 .worktree-review__local-instance {
   padding-top: 9px;
-  border-top: 1px solid #e6eae6;
+  border-top: 1px solid var(--border);
 }
 
 .worktree-review__local-instance code {
   overflow: hidden;
-  color: #283b31;
+  color: var(--text-primary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -201,8 +201,8 @@
   align-self: center;
   padding: 3px 7px;
   border-radius: 999px;
-  background: #eceeea;
-  color: #5f6963;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
   font-size: 0.76rem;
 }
 
@@ -217,7 +217,7 @@
   display: grid;
   gap: 6px;
   min-width: 0;
-  color: #38463e;
+  color: var(--text-primary);
   font-size: 0.86rem;
   font-weight: 700;
 }
@@ -228,10 +228,10 @@
   min-width: 0;
   min-height: 40px;
   padding: 8px 10px;
-  border: 1px solid #bfc7c0;
+  border: 1px solid var(--control-border);
   border-radius: 7px;
-  background: #fff;
-  color: #17211b;
+  background: var(--control-background);
+  color: var(--text-primary);
 }
 
 .worktree-review__field--compact {
@@ -264,7 +264,7 @@
   min-width: 26px;
   padding: 2px 7px;
   border-radius: 999px;
-  background: #dce2dc;
+  background: var(--surface-hover);
   text-align: center;
   font-size: 0.76rem;
   font-weight: 750;
@@ -274,18 +274,18 @@
 .worktree-review__section {
   min-width: 0;
   padding: 18px;
-  border: 1px solid #d8ddd5;
+  border: 1px solid var(--border);
   border-radius: 9px;
-  background: #fffdf8;
+  background: var(--surface);
 }
 
 .worktree-review__branch-summary {
-  border-top: 4px solid #236b4b;
+  border-top: 4px solid var(--accent);
 }
 
 .worktree-review__step {
   margin-bottom: 5px;
-  color: #65736b;
+  color: var(--text-muted);
   font-size: 0.72rem;
   font-weight: 800;
   letter-spacing: 0.05em;
@@ -301,7 +301,7 @@
 .worktree-review__branch-title p,
 .worktree-review__supporting,
 .worktree-review__empty {
-  color: #5c6a62;
+  color: var(--text-secondary);
   font-size: 0.84rem;
 }
 
@@ -317,7 +317,7 @@
 }
 
 .worktree-review__build dt {
-  color: #6b776f;
+  color: var(--text-muted);
   font-size: 0.7rem;
   font-weight: 750;
   letter-spacing: 0.03em;
@@ -357,15 +357,15 @@
 }
 
 .worktree-review__primary {
-  border: 1px solid #173f2d;
-  background: #236b4b;
-  color: white;
+  border: 1px solid var(--accent);
+  background: var(--accent-solid);
+  color: var(--text-on-accent);
 }
 
 .worktree-review__secondary {
-  border: 1px solid #b7c0b9;
-  background: #fffdf8;
-  color: #253a2f;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-primary);
 }
 
 .worktree-review__primary:disabled,
@@ -385,7 +385,7 @@
   display: grid;
   gap: 10px;
   padding-top: 18px;
-  border-top: 1px solid #dde1dc;
+  border-top: 1px solid var(--border);
 }
 
 .worktree-review__detached-nav .worktree-review__secondary {
@@ -419,7 +419,7 @@
 
 .worktree-review__build-log p {
   margin: 0 0 8px;
-  color: #536159;
+  color: var(--text-secondary);
 }
 
 .worktree-review__build-log pre {
@@ -428,9 +428,13 @@
   padding: 12px;
   overflow: auto;
   border-radius: 7px;
-  background: #1c2420;
-  color: #e8f1e9;
-  font: 0.78rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+  background: var(--code-background);
+  color: var(--code-text);
+  font:
+    0.78rem/1.45 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -441,21 +445,21 @@
   gap: 12px;
   min-width: 0;
   padding: 13px;
-  border: 1px solid #d3d9d3;
+  border: 1px solid var(--control-border);
   border-radius: 8px;
-  background: #fafbf8;
+  background: var(--surface);
   cursor: pointer;
 }
 
 .worktree-review__worktree--selected {
-  border-color: #4e7c62;
-  background: #f0f7f1;
-  box-shadow: inset 3px 0 #236b4b;
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: inset 3px 0 var(--accent);
 }
 
 .worktree-review__worktree--active {
   border-style: double;
-  border-color: #8b6a28;
+  border-color: var(--accent);
 }
 
 .worktree-review__worktree--unavailable {
@@ -474,13 +478,13 @@
   display: grid;
   gap: 4px;
   min-width: 0;
-  color: #526159;
+  color: var(--text-secondary);
   font-size: 0.79rem;
 }
 
 .worktree-review__worktree-title {
   justify-content: flex-start;
-  color: #17211b;
+  color: var(--text-primary);
   font-size: 0.9rem;
 }
 
@@ -488,17 +492,17 @@
   flex: 0 0 auto;
   width: 9px;
   height: 9px;
-  border: 2px solid #fffdf8;
+  border: 2px solid var(--border-subtle);
   border-radius: 50%;
-  background: #c25334;
-  box-shadow: 0 0 0 1px #9d391f;
+  background: var(--danger);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .worktree-review__worktree-title code,
 .worktree-review__branch-title code {
   padding: 2px 5px;
   border-radius: 4px;
-  background: #e7ebe6;
+  background: var(--surface-muted);
   font-size: 0.76rem;
 }
 
@@ -511,20 +515,20 @@
 .worktree-review__status {
   padding: 2px 7px;
   border-radius: 999px;
-  background: #e5e9e5;
-  color: #4a574f;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
   font-size: 0.7rem;
   font-weight: 750;
 }
 
 .worktree-review__changed {
-  color: #875b10;
+  color: var(--warning);
   font-weight: 750;
 }
 
 .worktree-review__candidates {
   padding-top: 14px;
-  border-top: 1px solid #dde1dc;
+  border-top: 1px solid var(--border);
 }
 
 .worktree-review__candidates h3 {
@@ -537,20 +541,20 @@
   align-items: end;
   gap: 12px;
   padding: 12px;
-  border: 1px dashed #aeb8b0;
+  border: 1px dashed var(--border);
   border-radius: 8px;
-  background: #fafbf8;
+  background: var(--surface);
 }
 
 .worktree-review__candidate > div {
   display: grid;
   min-width: 0;
-  color: #58675f;
+  color: var(--text-secondary);
   font-size: 0.78rem;
 }
 
 .worktree-review__candidate strong {
-  color: #17211b;
+  color: var(--text-primary);
   font-size: 0.88rem;
 }
 
@@ -578,15 +582,15 @@
   grid-template-columns: auto minmax(0, 1fr);
   gap: 11px;
   padding: 11px 12px;
-  border: 1px solid #d3d9d3;
+  border: 1px solid var(--control-border);
   border-radius: 8px;
-  background: #fafbf8;
+  background: var(--surface);
   cursor: pointer;
 }
 
 .worktree-review__source-option--selected {
-  border-color: #4e7c62;
-  background: #f0f7f1;
+  border-color: var(--accent);
+  background: var(--surface);
 }
 
 .worktree-review__source-option:has(input:disabled) {
@@ -600,12 +604,12 @@
 }
 
 .worktree-review__source-option small {
-  color: #5d6b63;
+  color: var(--text-secondary);
   font-weight: 450;
 }
 
 .worktree-review__source-option .worktree-review__warning {
-  color: #704d0d;
+  color: var(--warning);
   font-weight: 700;
 }
 
@@ -617,15 +621,15 @@
 
 .worktree-review__active-context {
   padding: 14px;
-  border: 1px solid #c9ae72;
-  border-left: 4px solid #8b6a28;
+  border: 1px solid var(--accent);
+  border-left: 4px solid var(--accent);
   border-radius: 8px;
-  background: #fff8e8;
+  background: var(--surface);
 }
 
 .worktree-review__active-context p {
   margin: 5px 0 0;
-  color: #594d35;
+  color: var(--warning);
   font-size: 0.84rem;
 }
 
@@ -637,7 +641,7 @@
 }
 
 .worktree-review__active-context dt {
-  color: #6d6046;
+  color: var(--warning);
   font-size: 0.7rem;
   font-weight: 750;
   text-transform: uppercase;
@@ -655,14 +659,14 @@
 .worktree-review__alert,
 .worktree-review__success {
   padding: 12px 14px;
-  border: 1px solid #cad2cb;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #f4f6f2;
+  background: var(--success-surface);
   font-size: 0.84rem;
 }
 
 .worktree-review__disclosure {
-  border-left: 4px solid #315d45;
+  border-left: 4px solid var(--accent);
 }
 
 .worktree-review__disclosure p + p {
@@ -670,14 +674,14 @@
 }
 
 .worktree-review__notice--degraded {
-  border-color: #d8bd7b;
-  background: #fff8e8;
+  border-color: var(--accent);
+  background: var(--surface);
 }
 
 .worktree-review__notice--unavailable,
 .worktree-review__alert {
-  border-color: #d5a5a2;
-  background: #fff0ee;
+  border-color: var(--border);
+  background: var(--surface);
 }
 
 .worktree-review__notice ul {
@@ -687,13 +691,13 @@
 
 .worktree-review__alert {
   display: grid;
-  color: #722e2a;
+  color: var(--danger);
 }
 
 .worktree-review__success {
-  border-color: #a9c8b2;
-  background: #eef8f0;
-  color: #245b3b;
+  border-color: var(--border);
+  background: var(--success-surface);
+  color: var(--success);
   font-weight: 700;
 }
 
@@ -703,9 +707,9 @@
 
 .worktree-review__build {
   padding: 14px;
-  border: 1px solid #d7ddd7;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fafbf8;
+  background: var(--surface);
 }
 
 .worktree-review__build-title h3 {
@@ -715,24 +719,24 @@
 .worktree-review__application-id {
   display: block;
   margin-top: 3px;
-  color: #67746c;
+  color: var(--text-muted);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 0.72rem;
   font-weight: 500;
 }
 
 .worktree-review__status--completed {
-  background: #dfeee3;
-  color: #245b3b;
+  background: var(--success-surface);
+  color: var(--success);
 }
 
 .worktree-review__status--failed {
-  background: #f5dedb;
-  color: #7a2d29;
+  background: var(--danger-surface);
+  color: var(--danger);
 }
 
 .worktree-review__error-text {
-  color: #87342e;
+  color: var(--danger);
   font-size: 0.8rem;
   font-weight: 700;
 }
@@ -740,9 +744,9 @@
 .worktree-review__attention {
   margin: 10px 0 0;
   padding: 9px 11px;
-  border-left: 3px solid #9a6b16;
-  background: #fff4d6;
-  color: #63460d;
+  border-left: 3px solid var(--accent);
+  background: var(--surface-muted);
+  color: var(--warning);
   font-size: 0.82rem;
   font-weight: 700;
 }
@@ -750,7 +754,7 @@
 .worktree-review__loading,
 .worktree-review__empty {
   padding: 20px;
-  border: 1px dashed #c8cec8;
+  border: 1px dashed var(--border);
   border-radius: 8px;
   text-align: center;
 }
@@ -768,7 +772,7 @@
 
   .worktree-review__navigator {
     border-right: 0;
-    border-bottom: 1px solid #d8ddd5;
+    border-bottom: 1px solid var(--border);
   }
 
   .worktree-review__branch-list {
@@ -844,41 +848,6 @@
   width: 100%;
   margin-top: 20px;
 }
-.worktree-review__dialog {
-  position: fixed;
-  margin: auto;
-  box-sizing: border-box;
-  padding: 24px;
-  border: 1px solid #bdc9b8;
-  border-radius: 14px;
-  background: #fcfdf9;
-  color: #17211b;
-  box-shadow: 0 25px 100px #152c2540;
-  max-width: 96vw;
-  max-height: 94vh;
-  overflow: auto;
-}
-.worktree-review__dialog[open] {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-.worktree-review__dialog::backdrop {
-  background: #12231b70;
-  backdrop-filter: blur(2px);
-}
-.worktree-review__dialog button,
-.worktree-review__dialog input,
-.worktree-review__dialog select {
-  font: inherit;
-}
-.worktree-review__dialog button:focus-visible,
-.worktree-review__dialog input:focus-visible,
-.worktree-review__dialog select:focus-visible,
-.branch-graph__viewport:focus-visible {
-  outline: 3px solid #236b4b;
-  outline-offset: 2px;
-}
 .worktree-review__checkout-dialog {
   width: min(570px, 92vw);
 }
@@ -892,7 +861,7 @@
   width: min(950px, 92vw);
 }
 
-.worktree-review__dialog .worktree-review__actions {
+.modal-dialog .worktree-review__actions {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
@@ -907,5 +876,5 @@
 }
 .worktree-review__debug-option input {
   width: auto;
-  accent-color: #236b4b;
+  accent-color: var(--accent);
 }

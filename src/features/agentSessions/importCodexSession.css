@@ -3,14 +3,14 @@
   max-height: calc(100vh - 64px);
   overflow: auto;
   padding: 28px;
-  border: 1px solid #aeb9b1;
+  border: 1px solid var(--border);
   border-radius: 14px;
-  background: #fffdf8;
-  color: #17211b;
-  box-shadow: 0 20px 80px rgb(23 33 27 / 28%);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  box-shadow: 0 20px 80px var(--shadow-color-strong);
 }
 .codex-import-dialog::backdrop {
-  background: rgb(23 33 27 / 34%);
+  background: var(--backdrop);
 }
 .codex-import-dialog h2 {
   margin: 0 0 12px;
@@ -27,10 +27,10 @@
   width: 100%;
   box-sizing: border-box;
   padding: 10px;
-  border: 1px solid #aeb9b1;
+  border: 1px solid var(--control-border);
   border-radius: 8px;
-  background: #fff;
-  color: #17211b;
+  background: var(--control-background);
+  color: var(--text-primary);
   font: inherit;
 }
 .codex-import-dialog footer {
@@ -41,30 +41,30 @@
 }
 .codex-import-dialog button {
   padding: 8px 14px;
-  border: 1px solid #aeb9b1;
+  border: 1px solid var(--control-border);
   border-radius: 8px;
-  background: #fffdf8;
-  color: #17211b;
+  background: var(--surface-raised);
+  color: var(--text-primary);
   font: inherit;
   cursor: pointer;
 }
 .codex-import-dialog button[type='submit'] {
-  background: #304c3a;
-  border-color: #304c3a;
-  color: #fff;
+  background: var(--accent-solid);
+  border-color: var(--control-border);
+  color: var(--text-on-accent);
 }
 .codex-import-dialog button:disabled {
   opacity: 0.5;
   cursor: default;
 }
 .codex-import-dialog :focus-visible {
-  outline: 2px solid #3b6650;
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 .codex-import-preview {
   margin-top: 20px;
   padding: 16px;
-  background: #8881;
+  background: var(--surface-raised-translucent);
   border-radius: 8px;
 }
 .codex-import-preview h3 {
@@ -86,7 +86,7 @@
   overflow: auto;
 }
 .codex-import-dialog [role='alert'] {
-  color: #9d3025;
+  color: var(--danger);
 }
 .imported-turn-label {
   font-size: 0.8rem;

@@ -4,7 +4,7 @@
   overflow: auto;
   overscroll-behavior: none;
   padding: clamp(24px, 4vw, 52px);
-  background: #f4f6f8;
+  background: var(--canvas);
 }
 
 .orchestration-page-header {
@@ -22,16 +22,16 @@
 
 .orchestration-page-header > p:last-child {
   max-width: 760px;
-  color: #5f6d76;
+  color: var(--text-muted);
 }
 
 .orchestration-page-header__plan {
   margin-top: 16px;
   padding: 9px 13px;
-  border: 1px solid #164f7a;
+  border: 1px solid var(--accent);
   border-radius: 7px;
-  background: #164f7a;
-  color: #fff;
+  background: var(--accent-solid);
+  color: var(--text-on-accent);
   font: inherit;
   font-weight: 750;
   cursor: pointer;
@@ -41,10 +41,10 @@
   width: min(100%, 1060px);
   margin: 0 auto;
   overflow-x: auto;
-  border: 1px solid #d5dce2;
+  border: 1px solid var(--border);
   border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 8px 28px rgb(30 48 64 / 6%);
+  background: var(--surface);
+  box-shadow: 0 8px 28px var(--shadow-color);
 }
 
 .orchestration-list table {
@@ -56,9 +56,9 @@
 
 .orchestration-list th {
   padding: 13px 18px;
-  border-bottom: 1px solid #d5dce2;
-  background: #edf1f4;
-  color: #52616c;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
   font-size: 0.72rem;
   font-weight: 800;
   letter-spacing: 0.04em;
@@ -71,7 +71,7 @@
 
 .orchestration-list td {
   padding: 16px 18px;
-  border-bottom: 1px solid #e4e9ed;
+  border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
 
@@ -81,7 +81,7 @@
 
 .orchestration-list tbody tr:has(.orchestration-list__open:hover),
 .orchestration-list tbody tr:has(.orchestration-list__open:focus-visible) {
-  background: #f8fafb;
+  background: var(--surface-hover);
 }
 
 .orchestration-list__open {
@@ -91,14 +91,14 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: #172532;
+  color: var(--text-primary);
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
 .orchestration-list__open strong {
-  color: #164f7a;
+  color: var(--info);
   font-size: 0.94rem;
   text-decoration: underline;
   text-decoration-color: transparent;
@@ -110,7 +110,7 @@
 }
 
 .orchestration-list__open small {
-  color: #60707b;
+  color: var(--text-muted);
   font-size: 0.78rem;
 }
 
@@ -128,9 +128,9 @@
 }
 
 .movement-badge {
-  border: 1px solid #c7d7e3;
-  background: #edf5fa;
-  color: #245d82;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--info);
 }
 
 .epic-state {
@@ -138,34 +138,34 @@
 }
 
 .epic-state--running {
-  background: #e8f3fc;
-  color: #17659a;
+  background: var(--info-surface);
+  color: var(--info);
 }
 
 .epic-state--ready_to_continue {
-  background: #fff1ca;
-  color: #8a5b00;
+  background: var(--surface-muted);
+  color: var(--warning);
 }
 
 .epic-state--paused {
   border-style: dashed;
-  background: #fff8e6;
-  color: #8a6b23;
+  background: var(--surface);
+  color: var(--warning);
 }
 
 .epic-state--blocked {
-  background: #fff0ee;
-  color: #a1362b;
+  background: var(--danger-surface);
+  color: var(--danger);
 }
 
 .epic-state--completed {
-  background: #e9f6ee;
-  color: #287249;
+  background: var(--success-surface);
+  color: var(--success);
 }
 
 .orchestration-section button:focus-visible,
 .orchestration-section summary:focus-visible {
-  outline: 3px solid #cf7b32;
+  outline: 3px solid var(--focus-ring);
   outline-offset: 3px;
 }
 
@@ -225,7 +225,7 @@
   }
 
   .orchestration-list td::before {
-    color: #66747c;
+    color: var(--text-muted);
     content: attr(data-label);
     font-size: 0.68rem;
     font-weight: 850;

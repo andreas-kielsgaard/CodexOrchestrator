@@ -7,7 +7,7 @@
   grid-template-columns: minmax(0, 1.5fr) minmax(220px, 1fr);
   min-height: 200px;
   overflow: hidden;
-  border: 1px solid #d8ddd5;
+  border: 1px solid var(--border);
   border-radius: 8px;
 }
 .commit-range-dialog__list {
@@ -18,11 +18,11 @@
   display: flex;
   gap: 10px;
   padding: 13px;
-  border-bottom: 1px solid #e0e5dc;
+  border-bottom: 1px solid var(--border);
   cursor: pointer;
 }
 .commit-range-dialog__list label.is-selected {
-  background: #e5efe2;
+  background: var(--surface-selected);
 }
 .commit-range-dialog__list label span {
   min-width: 0;
@@ -35,14 +35,14 @@
   font-size: 13px;
 }
 .commit-range-dialog__list small {
-  color: #63725f;
+  color: var(--text-muted);
   font-size: 11px;
 }
 .commit-range-dialog__detail {
   padding: 18px;
-  background: #f4f6f1;
+  background: var(--surface);
   overflow: auto;
-  border-left: 1px solid #d8ddd5;
+  border-left: 1px solid var(--border);
   font-size: 13px;
 }
 .commit-range-dialog__detail code {
@@ -57,6 +57,6 @@
   }
   .commit-range-dialog__detail {
     border-left: 0;
-    border-top: 1px solid #d8ddd5;
+    border-top: 1px solid var(--border);
   }
 }

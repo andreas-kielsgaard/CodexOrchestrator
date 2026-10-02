@@ -9,7 +9,7 @@
   gap: 8px;
   margin-top: 16px;
   padding-top: 18px;
-  border-top: 1px solid #cfd8dd;
+  border-top: 1px solid var(--border);
 }
 
 .orchestration-context-rail__sprint > strong {
@@ -20,10 +20,10 @@
 .sprint-context-status {
   justify-self: start;
   padding: 4px 7px;
-  border: 1px solid #95c4e5;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: #eaf5fc;
-  color: #246f9c;
+  background: var(--info-surface);
+  color: var(--info);
   font-size: 0.68rem;
   font-weight: 800;
 }
@@ -32,9 +32,9 @@
   display: inline-flex;
   gap: 3px;
   padding: 3px;
-  border: 1px solid #d5dce2;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #f3f6f7;
+  background: var(--surface);
 }
 
 .epic-detail__identity {
@@ -45,7 +45,7 @@
 }
 
 .epic-detail__identity small {
-  color: #7a898f;
+  color: var(--text-muted);
   font-size: 0.62rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -53,7 +53,7 @@
 
 .epic-detail__identity strong {
   overflow: hidden;
-  color: #43565f;
+  color: var(--text-secondary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -64,7 +64,7 @@
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: #5b6d77;
+  color: var(--text-muted);
   font: inherit;
   font-size: 0.72rem;
   font-weight: 800;
@@ -72,9 +72,9 @@
 }
 
 .epic-detail__section-switch button[aria-current='page'] {
-  background: #fff;
-  box-shadow: 0 1px 4px rgb(31 48 56 / 12%);
-  color: #23453a;
+  background: var(--surface-selected);
+  box-shadow: 0 1px 4px var(--shadow-color);
+  color: var(--accent);
 }
 
 .epic-product-decisions-view {
@@ -85,7 +85,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: #f6f8f6;
+  background: var(--surface);
 }
 
 .epic-product-decisions-view__menu {
@@ -97,8 +97,8 @@
   gap: 12px;
   min-height: 54px;
   padding: 6px 14px;
-  border-bottom: 1px solid #d5dce2;
-  background: rgb(255 255 255 / 96%);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-translucent);
   backdrop-filter: blur(8px);
 }
 
@@ -111,7 +111,7 @@
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #344854;
+  color: var(--text-secondary);
   font: inherit;
   font-size: 0.78rem;
   font-weight: 800;
@@ -134,7 +134,7 @@
     margin-top: 0;
     padding: 0 0 0 12px;
     border-top: 0;
-    border-left: 1px solid #cfd8dd;
+    border-left: 1px solid var(--border);
   }
 
   .orchestration-context-rail__sprint > strong {

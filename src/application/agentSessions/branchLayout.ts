@@ -10,11 +10,6 @@ import {
   type NavigationOrderScope,
 } from './navigationOrder';
 
-export function branchColor(id: string) {
-  let hash = 0;
-  for (const char of id) hash = ((hash << 5) - hash + char.charCodeAt(0)) | 0;
-  return `hsl(${Math.abs(hash) % 360} 52% 42%)`;
-}
 export const layoutId = (node: SessionNavigationNode) =>
   node.kind === 'folder' ? node.order.id : `session:${node.summary.id}`;
 

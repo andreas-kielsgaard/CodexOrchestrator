@@ -13,6 +13,8 @@
     "windows": [
       {
         "title": "Codex Orchestrator",
+        "theme": "Dark",
+        "backgroundColor": "#141819",
         "width": 1280,
         "height": 820,
         "minWidth": 960,

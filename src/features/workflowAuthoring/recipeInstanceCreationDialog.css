@@ -5,7 +5,7 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgb(23 33 27 / 34%);
+  background: var(--backdrop);
 }
 
 .workflow-instance-creation-dialog {
@@ -15,11 +15,11 @@
   max-height: calc(100vh - 48px);
   padding: 20px;
   overflow: auto;
-  border: 1px solid #aeb9b1;
+  border: 1px solid var(--border);
   border-radius: 12px;
-  background: #fffdf8;
-  color: #17211b;
-  box-shadow: 0 20px 52px rgb(23 33 27 / 28%);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  box-shadow: 0 20px 52px var(--shadow-color-strong);
 }
 
 .workflow-instance-creation-dialog > header,
@@ -37,7 +37,7 @@
 
 .workflow-instance-creation-dialog__eyebrow {
   margin-bottom: 5px !important;
-  color: #66736c;
+  color: var(--text-muted);
   font-size: 0.68rem;
   font-weight: 850;
   letter-spacing: 0.08em;
@@ -45,7 +45,7 @@
 }
 
 .workflow-instance-creation-dialog__description {
-  color: #59655e;
+  color: var(--text-secondary);
   font-size: 0.82rem;
   line-height: 1.45;
 }
@@ -58,15 +58,15 @@
   place-items: center;
   border: 0;
   border-radius: 7px;
-  background: #eef1eb;
-  color: #45534b;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
   cursor: pointer;
 }
 
 .workflow-instance-creation-dialog__field {
   display: grid;
   gap: 6px;
-  color: #45534b;
+  color: var(--text-secondary);
   font-size: 0.78rem;
   font-weight: 800;
 }
@@ -77,30 +77,30 @@
   width: 100%;
   min-height: 40px;
   padding: 8px 10px;
-  border: 1px solid #aeb9b1;
+  border: 1px solid var(--control-border);
   border-radius: 8px;
-  background: #fff;
-  color: #17211b;
+  background: var(--control-background);
+  color: var(--text-primary);
   font: inherit;
   font-weight: 500;
 }
 
 .workflow-instance-creation-dialog__note {
   padding: 10px;
-  border: 1px solid #e1c9a9;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fff3df;
-  color: #6b4d21;
+  background: var(--surface-muted);
+  color: var(--warning);
   font-size: 0.76rem;
   font-weight: 700;
 }
 
 .workflow-instance-creation-dialog__error {
   padding: 10px;
-  border: 1px solid #d8a79d;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fff8f5;
-  color: #7a2e20;
+  background: var(--danger-surface);
+  color: var(--danger);
   font-size: 0.78rem;
   font-weight: 700;
 }
@@ -112,10 +112,10 @@
 .workflow-instance-creation-dialog > footer button {
   min-height: 36px;
   padding: 0 13px;
-  border: 1px solid #aeb9b1;
+  border: 1px solid var(--control-border);
   border-radius: 8px;
-  background: #fffdf8;
-  color: #17211b;
+  background: var(--surface-raised);
+  color: var(--text-primary);
   font: inherit;
   font-size: 0.82rem;
   font-weight: 800;
@@ -123,8 +123,8 @@
 }
 
 .workflow-instance-creation-dialog > footer .workflow-instance-creation-dialog__submit {
-  border-color: #17211b;
-  background: #f2ca52;
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
 }
 
 .workflow-instance-creation-dialog button:disabled,
@@ -135,7 +135,7 @@
 }
 
 .workflow-instance-creation-dialog :focus-visible {
-  outline: 3px solid rgb(154 121 32 / 35%);
+  outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
 

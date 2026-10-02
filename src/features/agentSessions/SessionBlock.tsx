@@ -6,7 +6,7 @@ import type { SessionFolderTarget } from '../../application/agentSessions/organi
 import type { NavigationEntry } from '../../application/agentSessions/navigationView';
 import type { SessionNavigationController } from './useSessionNavigation';
 import type { SessionNavigationDrag } from './useSessionNavigationDrag';
-import { branchColor } from '../../application/agentSessions/branchLayout';
+import { graphColorForKey as branchColor } from '../../theme/graphColors';
 
 export function SessionBlock({
   entry,

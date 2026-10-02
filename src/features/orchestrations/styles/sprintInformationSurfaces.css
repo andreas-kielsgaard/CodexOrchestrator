@@ -2,9 +2,9 @@
   display: flex;
   max-width: 100%;
   padding: 3px;
-  border: 1px solid #d5dce2;
+  border: 1px solid var(--border);
   border-radius: 9px;
-  background: #edf1f4;
+  background: var(--surface);
 }
 
 .sprint-tabs button {
@@ -14,7 +14,7 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #536771;
+  color: var(--text-secondary);
   font: inherit;
   font-size: 0.72rem;
   font-weight: 800;
@@ -22,9 +22,9 @@
 }
 
 .sprint-tabs button[aria-selected='true'] {
-  background: #fff;
-  color: #183c50;
-  box-shadow: 0 1px 3px rgb(37 58 70 / 16%);
+  background: var(--surface-selected);
+  color: var(--info);
+  box-shadow: 0 1px 3px var(--shadow-color);
 }
 
 .sprint-tabs button:focus-visible,
@@ -32,7 +32,7 @@
 .sprint-concern-detail__back:focus-visible,
 .sprint-concern-work-unit:focus-visible,
 .sprint-document-card button:focus-visible {
-  outline: 3px solid #cf7b32;
+  outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -52,7 +52,7 @@
   padding: clamp(18px, 3vw, 34px);
   overflow: auto;
   overscroll-behavior: none;
-  background: #f8fafb;
+  background: var(--surface);
 }
 
 .sprint-concerns-overview > header,
@@ -66,7 +66,7 @@
 .sprint-concerns-overview h2,
 .sprint-documents h2,
 .sprint-concern-detail h2 {
-  color: #183c50;
+  color: var(--concern);
   font-size: clamp(1.15rem, 2vw, 1.55rem);
   line-height: 1.18;
 }
@@ -75,7 +75,7 @@
 .sprint-documents header > p:last-child,
 .sprint-concern-detail header > p,
 .sprint-concern-detail__body {
-  color: #52656f;
+  color: var(--text-secondary);
   font-size: 0.84rem;
   line-height: 1.55;
 }
@@ -94,23 +94,23 @@
   min-height: 160px;
   padding: 16px;
   overflow-wrap: anywhere;
-  border: 1px solid #d7dfe4;
+  border: 1px solid var(--border);
   border-radius: 12px;
-  background: #fff;
-  color: #344854;
+  background: var(--surface);
+  color: var(--text-secondary);
   font: inherit;
   text-align: left;
-  box-shadow: 0 4px 14px rgb(35 57 68 / 6%);
+  box-shadow: 0 4px 14px var(--shadow-color);
   cursor: pointer;
 }
 
 .sprint-concern-card:hover {
-  border-color: #8ca7b5;
-  box-shadow: 0 7px 20px rgb(35 57 68 / 11%);
+  border-color: var(--concern-border);
+  box-shadow: 0 7px 20px var(--shadow-color);
 }
 
 .sprint-concern-card > strong {
-  color: #183c50;
+  color: var(--concern);
   font-size: 0.94rem;
 }
 
@@ -121,7 +121,7 @@
 
 .sprint-concern-card > small {
   align-self: end;
-  color: #71808a;
+  color: var(--text-muted);
   font-size: 0.7rem;
   font-weight: 700;
 }
@@ -129,10 +129,10 @@
 .sprint-semantic-state {
   justify-self: start;
   padding: 4px 8px;
-  border: 1px solid #b8c5cc;
+  border: 1px solid var(--border);
   border-radius: 999px;
-  background: #edf1f4;
-  color: #42545f;
+  background: var(--surface);
+  color: var(--text-secondary);
   font-size: 0.66rem;
   font-weight: 850;
   letter-spacing: 0.02em;
@@ -140,34 +140,34 @@
 }
 
 .sprint-semantic-state--completed {
-  border-color: #9bc5ae;
-  background: #e6f4ec;
-  color: #246143;
+  border-color: var(--success-border);
+  background: var(--success-surface);
+  color: var(--success);
 }
 
 .sprint-semantic-state--working,
 .sprint-semantic-state--under_review {
-  border-color: #8db8cf;
-  background: #e5f2f8;
-  color: #235d7b;
+  border-color: var(--info-border);
+  background: var(--info-surface);
+  color: var(--info);
 }
 
 .sprint-semantic-state--waiting_for_dependencies {
-  border-color: #d7bd83;
-  background: #fbf2dd;
-  color: #76541f;
+  border-color: var(--warning-border);
+  background: var(--warning-surface);
+  color: var(--warning);
 }
 
 .sprint-semantic-state--blocked {
-  border-color: #d9a3a3;
-  background: #f9e8e8;
-  color: #8a3636;
+  border-color: var(--border);
+  background: var(--danger-surface);
+  color: var(--danger);
 }
 
 .sprint-semantic-state--deferred {
-  border-color: #bcb1ce;
-  background: #f0ebf6;
-  color: #5c4974;
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--concern);
 }
 
 .sprint-concern-detail {
@@ -185,8 +185,8 @@
   padding: 0 9px;
   border: 0;
   border-radius: 7px;
-  background: #e9eef1;
-  color: #344854;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
   font: inherit;
   font-size: 0.75rem;
   font-weight: 800;
@@ -202,8 +202,8 @@
 .sprint-concern-detail__body {
   max-width: 760px;
   padding: 14px 16px;
-  border-left: 3px solid #8ca7b5;
-  background: #fff;
+  border-left: 3px solid var(--concern-border);
+  background: var(--surface);
 }
 
 .sprint-concern-detail > section {
@@ -213,7 +213,7 @@
 }
 
 .sprint-concern-detail h3 {
-  color: #344854;
+  color: var(--text-secondary);
   font-size: 0.78rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -232,10 +232,10 @@
   gap: 14px;
   min-width: 0;
   padding: 12px;
-  border: 1px solid #d7dfe4;
+  border: 1px solid var(--border);
   border-radius: 9px;
-  background: #fff;
-  color: #344854;
+  background: var(--surface);
+  color: var(--text-secondary);
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -251,19 +251,19 @@
   display: flex;
   align-items: center;
   flex: 0 0 auto;
-  color: #627680;
+  color: var(--text-muted);
   font-size: 0.7rem;
   font-weight: 750;
 }
 
 .sprint-concern-work-unit code {
-  color: #71808a;
+  color: var(--text-muted);
   font-size: 0.67rem;
 }
 
 .sprint-concern-work-unit strong {
   overflow-wrap: anywhere;
-  color: #183c50;
+  color: var(--concern);
   font-size: 0.8rem;
 }
 
@@ -285,10 +285,10 @@
   min-width: 0;
   padding: 14px 16px;
   overflow-wrap: anywhere;
-  border: 1px solid #d7dfe4;
+  border: 1px solid var(--border);
   border-radius: 10px;
-  background: #fff;
-  color: #52656f;
+  background: var(--surface);
+  color: var(--text-secondary);
   font: inherit;
   font-size: 0.74rem;
   text-align: left;
@@ -296,7 +296,7 @@
 }
 
 .sprint-document-card__content:hover {
-  border-color: #8ca7b5;
+  border-color: var(--accent);
 }
 
 .sprint-document-card__title {
@@ -308,14 +308,14 @@
 }
 
 .sprint-document-card__title strong {
-  color: #183c50;
+  color: var(--info);
   font-size: 0.83rem;
 }
 
 .sprint-document-card__title small {
   padding: 3px 6px;
   border-radius: 5px;
-  background: #edf1f4;
+  background: var(--surface);
   font-size: 0.64rem;
   font-weight: 800;
   text-transform: uppercase;
@@ -338,10 +338,10 @@
 .sprint-document-card__actions button {
   min-height: 30px;
   padding: 0 10px;
-  border: 1px solid #b8c5cc;
+  border: 1px solid var(--control-border);
   border-radius: 7px;
-  background: #fff;
-  color: #344854;
+  background: var(--surface);
+  color: var(--text-secondary);
   font: inherit;
   font-size: 0.72rem;
   font-weight: 800;
@@ -351,8 +351,8 @@
 .sprint-document-card__links > span {
   padding: 3px 6px;
   border-radius: 5px;
-  background: #f0f3f5;
-  color: #52656f;
+  background: var(--surface);
+  color: var(--text-secondary);
   font-size: 0.66rem;
   font-weight: 700;
 }
@@ -360,7 +360,7 @@
 .sprint-documents__status {
   min-height: 22px;
   margin-top: 12px;
-  color: #76541f;
+  color: var(--warning);
   font-size: 0.76rem;
   font-weight: 750;
 }

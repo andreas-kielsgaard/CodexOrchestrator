@@ -5,7 +5,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: #cfd8dd;
+  background: var(--surface-hover);
 }
 
 .resizable-split--vertical {
@@ -22,7 +22,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: #fff;
+  background: var(--surface);
 }
 
 .resizable-split__separator-shell {
@@ -30,7 +30,7 @@
   z-index: 5;
   min-width: 0;
   min-height: 0;
-  background: #d7dfe3;
+  background: var(--surface-hover);
 }
 
 .resizable-split__separator {
@@ -38,7 +38,7 @@
   width: 100%;
   height: 100%;
   place-items: center;
-  background: #d7dfe3;
+  background: var(--surface-hover);
   cursor: col-resize;
   touch-action: none;
 }
@@ -51,7 +51,7 @@
   width: 3px;
   height: 34px;
   border-radius: 999px;
-  background: #83949d;
+  background: var(--border-strong);
 }
 
 .resizable-split--vertical > .resizable-split__separator-shell .resizable-split__separator > span {
@@ -66,10 +66,10 @@
   transform: translateY(-50%);
   min-height: 26px;
   padding: 0 8px;
-  border: 1px solid #aebdc5;
+  border: 1px solid var(--border);
   border-radius: 5px;
-  background: #fff;
-  color: #3f5662;
+  background: var(--surface);
+  color: var(--info);
   font: inherit;
   font-size: 0.66rem;
   font-weight: 800;
@@ -78,7 +78,7 @@
 
 .resizable-split__separator:focus-visible,
 .resizable-split__maximize:focus-visible {
-  outline: 3px solid #cf7b32;
+  outline: 3px solid var(--focus-ring);
   outline-offset: -1px;
 }
 

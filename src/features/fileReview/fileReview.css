@@ -5,7 +5,7 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  background: #f4f6f8;
+  background: var(--canvas);
 }
 
 .file-review-header {
@@ -14,8 +14,8 @@
   justify-content: space-between;
   gap: 28px;
   padding: 22px 28px 18px;
-  border-bottom: 1px solid #d8ddd5;
-  background: #fffdf8;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
 }
 
 .file-review-header h1 {
@@ -27,7 +27,7 @@
 
 .file-review-header p:last-child {
   margin: 5px 0 0;
-  color: #66736c;
+  color: var(--text-muted);
   font-size: 0.84rem;
 }
 
@@ -43,10 +43,10 @@
   align-items: center;
   gap: 6px;
   padding: 0 10px;
-  border: 1px solid #b8cfc2;
+  border: 1px solid var(--border);
   border-radius: 999px;
-  background: #eef7f1;
-  color: #287249;
+  background: var(--surface);
+  color: var(--accent);
   font-size: 0.76rem;
   font-weight: 800;
   white-space: nowrap;
@@ -65,13 +65,13 @@
   grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
-  border-right: 1px solid #d8ddd5;
-  background: #f9faf8;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
 }
 
 .file-review-files > header {
   padding: 15px 15px 13px;
-  border-bottom: 1px solid #d8ddd5;
+  border-bottom: 1px solid var(--border);
 }
 
 .file-review-files > header > div {
@@ -93,12 +93,12 @@
 
 .file-review-files b,
 .file-review-file-counts b {
-  color: #287249;
+  color: var(--accent);
 }
 
 .file-review-files i,
 .file-review-file-counts i {
-  color: #a1362b;
+  color: var(--danger);
   font-style: normal;
 }
 
@@ -106,13 +106,13 @@
   display: grid;
   gap: 2px;
   margin: 9px 0 0;
-  color: #66736c;
+  color: var(--text-muted);
   font-size: 0.7rem;
   line-height: 1.35;
 }
 
 .file-review-files > header p strong {
-  color: #356372;
+  color: var(--info);
 }
 
 .file-review-files nav {
@@ -132,19 +132,19 @@
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #17211b;
+  color: var(--text-primary);
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
 .file-review-files nav button:hover {
-  background: #eef1eb;
+  background: var(--surface-hover);
 }
 
 .file-review-files nav button.active {
-  background: #dfeae3;
-  box-shadow: inset 3px 0 #356372;
+  background: var(--surface-selected);
+  box-shadow: inset 3px 0 var(--accent);
 }
 
 .file-review-files nav button > span:nth-child(2) {
@@ -164,7 +164,7 @@
 }
 
 .file-review-files nav button small {
-  color: #6b756f;
+  color: var(--text-muted);
   font-size: 0.65rem;
 }
 
@@ -176,8 +176,8 @@
   justify-content: center;
   padding: 2px 7px;
   border-radius: 5px;
-  background: #e7ebe4;
-  color: #4a564f;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
   font-size: 0.65rem;
   font-weight: 900;
   letter-spacing: 0.03em;
@@ -185,23 +185,23 @@
 }
 
 .file-review-change--added {
-  background: #e9f6ee;
-  color: #287249;
+  background: var(--success-surface);
+  color: var(--success);
 }
 
 .file-review-change--deleted {
-  background: #fff0ee;
-  color: #a1362b;
+  background: var(--danger-surface);
+  color: var(--danger);
 }
 
 .file-review-change--modified {
-  background: #e8f3fc;
-  color: #17659a;
+  background: var(--info-surface);
+  color: var(--info);
 }
 
 .file-review-change--renamed {
-  background: #fff1ca;
-  color: #8a5b00;
+  background: var(--warning-surface);
+  color: var(--warning);
 }
 
 .file-review-inspector {
@@ -209,7 +209,7 @@
   grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
-  background: #fff;
+  background: var(--surface);
 }
 
 .file-review-toolbar {
@@ -220,8 +220,8 @@
   justify-content: space-between;
   gap: 18px;
   padding: 9px 14px;
-  border-bottom: 1px solid #d8ddd5;
-  background: #fffdf8;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
 }
 
 .file-review-path {
@@ -249,7 +249,7 @@
 }
 
 .file-review-path small {
-  color: #66736c;
+  color: var(--text-muted);
   font-size: 0.66rem;
 }
 
@@ -278,9 +278,9 @@
   display: inline-flex;
   gap: 2px;
   padding: 2px;
-  border: 1px solid #d8ddd5;
+  border: 1px solid var(--border);
   border-radius: 7px;
-  background: #f2f4f1;
+  background: var(--surface);
 }
 
 .file-review-segment button {
@@ -292,7 +292,7 @@
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: #66736c;
+  color: var(--text-muted);
   font: inherit;
   font-size: 0.7rem;
   font-weight: 800;
@@ -300,16 +300,16 @@
 }
 
 .file-review-segment button.active {
-  background: #fff;
-  color: #17211b;
-  box-shadow: 0 1px 3px rgb(23 33 27 / 12%);
+  background: var(--surface-selected);
+  color: var(--text-primary);
+  box-shadow: 0 1px 3px var(--shadow-color);
 }
 
 .file-review-inspector__body {
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  background: #fff;
+  background: var(--surface);
 }
 
 .file-review-diff {
@@ -328,15 +328,15 @@
 .file-review-hunk {
   overflow: hidden;
   margin-bottom: 14px;
-  border: 1px solid #d8ddd5;
+  border: 1px solid var(--border);
   border-radius: 7px;
 }
 
 .file-review-hunk > header {
   padding: 7px 12px;
-  border-bottom: 1px solid #cfd8dd;
-  background: #edf4f7;
-  color: #356372;
+  border-bottom: 1px solid var(--border);
+  background: var(--info-surface);
+  color: var(--info);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 0.72rem;
   font-weight: 750;
@@ -346,7 +346,7 @@
   display: grid;
   grid-template-columns: 44px 44px minmax(0, 1fr);
   min-height: 23px;
-  border-bottom: 1px solid rgb(216 221 213 / 50%);
+  border-bottom: 1px solid var(--border);
 }
 
 .file-review-line:last-child {
@@ -356,8 +356,8 @@
 .file-review-line-number {
   display: block;
   padding: 3px 8px;
-  border-right: 1px solid rgb(187 196 187 / 55%);
-  color: #859089;
+  border-right: 1px solid var(--border);
+  color: var(--text-muted);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 0.68rem;
   text-align: right;
@@ -382,23 +382,23 @@
 }
 
 .file-review-line--addition {
-  background: #eaf7ee;
+  background: var(--success-surface);
 }
 
 .file-review-line--addition code > span {
-  color: #287249;
+  color: var(--success);
 }
 
 .file-review-line--deletion {
-  background: #fff0ee;
+  background: var(--danger-surface);
 }
 
 .file-review-line--deletion code > span {
-  color: #a1362b;
+  color: var(--danger);
 }
 
 .file-review-line--empty {
-  background: #f5f6f4;
+  background: var(--surface-muted);
 }
 
 .file-review-context-control {
@@ -406,9 +406,9 @@
   min-height: 27px;
   padding: 3px 12px;
   border: 0;
-  border-bottom: 1px solid #d8ddd5;
-  background: #f2f7f9;
-  color: #356372;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-muted);
+  color: var(--info);
   font: inherit;
   font-size: 0.68rem;
   font-weight: 800;
@@ -417,7 +417,7 @@
 }
 
 .file-review-context-control:hover {
-  background: #e5f0f4;
+  background: var(--surface-hover);
 }
 
 .file-review-split__row {
@@ -430,21 +430,21 @@
   grid-template-columns: 44px minmax(0, 1fr);
   min-width: 0;
   min-height: 23px;
-  border-bottom: 1px solid rgb(216 221 213 / 50%);
+  border-bottom: 1px solid var(--border);
 }
 
 .file-review-split__cell:first-child {
-  border-right: 1px solid #bbc4bb;
+  border-right: 1px solid var(--border);
 }
 
 .file-review-rendered {
   width: min(100% - 40px, 920px);
   margin: 20px auto;
   padding: 24px 28px 36px;
-  border: 1px solid #d8ddd5;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fffdf8;
-  box-shadow: 0 8px 24px rgb(23 33 27 / 7%);
+  background: var(--surface);
+  box-shadow: 0 8px 24px var(--shadow-color);
 }
 
 .file-review-rendered > header {
@@ -453,8 +453,8 @@
   gap: 7px;
   margin-bottom: 24px;
   padding-bottom: 11px;
-  border-bottom: 1px solid #d8ddd5;
-  color: #66736c;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
   font-size: 0.71rem;
   font-weight: 850;
   letter-spacing: 0.08em;
@@ -462,7 +462,7 @@
 }
 
 .file-review-rendered .agent-markdown {
-  color: #17211b;
+  color: var(--text-primary);
   font-size: 0.91rem;
   line-height: 1.65;
 }
@@ -504,14 +504,14 @@
 
 .file-review-rendered .agent-markdown blockquote {
   padding-left: 12px;
-  border-left: 3px solid #bbc4bb;
-  color: #59655e;
+  border-left: 3px solid var(--border);
+  color: var(--text-secondary);
 }
 
 .file-review-rendered .agent-markdown code {
   padding: 0.1em 0.3em;
   border-radius: 4px;
-  background: #e9ede7;
+  background: var(--surface-muted);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 0.86em;
 }
@@ -519,9 +519,9 @@
 .file-review-rendered .agent-markdown pre {
   overflow: auto;
   padding: 12px 14px;
-  border: 1px solid #d8ddd5;
+  border: 1px solid var(--border);
   border-radius: 7px;
-  background: #eef1eb;
+  background: var(--surface-muted);
 }
 
 .file-review-rendered .agent-markdown pre code {
@@ -540,12 +540,12 @@
 .file-review-rendered .agent-markdown th,
 .file-review-rendered .agent-markdown td {
   padding: 6px 9px;
-  border: 1px solid #d8ddd5;
+  border: 1px solid var(--border);
   text-align: left;
 }
 
 .file-review-rendered .agent-markdown a {
-  color: #245f48;
+  color: var(--accent);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -556,10 +556,10 @@
   margin: 16px auto;
   padding: 18px 20px;
   overflow: auto;
-  border: 1px solid #d8ddd5;
+  border: 1px solid var(--border);
   border-radius: 7px;
-  background: #f8faf7;
-  color: #17211b;
+  background: var(--surface);
+  color: var(--text-primary);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 0.75rem;
   line-height: 1.55;
@@ -573,13 +573,13 @@
   min-width: 0;
   min-height: 100%;
   padding: 40px;
-  color: #66736c;
+  color: var(--text-muted);
   text-align: center;
 }
 
 .file-review-state h2 {
   margin: 10px 0 4px;
-  color: #17211b;
+  color: var(--text-primary);
   font-size: 1.05rem;
 }
 
@@ -591,7 +591,7 @@
 
 .file-review-screen button:focus-visible,
 .file-review-screen select:focus-visible {
-  outline: 3px solid #cf7b32;
+  outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
 

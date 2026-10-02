@@ -5,7 +5,7 @@
   min-height: 0;
   padding: 14px 10px 10px;
   border-right: 0;
-  background: #fffdf8;
+  background: var(--control-background);
 }
 .agent-session-selector > header {
   display: flex;
@@ -34,7 +34,7 @@
 }
 .session-section-heading h2 {
   margin: 0;
-  color: #777873;
+  color: var(--text-muted);
   font-size: 12px;
   font-weight: 600;
 }
@@ -46,21 +46,21 @@
   padding: 2px 6px;
   border-radius: 5px;
   cursor: pointer;
-  color: #303530;
+  color: var(--text-primary);
   font-size: 14px;
   line-height: 20px;
   box-sizing: border-box;
 }
 .session-tree-row > svg {
   flex-shrink: 0;
-  color: #777d76;
+  color: var(--text-muted);
 }
 .session-tree-row:hover,
 .session-tree-row.is-selected {
-  background: #e8e8e2;
+  background: var(--surface-selected);
 }
 .session-tree-row:focus-visible {
-  outline: 2px solid #727b70;
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 .session-tree-label {
@@ -78,15 +78,15 @@
 }
 .session-container--section,
 .session-container--workflow {
-  border: 1px solid #e0dfd9;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #f8f7f2;
+  background: var(--canvas);
 }
 .session-container--section > .session-block-heading {
   font-size: 13px;
 }
 .session-container--workflow {
-  background: #fffdf8;
+  background: var(--surface);
 }
 .session-container--section > .session-block-content,
 .session-container--workflow > .session-block-content {
@@ -103,14 +103,14 @@
   cursor: grabbing;
 }
 .session-owner-group {
-  background: #efeee9;
+  background: var(--surface-muted);
   border-radius: 6px;
   padding: 3px 3px 4px;
   margin: 4px 0;
 }
 .session-owner-heading {
   padding: 2px 6px 3px;
-  color: #71736d;
+  color: var(--text-muted);
   font-size: 11px;
   font-weight: 600;
   line-height: 16px;
@@ -130,15 +130,15 @@
   border: 0;
   border-radius: 4px;
   background: transparent;
-  color: #71776f;
+  color: var(--text-muted);
   cursor: pointer;
 }
 .agent-session-selector .session-icon-button:hover {
-  background: #dcded6;
-  color: #343c33;
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }
 .agent-session-selector .session-icon-button:focus-visible {
-  outline: 2px solid #727b70;
+  outline: 2px solid var(--focus-ring);
 }
 .folder-create,
 .session-pin,
@@ -158,7 +158,7 @@
   z-index: 2;
   position: absolute;
   height: 2px;
-  background: #697860;
+  background: var(--accent);
   left: 0;
   right: 0;
   pointer-events: none;
@@ -170,13 +170,13 @@
   bottom: -2px;
 }
 .session-show-more {
-  color: #777a72;
+  color: var(--text-muted);
   font-size: 12px;
   padding-left: 8px;
 }
 .session-list-empty {
   margin: 4px 8px;
-  color: #878b82;
+  color: var(--text-muted);
   font-size: 12px;
 }
 .session-attention,
@@ -184,11 +184,11 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #b98329;
+  background: var(--warning);
   flex-shrink: 0;
 }
 .session-active {
-  background: #55836a;
+  background: var(--success);
   animation: pulse 1.5s infinite;
 }
 .session-refresh-button {
@@ -203,7 +203,7 @@
   margin-top: 6px;
   font: inherit;
   font-size: 12px;
-  color: #777a72;
+  color: var(--text-muted);
   cursor: pointer;
 }
 .session-context-menu {
@@ -211,10 +211,10 @@
   z-index: 1000;
   width: 260px;
   padding: 5px;
-  border: 1px solid #d3dcd2;
+  border: 1px solid var(--border);
   border-radius: 9px;
-  box-shadow: 0 8px 28px #16362426;
-  background: #fffdf8;
+  box-shadow: 0 8px 28px var(--shadow-color);
+  background: var(--surface);
   max-height: calc(100vh - 24px);
   overflow: auto;
 }
@@ -225,7 +225,7 @@
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: #263c30;
+  color: var(--text-primary);
   text-align: left;
   font: inherit;
   font-size: 0.8rem;
@@ -233,17 +233,17 @@
 }
 .session-context-menu button:hover,
 .session-context-menu button:focus-visible {
-  background: #e9ede7;
+  background: var(--surface-hover);
 }
 .session-move-destinations {
   max-height: 170px;
   overflow: auto;
-  border-block: 1px solid #e2e6df;
+  border-block: 1px solid var(--border);
   margin: 4px;
 }
 .session-rename-form {
   padding: 6px 8px 8px;
-  border-block: 1px solid #e2e6df;
+  border-block: 1px solid var(--border);
 }
 .session-rename-form label,
 .session-rename-form label span {
@@ -251,14 +251,14 @@
 }
 .session-rename-form label span {
   margin-bottom: 4px;
-  color: #5d675f;
+  color: var(--text-secondary);
   font-size: 0.72rem;
 }
 .session-rename-form input {
   box-sizing: border-box;
   width: 100%;
   padding: 7px 8px;
-  border: 1px solid #c9d2c9;
+  border: 1px solid var(--control-border);
   border-radius: 5px;
   font: inherit;
 }
@@ -267,7 +267,7 @@
 }
 .session-context-menu p {
   font-size: 0.75rem;
-  color: #934a37;
+  color: var(--danger);
 }
 @media (max-width: 860px) {
   .agent-session-selector {
@@ -275,7 +275,7 @@
     max-height: 40vh;
     min-height: 160px;
     border-right: 0;
-    border-bottom: 1px solid #d8ddd5;
+    border-bottom: 1px solid var(--control-border);
   }
 }
 
@@ -294,7 +294,7 @@
   padding: 2px 4px;
 }
 .session-tree-row.contains-selection {
-  background: #e8e8e2;
+  background: var(--surface-muted);
 }
 
 /* The visible divider is one pixel; its transparent hit area remains easy to grab. */
@@ -305,7 +305,7 @@
   grid-template-rows: minmax(150px, var(--split-primary-size)) 1px minmax(280px, 1fr);
 }
 .agent-session-screen .resizable-split__separator-shell {
-  background: #dddcd7;
+  background: var(--surface-hover);
 }
 .agent-session-screen .resizable-split__separator {
   position: absolute;
@@ -338,7 +338,7 @@
   width: 100%;
 }
 .agent-session-screen .resizable-split__separator:is(:hover, :focus-visible, :active)::after {
-  background: #7c887d;
+  background: var(--accent);
 }
 .session-container--branch {
   border: 0;
@@ -350,7 +350,7 @@
   font-size: 0.72rem;
   min-height: 24px;
   padding: 3px 6px;
-  color: #65736b;
+  color: var(--text-muted);
 }
 .session-container--branch > .session-block-content {
   padding: 0;

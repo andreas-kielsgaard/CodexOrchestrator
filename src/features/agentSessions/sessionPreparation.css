@@ -2,7 +2,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  border-top: 1px solid var(--border-color, #e4e9e5);
+  border-top: 1px solid var(--border);
   padding-top: 10px;
   margin-top: 8px;
   min-width: 0;
@@ -21,13 +21,13 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  border: 1px solid #dce4df;
-  background: #fff;
+  border: 1px solid var(--control-border);
+  background: var(--control-background);
   border-radius: 8px;
   min-height: 34px;
   padding: 0 8px;
   min-width: 0;
-  color: #263d34;
+  color: var(--text-primary);
 }
 .session-composer-toolbar__select select {
   border: 0;
@@ -57,20 +57,20 @@
 }
 .session-composer-toolbar__runtime {
   display: flex;
-  border: 1px solid #dce4df;
+  border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
   min-width: 0;
 }
 .session-composer-toolbar__runtime select {
   border: 0;
-  background: #fff;
+  background: var(--control-background);
   max-width: 165px;
   padding: 8px;
   min-width: 70px;
 }
 .session-composer-toolbar__runtime select + select {
-  border-left: 1px solid #dce4df;
+  border-left: 1px solid var(--control-border);
 }
 .session-preparation-marker {
   display: flex;
@@ -84,7 +84,7 @@
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: #dba62b;
+  background: var(--warning);
 }
 .agent-session-conversation {
   position: relative;
@@ -97,11 +97,11 @@
   width: min(350px, calc(100% - 40px));
   max-height: calc(100% - 230px);
   overflow: auto;
-  background: #fff;
-  color: #263d34;
-  border: 1px solid #dce4df;
+  background: var(--surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
   border-radius: 14px;
-  box-shadow: 0 8px 30px #173d2520;
+  box-shadow: 0 8px 30px var(--shadow-color);
   padding: 18px;
 }
 .session-preparation-preview {
@@ -116,7 +116,7 @@
 }
 .session-preparation-preview header p {
   margin: 0 0 3px;
-  color: #68786f;
+  color: var(--text-muted);
   font-size: 0.7rem;
   font-weight: 800;
   text-transform: uppercase;
@@ -125,12 +125,12 @@
   margin: 0;
 }
 .session-preparation-preview header small {
-  color: #65746c;
+  color: var(--text-muted);
 }
 .session-preparation-preview header button {
   border: 0;
   background: transparent;
-  color: #53685e;
+  color: var(--text-secondary);
 }
 .session-preparation-preview ol {
   display: grid;
@@ -144,7 +144,7 @@
   grid-template-columns: auto 1fr;
   align-items: center;
   gap: 9px;
-  color: #637269;
+  color: var(--text-muted);
 }
 .session-preparation-panel header {
   display: flex;
@@ -155,7 +155,7 @@
 .session-preparation-panel header button {
   border: 0;
   background: transparent;
-  color: #53685e;
+  color: var(--text-secondary);
 }
 .session-preparation-panel ol {
   margin: 18px 0;
@@ -167,7 +167,7 @@
   align-items: flex-start;
   gap: 12px;
   padding: 10px 0;
-  color: #67776f;
+  color: var(--text-muted);
 }
 .session-preparation-panel li svg {
   flex-shrink: 0;
@@ -177,22 +177,22 @@
   margin-top: 5px;
 }
 .session-preparation-panel .session-preparation-step--completed {
-  color: #237e50;
+  color: var(--success);
 }
 .session-preparation-panel .session-preparation-step--running {
-  color: #263d34;
+  color: var(--text-primary);
 }
 .session-preparation-panel .session-preparation-step--failed {
-  color: #a3362d;
+  color: var(--danger);
 }
 .session-preparation-panel footer {
-  border-top: 1px solid #e4e9e5;
+  border-top: 1px solid var(--border);
   padding-top: 12px;
 }
 .session-preparation-panel footer button {
   background: transparent;
   border: 0;
-  color: #53685e;
+  color: var(--text-secondary);
 }
 .session-worktree-confirmation {
   width: min(540px, calc(100vw - 40px));

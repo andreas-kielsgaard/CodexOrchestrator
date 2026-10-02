@@ -16,12 +16,12 @@
   margin: 0;
 }
 .branch-graph__header p:last-child {
-  color: #59675e;
+  color: var(--text-secondary);
   margin-top: 6px;
   font-size: 14px;
 }
 .branch-graph__toolbar {
-  color: #59675e;
+  color: var(--text-secondary);
   font-size: 13px;
 }
 .branch-graph__toolbar > div {
@@ -32,18 +32,18 @@
 .branch-graph__toolbar button {
   width: 30px;
   height: 34px;
-  border: 1px solid #cbd5ca;
+  border: 1px solid var(--control-border);
   border-radius: 5px;
-  background: white;
+  background: var(--surface);
 }
 .branch-graph__viewport {
   flex: 1;
   min-height: 180px;
   overflow: auto;
   overflow-anchor: none;
-  border: 1px solid #d8ddd5;
+  border: 1px solid var(--border);
   border-radius: 9px;
-  background: #f5f7f2;
+  background: var(--canvas);
 }
 .branch-graph__grid {
   position: relative;
@@ -61,12 +61,12 @@
   display: flex;
   align-items: center;
   height: 36px;
-  background: #f5f7f2;
-  color: #647267;
+  background: var(--canvas);
+  color: var(--text-muted);
   font-size: 10px;
   letter-spacing: 0.6px;
   white-space: nowrap;
-  border-bottom: 1px solid #e3e8de;
+  border-bottom: 1px solid var(--border);
 }
 .branch-graph__headings span {
   flex-shrink: 0;
@@ -77,7 +77,7 @@
 }
 .branch-graph__track-clearance {
   fill: none;
-  stroke: #f5f7f2;
+  stroke: var(--canvas);
   stroke-width: 6;
 }
 .branch-graph__connection {
@@ -86,7 +86,7 @@
   stroke-width: 2;
   stroke-linejoin: round;
   stroke-linecap: round;
-  opacity: 0.23;
+  opacity: 0.55;
 }
 .branch-graph__connection.is-highlighted {
   opacity: 0.9;
@@ -96,17 +96,17 @@
   stroke-width: 4;
 }
 .branch-graph__anchor circle {
-  fill: #f5f7f2;
+  fill: var(--canvas);
   stroke: var(--lane-color);
   stroke-width: 2;
-  opacity: 0.4;
+  opacity: 0.7;
 }
 .branch-graph__anchor.is-highlighted circle {
   fill: var(--lane-color);
   opacity: 1;
 }
 .branch-graph__anchor circle.is-boundary {
-  fill: white;
+  fill: var(--surface);
   stroke-dasharray: 2 2;
 }
 .branch-graph__range,
@@ -123,7 +123,7 @@
 }
 .branch-graph__range {
   padding: 0 7px;
-  color: #687369;
+  color: var(--text-muted);
   background: transparent;
   font-variant-numeric: tabular-nums;
 }
@@ -135,21 +135,21 @@
   background: var(--lane-color);
 }
 .branch-graph__range.is-highlighted {
-  color: #2e3e33;
+  color: var(--text-primary);
 }
 .branch-graph__range:hover {
-  background: white;
+  background: var(--surface-hover);
   border-color: var(--lane-color);
 }
 .branch-graph__range:focus-visible,
 .branch-graph__target:focus-visible {
-  outline: 3px solid #246fbd;
+  outline: 3px solid var(--focus-ring);
   outline-offset: 1px;
 }
 .branch-graph__target {
   padding: 0 9px;
-  color: #657266;
-  background: #edf0e9;
+  color: var(--text-muted);
+  background: var(--surface-muted);
   text-align: left;
 }
 .branch-graph__target svg {
@@ -161,18 +161,18 @@
   text-overflow: ellipsis;
 }
 .branch-graph__target.is-related {
-  color: #2d3f33;
-  background: #e9eee7;
+  color: var(--text-primary);
+  background: var(--surface-selected);
 }
 .branch-graph__target:hover {
   border-color: var(--lane-color);
-  background: #fff;
+  background: var(--surface-hover);
 }
 .branch-graph__target.is-selected {
   border-color: var(--lane-color);
   box-shadow: inset 3px 0 var(--lane-color);
-  color: #203c2e;
-  background: #fff;
+  color: var(--text-primary);
+  background: var(--surface-selected);
 }
 .branch-graph__base {
   position: absolute;
@@ -180,7 +180,7 @@
   align-items: center;
   gap: 5px;
   height: 32px;
-  color: #7a8277;
+  color: var(--text-muted);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -197,9 +197,9 @@
   box-sizing: border-box;
   padding: 12px;
   border-radius: 7px;
-  background: #263a30;
-  color: #fff;
-  box-shadow: 0 4px 18px #15221940;
+  background: var(--surface-raised);
+  color: var(--text-on-accent);
+  box-shadow: 0 4px 18px var(--shadow-color-strong);
   font-size: 12px;
   pointer-events: none;
 }
@@ -208,17 +208,17 @@
   font-size: 13px;
 }
 .branch-graph__tooltip code {
-  color: #c7d7ce;
+  color: var(--text-muted);
   font-size: 11px;
 }
 .branch-graph__footer {
-  border-top: 1px solid #d8ddd5;
+  border-top: 1px solid var(--border);
   padding-top: 14px;
 }
 .branch-graph__footer p {
   margin: 4px 0;
   font-size: 13px;
-  color: #59675e;
+  color: var(--text-secondary);
 }
 @media (max-width: 760px) {
   .branch-graph-dialog {
