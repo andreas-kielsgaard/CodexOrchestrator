@@ -4,7 +4,7 @@
   flex: 0 0 auto;
   width: min(820px, calc(100% - 32px));
   margin: 0 auto 6px;
-  color: #263d34;
+  color: var(--text-primary);
   height: 48px;
 }
 
@@ -20,10 +20,10 @@
   gap: 2px;
   margin: 0;
   padding: 6px 8px;
-  border: 1px solid #d9e0da;
+  border: 1px solid var(--border);
   border-radius: 14px;
-  background: #fffdf9;
-  box-shadow: 0 5px 18px #173d2514;
+  background: var(--surface);
+  box-shadow: 0 5px 18px var(--shadow-color);
   list-style: none;
 }
 
@@ -40,20 +40,20 @@
   border-radius: 8px;
 }
 .session-queue li.is-blocked {
-  background: #fff2ed;
-  color: #943c2d;
+  background: var(--danger-surface);
+  color: var(--danger);
 }
 .session-queue li.is-steering {
-  border-left: 3px solid #596bb8;
-  background: #f0f2ff;
-  color: #303c77;
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  color: var(--info);
 }
 .session-queue li.is-steering:hover {
-  background: #e9edff;
+  background: var(--surface-hover);
 }
 .session-queue li:hover,
 .session-queue li:focus-within {
-  background: #edf2ee;
+  background: var(--surface-hover);
 }
 
 .session-queue__row > button:first-child,
@@ -90,12 +90,12 @@
   margin-right: 4px;
   border: 0;
   border-radius: 6px;
-  color: #496659;
+  color: var(--text-secondary);
   background: transparent;
   cursor: pointer;
 }
 .session-queue__send-now:hover {
-  background: #dce8df;
+  background: var(--surface-hover);
 }
 .session-queue__line {
   cursor: pointer;
@@ -107,11 +107,11 @@
 
 .session-queue__state {
   display: grid;
-  color: #65766c;
+  color: var(--text-muted);
   place-items: center;
 }
 .session-queue li.is-blocked .session-queue__state {
-  color: #a84634;
+  color: var(--danger);
 }
 .session-queue li strong,
 .session-queue li small {
@@ -124,7 +124,7 @@
   font-weight: 600;
 }
 .session-queue li small {
-  color: #6d7a73;
+  color: var(--text-muted);
   font-size: 0.67rem;
   text-align: right;
 }
@@ -134,10 +134,10 @@
   right: 16px;
   bottom: -8px;
   padding: 1px 7px;
-  border: 1px solid #d9e0da;
+  border: 1px solid var(--border);
   border-radius: 99px;
-  background: #f2f5f2;
-  color: #647269;
+  background: var(--surface);
+  color: var(--text-muted);
   font-size: 0.63rem;
   font-weight: 700;
   pointer-events: none;
@@ -159,7 +159,7 @@
 }
 .session-queue-editor > header p {
   margin: 0 0 3px;
-  color: #68786f;
+  color: var(--text-muted);
   font-size: 0.7rem;
   font-weight: 800;
   text-transform: uppercase;
@@ -175,7 +175,7 @@
 .session-queue-editor > header button {
   border: 0;
   background: transparent;
-  color: #53685e;
+  color: var(--text-secondary);
 }
 .session-queue-editor form,
 .session-queue-editor form label {
@@ -191,15 +191,15 @@
 .session-queue-editor select {
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid #ccd5cf;
+  border: 1px solid var(--control-border);
   border-radius: 8px;
   padding: 9px;
-  background: #fff;
+  background: var(--control-background);
   font: inherit;
 }
 .session-queue-editor__destination {
   margin: 0;
-  color: #63736a;
+  color: var(--text-muted);
   font-size: 0.75rem;
   overflow-wrap: anywhere;
 }
@@ -231,27 +231,27 @@
 .session-queue-editor__recalculate {
   min-height: 34px;
   padding: 0 12px;
-  border: 1px solid #bdc9c0;
+  border: 1px solid var(--control-border);
   border-radius: 8px;
-  background: #fff;
-  color: #263d34;
+  background: var(--surface);
+  color: var(--text-primary);
 }
 .session-queue-editor footer button:last-child {
-  border-color: #2f684b;
-  background: #2f684b;
-  color: #fff;
+  border-color: var(--accent);
+  background: var(--accent-solid);
+  color: var(--text-on-accent);
 }
 .session-queue-editor__controls .is-danger {
-  border-color: #d8a196;
-  color: #953d2e;
+  border-color: var(--border);
+  color: var(--danger);
 }
 .session-queue-editor__error {
   display: flex;
   gap: 7px;
   padding: 9px;
   border-radius: 8px;
-  background: #fff0eb;
-  color: #963e30;
+  background: var(--danger-surface);
+  color: var(--danger);
   overflow-wrap: anywhere;
 }
 .session-queue-editor__steps {
@@ -266,7 +266,7 @@
   grid-template-columns: 18px 1fr;
   align-items: start;
   gap: 7px;
-  color: #69766f;
+  color: var(--text-muted);
 }
 .session-queue-editor__steps li > span {
   display: grid;
@@ -276,10 +276,10 @@
   overflow-wrap: anywhere;
 }
 .session-queue-editor__steps .is-completed {
-  color: #26754d;
+  color: var(--success);
 }
 .session-queue-editor__steps .is-failed {
-  color: #963e30;
+  color: var(--danger);
 }
 .session-queue__spinner {
   animation: session-queue-spin 1s linear infinite;

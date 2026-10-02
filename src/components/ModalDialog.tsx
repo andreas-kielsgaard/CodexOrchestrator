@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
+import './modalDialog.css';
 
 /** Native modal stacking supplies inertness; Tab boundaries also contain reverse WebView traversal. */
 export function ModalDialog({
@@ -30,7 +31,7 @@ export function ModalDialog({
   return (
     <dialog
       ref={ref}
-      className={`worktree-review__dialog ${className}`}
+      className={`modal-dialog ${className}`}
       aria-labelledby={labelledBy}
       onKeyDown={(event) => {
         if (event.key !== 'Tab' || event.defaultPrevented) return;

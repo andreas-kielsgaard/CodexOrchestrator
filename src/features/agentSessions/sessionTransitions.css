@@ -10,18 +10,18 @@
   background: transparent;
   border: 1px solid transparent;
   border-radius: 6px;
-  color: var(--text-muted, #596c63);
+  color: var(--text-muted);
   padding: 0.35rem 0.65rem;
   cursor: pointer;
 }
 .session-transition button:hover,
 .session-transition button:focus-visible {
-  border-color: var(--border, #bdc9c1);
-  background: var(--surface-muted, #eef2ec);
-  color: var(--text, #263d34);
+  border-color: var(--border);
+  background: var(--surface-muted);
+  color: var(--text-primary);
 }
 .session-transition--blocked button {
-  color: var(--color-warning, #856404);
+  color: var(--danger);
 }
 .session-transition-details {
   width: min(640px, calc(100vw - 2rem));

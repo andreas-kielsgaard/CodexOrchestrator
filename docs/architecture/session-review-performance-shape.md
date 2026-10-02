@@ -79,3 +79,10 @@ Native after trace (isolated review database, rebuilt worktree app):
   metadata/content modal, branch-graph worktree selection/cancel, text/file
   clipboard paste, long-paste attachment, newest image preview, unread/read dots.
   No real provider send or worktree creation was performed in this pass.
+
+## Dark-theme integration follow-up
+
+On October 2, publication was explicitly requested. Integrate main's palette;
+use shared surface, info, border, shadow and caret roles for new flyouts and
+skill references. Preserve lateral overlays and main's common modal/control
+styles. Verify in the isolated native app before main integration and rebuild.

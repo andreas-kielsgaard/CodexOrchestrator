@@ -3,7 +3,7 @@
   grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
   min-height: 0;
   height: 100%;
-  background: #f4f6f2;
+  background: var(--canvas);
 }
 
 .execution-configuration-screen__catalog {
@@ -12,8 +12,8 @@
   gap: 12px;
   min-height: 0;
   padding: 18px;
-  border-right: 1px solid #d7ddd6;
-  background: #fbfaf6;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
 }
 
 .execution-configuration-screen__catalog header {
@@ -29,7 +29,7 @@
 }
 
 .execution-configuration-screen__catalog p {
-  color: #68756d;
+  color: var(--text-muted);
   font-size: 0.67rem;
   font-weight: 800;
   letter-spacing: 0.06em;
@@ -42,10 +42,10 @@
 }
 
 .execution-configuration-screen__catalog button {
-  border: 1px solid #c9d2ca;
+  border: 1px solid var(--control-border);
   border-radius: 8px;
-  background: #fff;
-  color: #293b31;
+  background: var(--surface);
+  color: var(--text-primary);
   cursor: pointer;
 }
 
@@ -81,15 +81,15 @@
 }
 
 .execution-configuration-screen__catalog nav button.is-selected {
-  border-color: #2f624b;
-  background: #edf3ee;
-  box-shadow: inset 3px 0 #2f624b;
+  border-color: var(--accent);
+  background: var(--surface-selected);
+  box-shadow: inset 3px 0 var(--accent);
 }
 
 .execution-configuration-screen__catalog nav span,
 .execution-configuration-screen__catalog nav small {
   overflow: hidden;
-  color: #69756e;
+  color: var(--text-muted);
   font-size: 0.68rem;
   text-overflow: ellipsis;
 }
@@ -114,10 +114,10 @@
 
 .execution-configuration-screen__error {
   padding: 10px 12px;
-  border: 1px solid #d68b7b;
+  border: 1px solid var(--danger-border);
   border-radius: 8px;
-  background: #fff4f1;
-  color: #7e2e24;
+  background: var(--danger-surface);
+  color: var(--danger);
 }
 
 .execution-configuration-screen__delete {
@@ -126,10 +126,10 @@
   gap: 7px;
   margin: 16px auto 0;
   padding: 8px 11px;
-  border: 1px solid #d2a59b;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fff;
-  color: #8b372b;
+  background: var(--surface);
+  color: var(--danger);
   cursor: pointer;
 }
 
@@ -143,7 +143,7 @@
     grid-template-columns: minmax(0, 1fr) auto;
     grid-template-rows: auto auto;
     border-right: 0;
-    border-bottom: 1px solid #d7ddd6;
+    border-bottom: 1px solid var(--border);
   }
 
   .execution-configuration-screen__catalog nav {

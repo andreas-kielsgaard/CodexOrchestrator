@@ -4,10 +4,10 @@
   align-items: center;
   min-height: 30px;
   padding: 4px 9px;
-  border: 1px solid #bdc8ce;
+  border: 1px solid var(--border);
   border-radius: 7px;
-  background: #f6f8f9;
-  color: #42545f;
+  background: var(--surface);
+  color: var(--text-secondary);
   font-size: 0.7rem;
   font-weight: 800;
 }
@@ -20,7 +20,7 @@
 
 .current-work-state small,
 .work-unit-state small {
-  color: #71818a;
+  color: var(--text-muted);
   font-size: 0.55rem;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -36,12 +36,12 @@
   gap: 10px;
 }
 .subdetail-context > p {
-  color: #52646f;
+  color: var(--text-secondary);
   font-size: 0.8rem;
   line-height: 1.45;
 }
 .subdetail-context > code {
-  color: #667983;
+  color: var(--text-muted);
   font-size: 0.68rem;
 }
 .subdetail-context dl {
@@ -54,21 +54,21 @@
   gap: 2px;
 }
 .subdetail-context dt {
-  color: #70808a;
+  color: var(--text-muted);
   font-size: 0.62rem;
   font-weight: 850;
   text-transform: uppercase;
 }
 .subdetail-context dd {
   margin: 0;
-  color: #344854;
+  color: var(--text-secondary);
   font-size: 0.75rem;
 }
 .plan-feedback-detail {
   padding: 10px;
-  border-left: 3px solid #8f76a9;
-  background: #f7f3fa;
-  color: #5b496b;
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  color: var(--text-secondary);
   font-size: 0.72rem;
 }
 .plan-feedback-detail p {
@@ -83,7 +83,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: #f5f8f9;
+  background: var(--surface);
 }
 
 .plan-workflow__canvas {
@@ -95,8 +95,8 @@
   padding: 14px;
   overflow: auto;
   overscroll-behavior: none;
-  background-color: #f7f9fa;
-  background-image: radial-gradient(#d6dfe3 0.7px, transparent 0.7px);
+  background-color: var(--surface);
+  background-image: radial-gradient(var(--surface-hover) 0.7px, transparent 0.7px);
   background-size: 16px 16px;
 }
 
@@ -115,18 +115,18 @@
 .plan-workflow-lane__label {
   display: grid;
   gap: 3px;
-  color: #50636d;
+  color: var(--text-secondary);
   font-size: 0.68rem;
   font-weight: 800;
 }
 .plan-workflow-lane__label > span {
-  color: #7a8991;
+  color: var(--text-muted);
   font-size: 0.58rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 .plan-workflow-lane__label code {
-  color: #7a8991;
+  color: var(--text-muted);
   font-size: 0.58rem;
 }
 
@@ -150,7 +150,7 @@
   right: 8px;
   left: 8px;
   height: 2px;
-  background: #a8b7bf;
+  background: var(--surface-hover);
   content: '';
 }
 
@@ -158,28 +158,28 @@
   display: grid;
   gap: 12px;
   padding: 14px;
-  border: 1px solid #aebdc5;
+  border: 1px solid var(--border);
   border-radius: 14px;
-  background: rgb(255 255 255 / 76%);
+  background: var(--surface-raised-translucent);
 }
 .plan-workflow__parallel > header {
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 8px;
-  color: #50636d;
+  color: var(--text-secondary);
   font-size: 0.68rem;
 }
 .plan-workflow__parallel > header strong {
-  color: #315e78;
+  color: var(--info);
 }
 
 .plan-workflow-lane {
   min-height: 108px;
   padding: 8px;
-  border: 1px solid #d5dde1;
+  border: 1px solid var(--border);
   border-radius: 10px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .plan-workflow-node {
@@ -192,11 +192,11 @@
   gap: 8px;
   min-height: 70px;
   padding: 9px;
-  border: 1px solid #b9c7ce;
+  border: 1px solid var(--border);
   border-radius: 9px;
-  background: #fff;
-  color: #415660;
-  box-shadow: 0 2px 6px rgb(34 55 66 / 9%);
+  background: var(--surface);
+  color: var(--text-secondary);
+  box-shadow: 0 2px 6px var(--shadow-color);
 }
 .plan-workflow-node__icon {
   display: grid;
@@ -205,8 +205,8 @@
   height: 28px;
   place-items: center;
   border-radius: 50%;
-  background: #e8f1f5;
-  color: #326783;
+  background: var(--surface-muted);
+  color: var(--info);
 }
 .plan-workflow-node__content {
   display: grid;
@@ -215,7 +215,7 @@
 }
 .plan-workflow-node small {
   overflow: hidden;
-  color: #75858d;
+  color: var(--text-muted);
   font-size: 0.55rem;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -225,20 +225,20 @@
   line-height: 1.25;
 }
 .plan-workflow-node em {
-  color: #80602f;
+  color: var(--warning);
   font-size: 0.56rem;
   font-style: normal;
   font-weight: 800;
 }
 .plan-workflow-node--implementer_reprompted,
 .plan-workflow-node--correction_required {
-  border-color: #bd8c4f;
-  background: #fff8ec;
+  border-color: var(--accent);
+  background: var(--surface);
 }
 .plan-workflow-node--work_unit_settled,
 .plan-workflow-node--work_slice_planner_completed {
-  border-color: #82ae91;
-  background: #eef8f1;
+  border-color: var(--success-border);
+  background: var(--success-surface);
 }
 
 .plan-workflow__correction-loop {
@@ -251,11 +251,11 @@
   gap: 6px;
   min-height: 28px;
   margin-top: 5px;
-  border-right: 2px solid #b57938;
-  border-bottom: 2px solid #b57938;
-  border-left: 2px solid #b57938;
+  border-right: 2px solid var(--accent);
+  border-bottom: 2px solid var(--accent);
+  border-left: 2px solid var(--accent);
   border-radius: 0 0 12px 12px;
-  color: #785326;
+  color: var(--warning);
   font-size: 0.6rem;
 }
 .plan-workflow__correction-loop strong {
@@ -279,16 +279,16 @@
   padding: 14px;
   overflow: auto;
   overscroll-behavior: none;
-  background: #f5f8f9;
+  background: var(--surface);
 }
 
 .planning-point-relationships {
   min-width: 0;
   min-height: 312px;
   overflow: auto hidden;
-  border: 1px solid #c8d3d8;
+  border: 1px solid var(--border);
   border-radius: 12px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .planning-point-relationships__flow {
@@ -302,9 +302,9 @@
 
 .planning-point-relationships__planner,
 .planning-point-work-unit {
-  border: 1px solid #bdcbd2;
+  border: 1px solid var(--border);
   border-radius: 9px;
-  background: #f8fafb;
+  background: var(--surface);
 }
 
 .planning-point-relationships__planner {
@@ -318,7 +318,7 @@
 
 .planning-point-relationships__planner > span,
 .planning-point-work-unit > header span {
-  color: #6a7b84;
+  color: var(--text-muted);
   font-size: 0.6rem;
   font-weight: 850;
   letter-spacing: 0.05em;
@@ -326,7 +326,7 @@
 }
 
 .planning-point-relationships__planner > strong {
-  color: #324b58;
+  color: var(--info);
   font-size: 0.78rem;
   line-height: 1.35;
 }
@@ -335,21 +335,21 @@
 .planning-point-work-unit__agent-relationship p {
   display: grid;
   gap: 3px;
-  color: #71818a;
+  color: var(--text-muted);
   font-size: 0.65rem;
   line-height: 1.35;
 }
 
 .planning-point-relationships__planner p strong,
 .planning-point-work-unit__agent-relationship p strong {
-  color: #536670;
+  color: var(--text-secondary);
 }
 
 .planning-point-relationships__arrow {
   display: grid;
   flex: 0 0 20px;
   place-items: center;
-  color: #688391;
+  color: var(--text-muted);
   font-size: 1.25rem;
 }
 
@@ -376,12 +376,12 @@
 
 .planning-point-work-unit > header small,
 .planning-point-work-unit > code {
-  color: #71818a;
+  color: var(--text-muted);
   font-size: 0.59rem;
 }
 
 .planning-point-work-unit > h2 {
-  color: #314954;
+  color: var(--info);
   font-size: 0.8rem;
   line-height: 1.3;
 }
@@ -390,10 +390,10 @@
   justify-self: start;
   min-height: 28px;
   padding: 4px 8px;
-  border: 1px solid #aebdc5;
+  border: 1px solid var(--control-border);
   border-radius: 5px;
-  background: #fff;
-  color: #315f78;
+  background: var(--surface);
+  color: var(--info);
   font: inherit;
   font-size: 0.63rem;
   font-weight: 800;
@@ -404,11 +404,11 @@
   display: grid;
   gap: 3px;
   padding-top: 6px;
-  border-top: 1px solid #dce3e6;
+  border-top: 1px solid var(--border);
 }
 
 .planning-point-work-unit__agent-relationship h3 {
-  color: #637680;
+  color: var(--text-muted);
   font-size: 0.6rem;
 }
 
@@ -417,7 +417,7 @@
   gap: 2px;
   margin: 0;
   padding: 0;
-  color: #344d59;
+  color: var(--info);
   font-size: 0.66rem;
   font-weight: 750;
   line-height: 1.3;
@@ -426,7 +426,7 @@
 
 .planning-point-relationships__empty {
   align-self: center;
-  color: #647680;
+  color: var(--text-muted);
   font-size: 0.74rem;
 }
 
@@ -438,7 +438,7 @@
 }
 
 .work-slice-planning-point-detail__workflow > h2 {
-  color: #60727c;
+  color: var(--text-muted);
   font-size: 0.66rem;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -454,10 +454,10 @@
   gap: 7px;
   min-height: 120px;
   padding: 30px;
-  border: 1px dashed #c8d3d8;
+  border: 1px dashed var(--border);
   border-radius: 10px;
-  background: #fff;
-  color: #657680;
+  background: var(--surface);
+  color: var(--text-muted);
   text-align: center;
 }
 
@@ -468,15 +468,15 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: #f5f8f9;
+  background: var(--surface);
 }
 
 .work-unit-inspection__tabs {
   display: flex;
   gap: 4px;
   padding: 8px 10px 0;
-  border-bottom: 1px solid #cbd6db;
-  background: #eef3f5;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
 }
 
 .work-unit-inspection__tabs button {
@@ -486,7 +486,7 @@
   border-bottom: 0;
   border-radius: 6px 6px 0 0;
   background: transparent;
-  color: #627580;
+  color: var(--text-muted);
   font: inherit;
   font-size: 0.68rem;
   font-weight: 850;
@@ -494,9 +494,9 @@
 }
 
 .work-unit-inspection__tabs button[aria-selected='true'] {
-  border-color: #cbd6db;
-  background: #fff;
-  color: #284f64;
+  border-color: var(--control-border);
+  background: var(--surface-selected);
+  color: var(--info);
 }
 
 .work-unit-inspection > [role='tabpanel'] {
@@ -520,7 +520,7 @@
   justify-content: space-between;
   gap: 14px;
   padding-bottom: 8px;
-  border-bottom: 1px solid #d5dfe3;
+  border-bottom: 1px solid var(--border);
 }
 
 .work-unit-inspection__heading > div {
@@ -530,7 +530,7 @@
 
 .work-unit-inspection__heading span,
 .work-unit-activity__inspection header span {
-  color: #71818a;
+  color: var(--text-muted);
   font-size: 0.58rem;
   font-weight: 850;
   letter-spacing: 0.06em;
@@ -539,14 +539,14 @@
 
 .work-unit-inspection__heading h2,
 .work-unit-activity__inspection h3 {
-  color: #344f5d;
+  color: var(--info);
   font-size: 0.9rem;
 }
 
 .work-unit-inspection__heading p {
   max-width: 360px;
   margin: 0;
-  color: #687b85;
+  color: var(--text-muted);
   font-size: 0.66rem;
   line-height: 1.4;
   text-align: right;
@@ -564,18 +564,18 @@
   display: grid;
   gap: 6px;
   padding-top: 8px;
-  border-top: 1px dashed #c7d2d7;
+  border-top: 1px dashed var(--border);
 }
 
 .work-unit-activity__unsequenced h3 {
   margin: 0;
-  color: #756856;
+  color: var(--text-secondary);
   font-size: 0.67rem;
 }
 
 .work-unit-activity__unsequenced > p {
   margin: 0;
-  color: #756856;
+  color: var(--text-secondary);
   font-size: 0.65rem;
   line-height: 1.35;
 }
@@ -584,30 +584,30 @@
   display: grid;
   gap: 7px;
   padding: 7px;
-  border: 1px solid #d2dce0;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .work-unit-activity__list > li.is-selected {
-  border-color: #7295a6;
-  box-shadow: 0 0 0 2px rgb(114 149 166 / 16%);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--info-ring);
 }
 
 .work-unit-activity__list > li.is-highlighted:not(.is-selected) {
-  border-color: #9db0ba;
-  background: #f7fbfc;
+  border-color: var(--control-border);
+  background: var(--surface-selected);
 }
 
 .work-unit-activity__list > li:focus-visible {
-  outline: 2px solid #587f93;
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
 .work-unit-lifecycle li.is-highlighted button {
-  border-color: #7295a6;
-  background: #eef6f9;
-  box-shadow: 0 0 0 2px rgb(114 149 166 / 16%);
+  border-color: var(--accent);
+  background: var(--surface-selected);
+  box-shadow: 0 0 0 2px var(--info-ring);
 }
 
 .work-unit-activity__list > li > button {
@@ -619,7 +619,7 @@
   padding: 3px;
   border: 0;
   background: transparent;
-  color: #344854;
+  color: var(--text-secondary);
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -629,15 +629,15 @@
 .work-unit-activity__application button:focus-visible,
 .work-unit-evidence__group > button:focus-visible {
   border-radius: 4px;
-  outline: 2px solid #587f93;
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
 .work-unit-activity__role {
   padding: 3px 6px;
   border-radius: 4px;
-  background: #e5eef2;
-  color: #315f78;
+  background: var(--surface-muted);
+  color: var(--info);
   font-size: 0.57rem;
   font-weight: 850;
   text-transform: uppercase;
@@ -650,7 +650,7 @@
 .work-unit-activity__list small,
 .work-unit-evidence__group small {
   overflow: hidden;
-  color: #71818a;
+  color: var(--text-muted);
   font-size: 0.59rem;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -661,14 +661,14 @@
   gap: 5px;
   margin: 0 4px 0 28px;
   padding: 8px 9px;
-  border-left: 3px solid #b39ac7;
-  background: #f8f4fb;
-  color: #5c5369;
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  color: var(--text-secondary);
   font-size: 0.64rem;
 }
 
 .work-unit-activity__application h4 {
-  color: #6a527d;
+  color: var(--concern);
   font-size: 0.62rem;
   text-transform: uppercase;
 }
@@ -700,10 +700,10 @@
   width: fit-content;
   min-height: 25px;
   padding: 3px 7px;
-  border: 1px solid #b9a9c7;
+  border: 1px solid var(--control-border);
   border-radius: 4px;
-  background: #fff;
-  color: #644e77;
+  background: var(--surface);
+  color: var(--concern);
   font: inherit;
   font-size: 0.61rem;
   font-weight: 800;
@@ -714,7 +714,7 @@
   display: grid;
   gap: 10px;
   padding-top: 8px;
-  border-top: 1px solid #d5dfe3;
+  border-top: 1px solid var(--border);
 }
 
 .work-unit-activity__inspection > header {
@@ -730,8 +730,8 @@
 }
 
 .work-unit-activity__inspection header button {
-  border-color: #aebfc8;
-  color: #315f78;
+  border-color: var(--control-border);
+  color: var(--info);
 }
 
 .work-unit-activity__correlation {
@@ -747,7 +747,7 @@
 }
 
 .work-unit-activity__correlation dt {
-  color: #71818a;
+  color: var(--text-muted);
   font-size: 0.52rem;
   font-weight: 850;
   letter-spacing: 0.05em;
@@ -757,7 +757,7 @@
 .work-unit-activity__correlation dd {
   overflow-wrap: anywhere;
   margin: 0;
-  color: #52646f;
+  color: var(--text-secondary);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 0.55rem;
 }
@@ -766,7 +766,7 @@
 .work-unit-inspection__unavailable,
 .work-unit-evidence__group > p {
   margin: 0;
-  color: #687b85;
+  color: var(--text-muted);
   font-size: 0.68rem;
   line-height: 1.45;
 }
@@ -775,13 +775,13 @@
   display: grid;
   gap: 8px;
   padding: 11px;
-  border: 1px solid #d2dce0;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--surface);
 }
 
 .work-unit-evidence__group h3 {
-  color: #48616d;
+  color: var(--info);
   font-size: 0.72rem;
 }
 
@@ -799,21 +799,21 @@
   display: grid;
   margin: 0;
   padding: 8px;
-  border: 1px solid #cfd9de;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  color: #425a66;
+  color: var(--info);
   font-size: 0.67rem;
 }
 
 .work-unit-file-evidence--available {
-  border-color: #9ebac8;
-  background: #f4fafc;
+  border-color: var(--border);
+  background: var(--surface);
 }
 
 .work-unit-file-evidence--unavailable {
-  border-color: #d7c9b5;
-  background: #fbf7f0;
-  color: #756856;
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--text-secondary);
 }
 
 .work-unit-file-evidence > button {
@@ -826,13 +826,13 @@
 
 .work-unit-file-evidence > button:focus-visible {
   border-radius: 4px;
-  outline: 2px solid #587f93;
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
 .work-unit-file-evidence__name {
   overflow-wrap: anywhere;
-  color: #344f5d;
+  color: var(--info);
   font-weight: 800;
 }
 
@@ -844,11 +844,11 @@
 }
 
 .work-unit-file-evidence--available .work-unit-file-evidence__status {
-  color: #315f78;
+  color: var(--info);
 }
 
 .work-unit-file-evidence--unavailable .work-unit-file-evidence__status {
-  color: #80602f;
+  color: var(--danger);
 }
 
 .work-unit-file-evidence small {
@@ -875,7 +875,7 @@
 }
 
 .work-unit-test-evidence dt {
-  color: #71818a;
+  color: var(--text-muted);
   font-size: 0.58rem;
   font-weight: 850;
   text-transform: uppercase;
@@ -922,11 +922,11 @@
   display: grid;
   gap: 7px;
   padding-top: 8px;
-  border-top: 1px solid #d3dce0;
+  border-top: 1px solid var(--border);
 }
 
 .work-unit-lifecycle h2 {
-  color: #60727c;
+  color: var(--text-muted);
   font-size: 0.66rem;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -950,7 +950,7 @@
   bottom: -7px;
   left: var(--work-unit-lifecycle-identity-center);
   width: 1px;
-  background: #b9c7ce;
+  background: var(--surface-hover);
   transform: translateX(-50%);
   content: '';
 }
@@ -964,7 +964,7 @@
   border: var(--work-unit-lifecycle-button-border) solid transparent;
   border-radius: 6px;
   background: transparent;
-  color: #344854;
+  color: var(--text-secondary);
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -972,8 +972,8 @@
 
 .work-unit-lifecycle button:hover,
 .work-unit-lifecycle button:focus-visible {
-  border-color: #9db0ba;
-  background: #fff;
+  border-color: var(--control-border);
+  background: var(--surface-hover);
   outline: none;
 }
 
@@ -994,14 +994,14 @@
 
 .work-unit-lifecycle small {
   overflow: hidden;
-  color: #627580;
+  color: var(--text-muted);
   font-size: 0.59rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .work-unit-lifecycle button > span:last-child > span {
-  color: #6a7a83;
+  color: var(--text-muted);
   font-size: 0.61rem;
   line-height: 1.3;
 }
@@ -1014,8 +1014,8 @@
   height: var(--work-unit-lifecycle-identity-size);
   place-items: center;
   border-radius: 50%;
-  background: #dce9ef;
-  color: #315c72;
+  background: var(--surface-muted);
+  color: var(--info);
   font-size: 0.63rem;
   font-weight: 900;
 }
@@ -1026,7 +1026,7 @@
   align-items: center;
   gap: 7px;
   padding: var(--work-unit-lifecycle-button-padding);
-  color: #687b85;
+  color: var(--text-muted);
 }
 
 .work-unit-lifecycle__planner div {
@@ -1035,7 +1035,7 @@
 }
 
 .work-unit-lifecycle__planner strong {
-  color: #5c4a79;
+  color: var(--concern);
 }
 
 .work-unit-lifecycle__planner small {
@@ -1043,18 +1043,18 @@
 }
 
 .work-unit-lifecycle__identity--work_slice_planner {
-  background: #e8e4f2;
-  color: #5c4a79;
+  background: var(--surface-muted);
+  color: var(--concern);
 }
 
 .work-unit-lifecycle__identity--work_unit_handler {
-  background: #f1e8d9;
-  color: #6d542f;
+  background: var(--surface-muted);
+  color: var(--warning);
 }
 
 .work-unit-lifecycle__identity--work_unit_implementer {
-  background: #e2edf4;
-  color: #315f78;
+  background: var(--surface-muted);
+  color: var(--info);
 }
 
 @media (max-width: 720px) {

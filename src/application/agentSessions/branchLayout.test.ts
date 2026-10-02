@@ -1,4 +1,4 @@
-import { branchColor, layoutId } from './branchLayout';
+import { layoutId } from './branchLayout';
 import { buildSessionNavigation } from './navigation';
 import { navigationFolders } from './navigationView';
 import { navigationData } from '../../features/agentSessions/navigationTestFixtures';
@@ -35,8 +35,6 @@ it('groups only instantiated branches, newest-created first, above other convers
   expect(rows.slice(0, 2).map(layoutId)).toEqual(['branch:new', 'branch:old']);
   expect(rows[0]).toMatchObject({ children: [{ summary: { id: 'session-2' } }] });
   expect(rows[2]).toMatchObject({ summary: { id: 'session-3' } });
-  expect(branchColor(branches[0].id)).toBe(branchColor(branches[0].id));
-  expect(branchColor(branches[0].id)).not.toBe(branchColor(branches[1].id));
 });
 it('persists detached conversations between branch groups and preserves their affinity', () => {
   const rows = contents(

@@ -17,12 +17,12 @@ import {
 import {
   branchGraphLayout,
   grid,
-  laneColors,
   rangeControl,
   targetControl,
   type Direction,
   type Point,
 } from './branchGraphLayout';
+import { graphLaneColors as laneColors } from '../../theme/graphColors';
 import { branchLineage } from './branchLineage';
 
 const path = (route: readonly Point[]) => {

@@ -2,14 +2,14 @@
   width: min(850px, calc(100vw - 32px));
   max-height: calc(100vh - 40px);
   padding: 0;
-  border: 1px solid #ccd7d0;
+  border: 1px solid var(--border);
   border-radius: 14px;
-  color: #18362d;
-  background: #fffdfa;
-  box-shadow: 0 24px 80px #102e2940;
+  color: var(--text-primary);
+  background: var(--surface);
+  box-shadow: 0 24px 80px var(--shadow-color);
 }
 .otp-picker::backdrop {
-  background: #142d2866;
+  background: var(--backdrop);
 }
 .otp-picker > header,
 .otp-picker > footer {
@@ -20,7 +20,7 @@
 }
 .otp-picker > header {
   justify-content: space-between;
-  border-bottom: 1px solid #dce4dd;
+  border-bottom: 1px solid var(--border);
 }
 .otp-picker h2 {
   margin: 0;
@@ -28,7 +28,7 @@
 }
 .otp-picker > footer {
   justify-content: flex-end;
-  border-top: 1px solid #dce4dd;
+  border-top: 1px solid var(--border);
 }
 .otp-picker > footer > span {
   margin-right: auto;
@@ -36,11 +36,11 @@
 .otp-picker button {
   font: inherit;
   cursor: pointer;
-  border: 1px solid #cbd8cf;
+  border: 1px solid var(--control-border);
   border-radius: 7px;
   padding: 8px 12px;
   color: inherit;
-  background: white;
+  background: var(--surface);
 }
 .otp-picker button:disabled {
   opacity: 0.5;
@@ -48,12 +48,12 @@
 }
 .otp-picker button:focus-visible,
 .otp-picker input:focus-visible {
-  outline: 2px solid #176b51;
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 .otp-picker > footer > button:last-child {
-  background: #205943;
-  color: white;
+  background: var(--accent-solid);
+  color: var(--text-on-accent);
 }
 .otp-picker__body {
   display: grid;
@@ -64,8 +64,8 @@
 }
 .otp-picker__body nav {
   padding: 16px 10px;
-  background: #f3f6f1;
-  border-right: 1px solid #dce4dd;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
 }
 .otp-picker__group > button {
   width: 100%;
@@ -91,8 +91,8 @@
   background: transparent;
 }
 .otp-picker__group li button[aria-pressed='true'] {
-  background: #deebe1;
-  border-color: #b6ccbd;
+  background: var(--surface-selected);
+  border-color: var(--control-border);
 }
 .otp-picker__details {
   padding: 24px;
@@ -110,7 +110,7 @@
 }
 .otp-picker__details pre {
   white-space: pre-wrap;
-  background: #f3f6f1;
+  background: var(--surface);
   border-radius: 8px;
   padding: 12px;
   font-size: 0.82rem;
@@ -146,13 +146,13 @@
   text-align: left;
 }
 .grouped-element-picker__item > button[aria-pressed='true'] {
-  border-color: #b6ccbd;
-  background: #deebe1;
+  border-color: var(--control-border);
+  background: var(--surface-selected);
 }
 .grouped-element-picker__children {
   margin-left: 14px;
   padding-left: 8px;
-  border-left: 1px solid #d6ded8;
+  border-left: 1px solid var(--border);
 }
 .grouped-element-picker__empty-group {
   display: flex;
@@ -160,10 +160,10 @@
   justify-content: space-between;
   gap: 8px;
   padding: 9px 12px;
-  color: #33453a;
+  color: var(--text-primary);
 }
 .grouped-element-picker__empty-group small {
-  color: #748078;
+  color: var(--text-muted);
   white-space: nowrap;
 }
 @media (max-width: 560px) {

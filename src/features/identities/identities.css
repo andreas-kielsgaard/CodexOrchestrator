@@ -4,8 +4,8 @@
   height: 30px;
   flex: 0 0 auto;
   place-items: center;
-  background: var(--identity-color, #5f6f65);
-  color: var(--identity-foreground, #ffffff);
+  background: var(--identity-color, var(--identity-default-background));
+  color: var(--identity-foreground, var(--identity-default-foreground));
   font-size: 0.68rem;
   font-weight: 850;
   line-height: 1;
@@ -62,7 +62,7 @@
 }
 
 .identity-badge__text small {
-  color: #718077;
+  color: var(--text-muted);
   font-size: 0.68rem;
 }
 
@@ -73,7 +73,7 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgb(23 33 27 / 42%);
+  background: var(--backdrop);
 }
 
 .identity-picker {
@@ -81,10 +81,10 @@
   width: min(520px, 100%);
   max-height: min(680px, calc(100vh - 48px));
   overflow: hidden;
-  border: 1px solid #cbd4cd;
+  border: 1px solid var(--border);
   border-radius: 14px;
-  background: #fffdf9;
-  box-shadow: 0 20px 56px rgb(23 33 27 / 24%);
+  background: var(--surface);
+  box-shadow: 0 20px 56px var(--shadow-color);
 }
 
 .identity-picker:focus {
@@ -101,7 +101,7 @@
 }
 
 .identity-picker__header {
-  border-bottom: 1px solid #dfe5e0;
+  border-bottom: 1px solid var(--border);
 }
 
 .identity-picker__header h2,
@@ -115,7 +115,7 @@
 
 .identity-picker__header p {
   margin-top: 3px;
-  color: #637168;
+  color: var(--text-muted);
   font-size: 0.78rem;
 }
 
@@ -143,9 +143,9 @@
   min-height: 66px;
   align-items: center;
   padding: 12px;
-  border: 1px solid #dfe5e0;
+  border: 1px solid var(--border);
   border-radius: 10px;
-  background: #f7f8f5;
+  background: var(--surface);
 }
 
 .identity-picker__field,
@@ -155,7 +155,7 @@
   margin: 0;
   padding: 0;
   border: 0;
-  color: #3d4a42;
+  color: var(--text-secondary);
   font-size: 0.76rem;
   font-weight: 750;
 }
@@ -163,10 +163,10 @@
 .identity-picker__field > input {
   min-height: 40px;
   padding: 0 11px;
-  border: 1px solid #cbd4cd;
+  border: 1px solid var(--control-border);
   border-radius: 8px;
-  background: #ffffff;
-  color: #17211b;
+  background: var(--control-background);
+  color: var(--text-primary);
   font: inherit;
   font-weight: 600;
 }
@@ -181,13 +181,13 @@
   width: 52px;
   height: 38px;
   padding: 3px;
-  border: 1px solid #cbd4cd;
+  border: 1px solid var(--control-border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--control-background);
 }
 
 .identity-picker__color-field output {
-  color: #637168;
+  color: var(--text-muted);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 0.76rem;
   font-weight: 600;
@@ -206,15 +206,15 @@
   align-items: center;
   gap: 9px;
   padding: 9px;
-  border: 1px solid #cbd4cd;
+  border: 1px solid var(--border);
   border-radius: 9px;
-  background: #fff;
+  background: var(--surface);
   cursor: pointer;
 }
 
 .identity-picker__shape-options label:has(input:checked) {
-  border-color: #39745a;
-  box-shadow: 0 0 0 1px #39745a;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .identity-picker__shape-options input {
@@ -225,7 +225,7 @@
 }
 
 .identity-picker__shape-options label:has(input:focus-visible) {
-  outline: 3px solid rgb(57 116 90 / 24%);
+  outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -233,28 +233,28 @@
   width: 26px;
   height: 26px;
   flex: 0 0 auto;
-  background: #69776f;
+  background: var(--identity-default-background);
 }
 
 .identity-picker__actions {
   justify-content: flex-end;
-  border-top: 1px solid #dfe5e0;
+  border-top: 1px solid var(--border);
 }
 
 .identity-picker__actions button {
   min-height: 38px;
   padding: 0 14px;
-  border: 1px solid #bdc8c0;
+  border: 1px solid var(--control-border);
   border-radius: 8px;
-  background: #fff;
-  color: #223028;
+  background: var(--surface);
+  color: var(--text-primary);
   font-weight: 750;
 }
 
 .identity-picker__actions button.is-primary {
-  border-color: #285d47;
-  background: #285d47;
-  color: #fff;
+  border-color: var(--accent);
+  background: var(--accent-solid);
+  color: var(--text-on-accent);
 }
 
 .identity-picker__actions button:disabled {

@@ -1,4 +1,5 @@
 import { targetKey, type BranchGraphData } from '../../application/branches';
+import { graphLaneColors as laneColors } from '../../theme/graphColors';
 
 export interface Point {
   readonly x: number;
@@ -20,15 +21,6 @@ export const grid = {
 };
 export const targetControl = (key: string) => `target:${key}`;
 export const rangeControl = (key: string) => `range:${key}`;
-export const laneColors = [
-  '#287e62',
-  '#6859b3',
-  '#bd6728',
-  '#337ca9',
-  '#ae5074',
-  '#79802b',
-  '#277e88',
-];
 
 /** Topological rows and reusable lanes own both geometry and keyboard navigation. */
 export function branchGraphLayout(graph: BranchGraphData) {

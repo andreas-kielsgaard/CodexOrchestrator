@@ -12,18 +12,18 @@
 }
 .recipe-canvas-toolbar button {
   padding: 7px 10px;
-  border: 1px solid #cbd4cd;
+  border: 1px solid var(--control-border);
   border-radius: 7px;
-  background: #fff;
+  background: var(--surface);
 }
 .recipe-canvas-toolbar button[aria-pressed='true'] {
-  background: #dfeee4;
-  border-color: #39745a;
+  background: var(--surface-selected);
+  border-color: var(--accent);
 }
 .recipe-canvas-help {
   margin: 0;
   padding: 0 12px 10px;
-  color: #647169;
+  color: var(--text-muted);
   font-size: 0.78rem;
 }
 .recipe-canvas-scroll {
@@ -42,15 +42,15 @@
 }
 .recipe-canvas .workflow-node--placement-preview {
   border-style: dashed;
-  background: rgb(255 253 248 / 72%);
+  background: var(--surface-translucent);
   box-shadow: none;
   opacity: 0.72;
   pointer-events: none;
 }
 .recipe-canvas .workflow-canvas__connections text {
   font-size: 12px;
-  fill: #34443a;
-  stroke: none;
+  fill: var(--text-primary);
+  stroke: var(--canvas);
   text-anchor: middle;
 }
 .recipe-canvas .workflow-canvas__connections {
@@ -61,6 +61,6 @@
   cursor: pointer;
 }
 .recipe-canvas :focus-visible {
-  outline: 3px solid #477dc0;
+  outline: 3px solid var(--focus-ring);
   outline-offset: 3px;
 }

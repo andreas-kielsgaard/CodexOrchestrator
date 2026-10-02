@@ -1,7 +1,7 @@
 .shared-agent-session {
   display: grid;
   overflow: hidden;
-  background: #fffdf8;
+  background: var(--surface);
 }
 
 .shared-agent-session__compact {
@@ -11,7 +11,7 @@
   min-width: 0;
   height: 100%;
   padding: 5px 12px;
-  color: #5f7067;
+  color: var(--text-muted);
   font-size: 0.7rem;
 }
 
@@ -25,7 +25,7 @@
   min-width: 0;
   flex: 1;
   overflow: hidden;
-  color: #263c31;
+  color: var(--text-primary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -42,10 +42,10 @@
   flex: 0 0 auto;
   min-height: 34px;
   padding: 0 12px;
-  border: 1px solid #c4cec4;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fffdf8;
-  color: #245f48;
+  background: var(--surface);
+  color: var(--accent);
   font: inherit;
   font-size: 0.76rem;
   font-weight: 800;
@@ -57,8 +57,8 @@
   padding: 0 10px;
   border: 0;
   border-radius: 6px;
-  background: #edf3ed;
-  color: #365647;
+  background: var(--surface);
+  color: var(--text-secondary);
   font: inherit;
   font-size: 0.72rem;
   font-weight: 760;
@@ -79,9 +79,9 @@
   gap: 8px;
   min-width: 0;
   padding: 0 12px;
-  border-bottom: 1px solid #d9e0d9;
-  background: #fffdf8;
-  color: #5f7067;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
   font-size: 0.68rem;
 }
 
@@ -95,7 +95,7 @@
   min-width: 0;
   flex: 1;
   overflow: hidden;
-  color: #263c31;
+  color: var(--text-primary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -104,10 +104,10 @@
   flex: 0 0 auto;
   min-height: 28px;
   padding: 0 9px;
-  border: 1px solid #c4cec4;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: rgb(255 253 248 / 94%);
-  color: #245f48;
+  background: var(--surface-translucent);
+  color: var(--accent);
   font: inherit;
   font-size: 0.72rem;
   font-weight: 800;
@@ -116,7 +116,7 @@
 
 .shared-agent-session__heading .shared-agent-session__standalone {
   min-height: 28px;
-  background: rgb(237 243 237 / 96%);
+  background: var(--surface-translucent);
 }
 
 .shared-agent-session__conversation .agent-session-scroll-region {

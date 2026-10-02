@@ -7,7 +7,7 @@
   min-height: 0;
   overflow: hidden;
   overscroll-behavior: none;
-  background: #eef2f4;
+  background: var(--canvas);
 }
 
 .detail-workspace__hotbar {
@@ -19,8 +19,8 @@
   flex: 0 0 auto;
   min-height: 54px;
   padding: 6px 14px;
-  border-bottom: 1px solid #d5dce2;
-  background: rgb(255 255 255 / 96%);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-translucent);
   backdrop-filter: blur(8px);
 }
 
@@ -33,7 +33,7 @@
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: #344854;
+  color: var(--text-secondary);
   font: inherit;
   font-size: 0.78rem;
   font-weight: 800;
@@ -42,14 +42,14 @@
 }
 
 .detail-workspace__back:hover {
-  background: #edf1f4;
+  background: var(--surface-hover);
 }
 
 .detail-workspace__hotbar-context {
   min-width: 0;
   flex: 1;
   overflow: hidden;
-  color: #657680;
+  color: var(--text-muted);
   font-size: 0.76rem;
   font-weight: 700;
   text-overflow: ellipsis;
@@ -88,12 +88,12 @@
   overscroll-behavior: none;
   scrollbar-gutter: stable;
   overflow-wrap: anywhere;
-  border-right: 1px solid #d5dce2;
-  background: #eef2f4;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
 }
 
 .detail-workspace__context-rail:focus-visible {
-  outline: 3px solid #cf7b32;
+  outline: 3px solid var(--focus-ring);
   outline-offset: -3px;
 }
 
@@ -109,7 +109,7 @@
   min-height: 0;
   overflow: hidden;
   overscroll-behavior: none;
-  background: #fff;
+  background: var(--surface);
 }
 
 .detail-workspace--single-panel .detail-workspace__main-column {
@@ -132,7 +132,7 @@
 }
 
 .detail-workspace__primary {
-  border-bottom: 1px solid #d5dce2;
+  border-bottom: 1px solid var(--border);
 }
 
 .detail-workspace__primary > *,
@@ -184,7 +184,7 @@
     overflow-y: auto;
     overscroll-behavior: none;
     border-right: 0;
-    border-bottom: 1px solid #d5dce2;
+    border-bottom: 1px solid var(--border);
   }
 
   .detail-workspace__context-rail h1 {

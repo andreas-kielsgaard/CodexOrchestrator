@@ -21,8 +21,8 @@
 .agent-session-workspace--compact .agent-session-identity-header {
   display: flex;
   justify-content: space-between;
-  border-bottom: 1px solid #e0e4dd;
-  background: #fffdf9;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
 }
 .agent-session-workspace--compact .agent-session-identity-header__title {
   display: flex;
@@ -32,7 +32,7 @@
 }
 .agent-session-conversation .agent-session-composer {
   z-index: 6;
-  background: #fff;
+  background: var(--surface);
   border-top: 0;
   padding: 10px clamp(12px, 4cqw, 44px);
 }
@@ -76,10 +76,10 @@
   gap: 6px;
   min-width: 0;
   padding: 0 10px;
-  border: 1px solid #d2ddd5;
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fffdf9;
-  color: #263d34;
+  background: var(--surface);
+  color: var(--text-primary);
   font: inherit;
   font-size: 0.78rem;
   cursor: pointer;
@@ -94,7 +94,7 @@
 }
 .composer-hover-group__trigger:hover,
 .composer-hover-group__trigger[aria-expanded='true'] {
-  background: #edf2ee;
+  background: var(--surface-hover);
 }
 .composer-hover-group__overlay {
   position: absolute;
@@ -106,11 +106,11 @@
   max-height: min(420px, 55vh);
   overflow: auto;
   padding: 12px;
-  border: 1px solid #d2ddd5;
+  border: 1px solid var(--border);
   border-radius: 12px;
-  background: #fffdf9;
-  color: #263d34;
-  box-shadow: 0 8px 28px #173d2533;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  box-shadow: 0 8px 28px var(--shadow-color);
 }
 .composer-hover-group__overlay[hidden] {
   display: none;
@@ -137,14 +137,14 @@
   max-width: 300px;
 }
 .composer-hover-group__overlay .session-composer-toolbar__runtime select {
-  border: 1px solid #d2ddd5;
+  border: 1px solid var(--control-border);
   border-radius: 6px;
 }
 .session-composer-toolbar__runtime label {
   display: grid;
   gap: 3px;
   font-size: 0.72rem;
-  color: #59655e;
+  color: var(--text-secondary);
 }
 .composer-turn-group .composer-hover-group__overlay {
   display: flex;
@@ -198,7 +198,7 @@
   height: 96px;
   object-fit: contain;
 }
-.worktree-review__dialog.session-configuration-dialog {
+.modal-dialog.session-configuration-dialog {
   width: min(760px, calc(100vw - 40px));
   max-height: 80vh;
   overflow: auto;
@@ -237,14 +237,14 @@
 .turn-token-estimate {
   padding: 6px 12px;
   font-size: 0.75rem;
-  color: #68736b;
+  color: var(--text-muted);
 }
 .turn-operation-group > details > summary {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 5px 8px;
-  color: #66736b;
+  color: var(--text-muted);
   cursor: pointer;
   border-radius: 6px;
 }
@@ -255,8 +255,8 @@
   content: '⌄';
 }
 .turn-operation-group > details > summary:hover {
-  background: #e4ebe5;
-  color: #263d34;
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }
 .turn-operation-group__hint {
   opacity: 0;
@@ -273,12 +273,12 @@
 }
 .turn-tool-event--running,
 .turn-operation-group {
-  border-left: 2px solid #83a795;
+  border-left: 2px solid var(--border-strong);
   padding-left: 10px;
 }
 .turn-tool-event__running {
   font-size: 0.72rem;
-  color: #38634e;
+  color: var(--info);
 }
 .turn-elapsed {
   white-space: nowrap;
@@ -292,17 +292,17 @@
   transform: translateX(-50%);
   padding: 10px 16px;
   border-radius: 8px;
-  background: #fff2ed;
-  color: #943c2d;
+  background: var(--danger-surface);
+  color: var(--danger);
 }
 .session-quote-menu {
   position: fixed;
   z-index: 70;
-  border: 1px solid var(--border-color, #c7d0c9);
+  border: 1px solid var(--border);
   border-radius: 12px;
   padding: 5px;
-  background: var(--surface-color, #fffefb);
-  box-shadow: 0 4px 18px #0002;
+  background: var(--surface-raised);
+  box-shadow: 0 4px 18px var(--shadow-color);
 }
 .session-quote-menu form {
   display: flex;
@@ -316,6 +316,9 @@
   background: transparent;
   padding: 8px;
   border-radius: 8px;
+}
+.session-quote-menu button:hover {
+  background: var(--surface-hover);
 }
 .composer-paste-backdrop {
   position: fixed;
@@ -340,12 +343,12 @@
   border-radius: 3px;
   font: inherit;
   line-height: inherit;
-  color: #407ebd;
+  color: var(--info);
   background: transparent;
   cursor: pointer;
 }
 .skill-reference:hover {
-  background: #dceafa;
+  background: var(--info-surface);
 }
 .skill-details-dialog {
   max-width: 760px;
@@ -380,5 +383,5 @@
 }
 .agent-session-composer textarea.composer-skill-input {
   color: transparent;
-  caret-color: var(--text-color, #18251f);
+  caret-color: var(--accent);
 }
