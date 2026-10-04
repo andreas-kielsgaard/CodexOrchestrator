@@ -16,13 +16,21 @@ fn worktree_review_root(app_data_dir: &std::path::Path) -> std::path::PathBuf {
 }
 
 pub(crate) fn run() {
-    let app = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+    let builder = tauri::Builder::default();
+    // CLI review launches use isolated data and must not redirect to the primary app.
+    let builder = if std::env::var_os(
+        crate::worktree_review::review_runtime::REVIEW_INSTANCE_LABEL_ENV,
+    ).is_none() {
+        builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.set_focus();
             }
         }))
+    } else {
+        builder
+    };
+    let app = builder
         .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             if let Some(label) = std::env::var_os(
@@ -529,7 +537,9 @@ pub(crate) fn run() {
             crate::worktree_review::transport::create_worktree_review_worktree,
             crate::worktree_review::transport::create_worktree_review_build,
             crate::worktree_review::transport::worktree_review_build_log,
-            crate::worktree_review::transport::worktree_review_open_build
+            crate::worktree_review::transport::worktree_review_open_build,
+            crate::worktree_review::transport::worktree_review_latest_cli_build,
+            crate::worktree_review::transport::worktree_review_open_cli_build
         ])
         .build(tauri::generate_context!())
         .expect("error while building Codex Orchestrator");

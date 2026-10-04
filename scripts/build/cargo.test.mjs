@@ -16,6 +16,7 @@ import {
   applicationBuildConfig,
   applicationSchemaVersion,
   publishApplication,
+  registerLatestBuild,
   frontendConfigPath,
 } from './application.mjs';
 import { run, BuildError } from './process.mjs';
@@ -273,6 +274,17 @@ test('application receipts capture the schema compiled from the selected worktre
   assert.equal(applicationSchemaVersion(worktree), 55);
   fs.writeFileSync(path.join(source, 'storage.rs'), 'const SOMETHING_ELSE: i64 = 55;\n');
   assert.equal(applicationSchemaVersion(worktree), null);
+});
+
+test('successful build registration replaces the previous worktree output atomically', (t) => {
+  const { root } = fixture(t);
+  const owner = path.join(root, 'owner');
+  registerLatestBuild(owner, { executable: 'first.exe' });
+  registerLatestBuild(owner, { executable: 'latest.exe' });
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(owner, 'latest-build.json'), 'utf8')), {
+    executable: 'latest.exe',
+  });
+  assert.deepEqual(fs.readdirSync(owner), ['latest-build.json']);
 });
 
 test('debug publication copies Rust underscore-named PDBs for a hyphenated executable', (t) => {

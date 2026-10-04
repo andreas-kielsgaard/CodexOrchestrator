@@ -23,6 +23,7 @@ import { CreateBuildDialog } from './CreateBuildDialog';
 import { ReadinessNotice } from './ReadinessNotice';
 import { RepositoryRegistrationModal } from './RepositoryRegistrationModal';
 import { WorktreeSelector } from './WorktreeSelector';
+import { LatestCliBuild } from './LatestCliBuild';
 import { useReviewSelection } from './useReviewSelection';
 import { useCommitHistory } from './useCommitHistory';
 import { initialBuildDraft, type BuildDraft } from './buildDraft';
@@ -262,7 +263,9 @@ export function WorktreeReviewScreen({
     setError(null);
     try {
       const outcome = await client.openBuild({ buildId });
-      setNotice(outcome.outcome === 'focused_existing' ? 'Focused existing build.' : 'Launched build.');
+      setNotice(
+        outcome.outcome === 'focused_existing' ? 'Focused existing build.' : 'Launched build.',
+      );
     } catch (cause) {
       setError(message(cause));
     } finally {
@@ -385,14 +388,20 @@ export function WorktreeReviewScreen({
                 onAssociate={(candidate, baseline) => void associateWorktree(candidate, baseline)}
                 onRequestHistory={() => void history.load()}
                 onLoadMoreHistory={() => void history.loadMore()}
-                unreadWorktreeIds={new Set(
-                  unreadBuilds
-                    .filter((build) => build.repositoryId === repositoryId)
-                    .flatMap((build) =>
-                      build.sourceWorktreeId ? [build.sourceWorktreeId] : [],
-                    ),
-                )}
+                unreadWorktreeIds={
+                  new Set(
+                    unreadBuilds
+                      .filter((build) => build.repositoryId === repositoryId)
+                      .flatMap((build) => (build.sourceWorktreeId ? [build.sourceWorktreeId] : [])),
+                  )
+                }
               />
+              {selectedWorktree && (
+                <LatestCliBuild
+                  key={selectedWorktree.locationLabel}
+                  path={selectedWorktree.locationLabel}
+                />
+              )}
               <BuildHistory
                 builds={liveBuilds}
                 openingBuildId={openingBuildId}
@@ -400,9 +409,7 @@ export function WorktreeReviewScreen({
                 readLog={client.readBuildLog}
                 createButtonRef={buildTrigger}
                 onCreate={() => {
-                  setDraft(
-                    initialBuildDraft(detail, overview.activeBuildContext?.worktreeId),
-                  );
+                  setDraft(initialBuildDraft(detail, overview.activeBuildContext?.worktreeId));
                   setBuildDialogOpen(true);
                 }}
                 onRebuild={(build) => {

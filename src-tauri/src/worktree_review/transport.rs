@@ -249,3 +249,21 @@ async fn blocking<T: Send + 'static>(
         .await
         .map_err(|error| format!("Worktree Review {label} task failed: {error}"))?
 }
+
+#[tauri::command]
+pub(crate) async fn worktree_review_latest_cli_build(
+    path: String,
+) -> Result<Option<super::cli_builds::CliBuild>, String> {
+    blocking("discover CLI build", move || {
+        Ok(super::cli_builds::latest(std::path::Path::new(&path)))
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn worktree_review_open_cli_build(path: String) -> Result<(), String> {
+    blocking("open CLI build", move || {
+        super::cli_builds::open(std::path::Path::new(&path))
+    })
+    .await
+}

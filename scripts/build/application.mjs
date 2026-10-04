@@ -49,6 +49,14 @@ export function publishApplication(source, output, debugging, receipt) {
   }
 }
 
+export function registerLatestBuild(ownerRoot, result) {
+  const latest = path.join(ownerRoot, 'latest-build.json');
+  const pending = `${latest}.${randomUUID()}.tmp`;
+  fs.mkdirSync(ownerRoot, { recursive: true });
+  fs.writeFileSync(pending, JSON.stringify(result, null, 2));
+  fs.renameSync(pending, latest);
+}
+
 function requireFile(filename) {
   if (!fs.existsSync(filename))
     throw new BuildError(
@@ -247,6 +255,8 @@ export async function buildApplication(request) {
     };
     console.log('@@ORCHID_STAGE:publication');
     publishApplication(source, output, profile === 'debug', result);
+    // Worktree Review discovers successful builds through the shared cache owner.
+    registerLatestBuild(layout.ownerRoot, result);
     console.log(`Application ready: ${executablePath}\nLaunch is a separate action.`);
     return result;
   } finally {
