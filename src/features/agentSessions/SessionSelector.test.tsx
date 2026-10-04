@@ -56,6 +56,27 @@ it('uses filled completion dots only for done conversations and hollow dots for 
   expect(screen.getByLabelText('Turn finished; queued actions continuing')).toHaveClass(
     'session-completion--continued',
   );
+  expect(
+    within(screen.getByRole('treeitem', { name: 'Session 2' })).getByLabelText('Working'),
+  ).toHaveClass('spin');
+  expect(
+    within(screen.getByRole('treeitem', { name: 'Session 1' })).queryByLabelText('Working'),
+  ).not.toBeInTheDocument();
+});
+
+it('replaces the working spinner with an attention indicator while waiting for the user', async () => {
+  const data = navigationData();
+  const summaries = data.summaries.map((s) => ({
+    ...s,
+    hasActiveInvocation: true,
+    pendingRequestCount: 1,
+  }));
+  render(<SessionSelector {...props()} model={buildSessionNavigation({ ...data, summaries })} />);
+  expect(
+    within(await screen.findByRole('treeitem', { name: 'Session 1' })).getByLabelText(
+      'Waiting for you',
+    ),
+  ).toBeInTheDocument();
   expect(screen.queryByLabelText('Working')).not.toBeInTheDocument();
 });
 

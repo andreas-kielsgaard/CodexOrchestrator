@@ -198,6 +198,15 @@
 .session-completion--continued {
   background: transparent;
 }
+.session-working {
+  flex-shrink: 0;
+  color: var(--info);
+}
+@media (prefers-reduced-motion: reduce) {
+  .session-working.spin {
+    animation: none;
+  }
+}
 .session-active {
   background: var(--success);
   animation: pulse 1.5s infinite;

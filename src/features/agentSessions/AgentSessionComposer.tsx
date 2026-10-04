@@ -1,6 +1,7 @@
 import { FileText, Image, Plus, Send, Square, X } from 'lucide-react';
 import {
   useEffect,
+  useLayoutEffect,
   useId,
   useRef,
   useState,
@@ -96,6 +97,20 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
     props.targetSource,
   );
   useComposerAutosize(menu.textarea, props.draft);
+  useLayoutEffect(() => {
+    const input = menu.textarea.current;
+    const mirror = skillMirror.current;
+    if (!input || !mirror) return;
+    const align = () => {
+      // Exclude the native scrollbar from the mirrored text's wrapping width.
+      mirror.style.width = `${input.clientWidth}px`;
+      mirror.scrollTop = input.scrollTop;
+    };
+    align();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(align);
+    observer?.observe(input);
+    return () => observer?.disconnect();
+  }, [hasSkillReferences, menu.textarea]);
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
     if (menu.open) {
@@ -315,42 +330,45 @@ export function AgentSessionComposer(props: AgentSessionComposerProps) {
       )}
       <div className="composer-input-row">
         <ComposerQuickMenu menu={menu} id={menuId} />
-        {hasSkillReferences && (
-          <div className="composer-skill-mirror" ref={skillMirror}>
-            <SkillReferenceText text={props.draft} />
-            {'\n'}
-          </div>
-        )}
-        <textarea
-          className={hasSkillReferences ? 'composer-skill-input' : undefined}
-          onScroll={(event) => {
-            if (skillMirror.current) skillMirror.current.scrollTop = event.currentTarget.scrollTop;
-          }}
-          ref={menu.textarea}
-          aria-controls={menu.open ? menuId : undefined}
-          aria-haspopup={props.quickFeatures || props.targetSource ? 'listbox' : undefined}
-          aria-autocomplete={props.quickFeatures || props.targetSource ? 'list' : undefined}
-          aria-activedescendant={
-            menu.open && menu.items.length ? `${menuId}-${menu.selectedIndex}` : undefined
-          }
-          value={props.draft}
-          onChange={(event) => {
-            menu.setCaret(event.target.selectionStart);
-            props.onDraftChange(event.target.value);
-          }}
-          onSelect={(event) => menu.setCaret(event.currentTarget.selectionStart)}
-          onKeyDown={handleKeyDown}
-          onPaste={(event) => void handlePaste(event)}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            refreshClipboard();
-            setPasteMenu({ x: event.clientX, y: event.clientY });
-          }}
-          placeholder={props.messagePlaceholder ?? 'What would you like the agent to do?'}
-          aria-label={props.messageLabel ?? 'Message'}
-          disabled={inputDisabled}
-          rows={3}
-        />
+        <div className="composer-text-editor">
+          {hasSkillReferences && (
+            <div className="composer-skill-mirror" ref={skillMirror}>
+              <SkillReferenceText text={props.draft} />
+              {'\n'}
+            </div>
+          )}
+          <textarea
+            className={hasSkillReferences ? 'composer-skill-input' : undefined}
+            onScroll={(event) => {
+              if (skillMirror.current)
+                skillMirror.current.scrollTop = event.currentTarget.scrollTop;
+            }}
+            ref={menu.textarea}
+            aria-controls={menu.open ? menuId : undefined}
+            aria-haspopup={props.quickFeatures || props.targetSource ? 'listbox' : undefined}
+            aria-autocomplete={props.quickFeatures || props.targetSource ? 'list' : undefined}
+            aria-activedescendant={
+              menu.open && menu.items.length ? `${menuId}-${menu.selectedIndex}` : undefined
+            }
+            value={props.draft}
+            onChange={(event) => {
+              menu.setCaret(event.target.selectionStart);
+              props.onDraftChange(event.target.value);
+            }}
+            onSelect={(event) => menu.setCaret(event.currentTarget.selectionStart)}
+            onKeyDown={handleKeyDown}
+            onPaste={(event) => void handlePaste(event)}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              refreshClipboard();
+              setPasteMenu({ x: event.clientX, y: event.clientY });
+            }}
+            placeholder={props.messagePlaceholder ?? 'What would you like the agent to do?'}
+            aria-label={props.messageLabel ?? 'Message'}
+            disabled={inputDisabled}
+            rows={3}
+          />
+        </div>
         {pasteMenu && (
           <div className="composer-paste-backdrop" onPointerDown={() => setPasteMenu(null)}>
             <div

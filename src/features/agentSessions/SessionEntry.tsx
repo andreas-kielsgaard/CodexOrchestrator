@@ -1,5 +1,5 @@
 import type { SessionWorkflowTarget } from '../../application/agentSessions/workflowNavigation';
-import { Pin, GitBranch } from 'lucide-react';
+import { Pin, GitBranch, LoaderCircle } from 'lucide-react';
 import type { SessionNavigationRow } from '../../application/agentSessions/navigation';
 import type { NavigationEntry } from '../../application/agentSessions/navigationView';
 import type { SessionNavigationController } from './useSessionNavigation';
@@ -99,6 +99,9 @@ export function SessionEntry({
         >
           <Pin size={14} fill={node.pinned ? 'currentColor' : 'none'} />
         </button>
+      )}
+      {node.summary.hasActiveInvocation && node.summary.pendingRequestCount === 0 && (
+        <LoaderCircle size={13} className="session-working spin" aria-label="Working" />
       )}
       {node.summary.pendingRequestCount > 0 ? (
         <span

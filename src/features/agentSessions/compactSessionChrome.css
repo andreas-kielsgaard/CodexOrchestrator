@@ -396,6 +396,9 @@
   margin: 0 0 8px;
   overflow-wrap: anywhere;
 }
+.composer-text-editor {
+  position: relative;
+}
 .composer-skill-mirror {
   position: absolute;
   inset: 0;
@@ -405,13 +408,16 @@
   white-space: pre-wrap;
   overflow: hidden;
   pointer-events: none;
-  line-height: normal;
+  font-family: inherit;
+  line-height: inherit;
+  overflow-wrap: break-word;
 }
 .composer-input-row:has(.composer-attachment-group) .composer-skill-mirror {
   padding-right: 85px;
 }
 .composer-skill-mirror button {
   pointer-events: auto;
+  white-space: inherit;
 }
 .agent-session-composer textarea.composer-skill-input {
   color: transparent;
