@@ -12,7 +12,7 @@ use super::{
 };
 use serde::Deserialize;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 pub(crate) const BUILD_TERMINAL_EVENT: &str = "worktree-review://build-terminal";
 
@@ -220,6 +220,9 @@ pub(crate) async fn create_worktree_review_build(
         });
         if let Ok(terminal) = &result {
             let _ = app.emit(BUILD_TERMINAL_EVENT, terminal);
+            if let Some(voice)=app.try_state::<crate::voice_sessions::transport::VoiceSessionTauriState>() {
+                voice.0.on_build(serde_json::to_value(terminal).unwrap_or_default());
+            }
         }
         if let Ok(mut sender) = sender.lock() {
             if let Some(sender) = sender.take() {

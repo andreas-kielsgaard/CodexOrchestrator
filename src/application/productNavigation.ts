@@ -30,6 +30,7 @@ export type ProductNavigationDestination =
       readonly focusedEvidence?: ProductDecisionEvidenceDestination;
     }
   | { readonly kind: 'file_review'; readonly target: FileReviewNavigationTarget }
+  | { readonly kind: 'voice_sessions' }
   | { readonly kind: 'harness_inspector' }
   | { readonly kind: 'worktree_review' }
   | {
@@ -218,20 +219,21 @@ export function productNavigationReducer(
       };
     case 'enter_agent_sessions_directly': {
       const alreadyInAgentSessions = state.current.destination.kind === 'agent_sessions';
-      const remembered =
-        alreadyInAgentSessions
-          ? state.current.destination
-          : state.history
-              .slice()
-              .reverse()
-              .find(
-                (entry): entry is ProductNavigationEntry & {
-                  readonly destination: Extract<
-                    ProductNavigationDestination,
-                    { readonly kind: 'agent_sessions' }
-                  >;
-                } => entry.destination.kind === 'agent_sessions',
-              )?.destination;
+      const remembered = alreadyInAgentSessions
+        ? state.current.destination
+        : state.history
+            .slice()
+            .reverse()
+            .find(
+              (
+                entry,
+              ): entry is ProductNavigationEntry & {
+                readonly destination: Extract<
+                  ProductNavigationDestination,
+                  { readonly kind: 'agent_sessions' }
+                >;
+              } => entry.destination.kind === 'agent_sessions',
+            )?.destination;
       const destination: ProductNavigationDestination = {
         kind: 'agent_sessions',
         selection: remembered?.selection ?? { kind: 'initial' },
@@ -378,6 +380,7 @@ export function isProductNavigationDestination(
       );
     case 'file_review':
       return hasOnlyKeys(value, ['kind', 'target']) && isFileReviewNavigationTarget(value.target);
+    case 'voice_sessions':
     case 'harness_inspector':
     case 'worktree_review':
       return hasOnlyKeys(value, ['kind']);
@@ -486,6 +489,7 @@ export function sameProductNavigationDestination(
       return (
         right.kind === 'file_review' && sameFileReviewNavigationTarget(left.target, right.target)
       );
+    case 'voice_sessions':
     case 'harness_inspector':
     case 'worktree_review':
       return true;

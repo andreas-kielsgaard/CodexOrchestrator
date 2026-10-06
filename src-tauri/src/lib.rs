@@ -10,6 +10,7 @@ mod identities;
 mod otp_api;
 mod otp_host;
 mod otp_packages;
+mod orchid_control;
 mod product_home;
 // The semantic save command is intentionally dormant until the later MCP adapter owns its input.
 #[allow(dead_code)]
@@ -27,6 +28,7 @@ mod session_events;
 mod session_navigation;
 mod storage;
 mod workflows;
+mod voice_sessions;
 pub(crate) mod worktree_application;
 mod worktree_review;
 

@@ -1,3 +1,5 @@
+import type { VoiceSessionClient } from '../application/voiceSessions';
+import { VoiceSessionsScreen } from '../features/voiceSessions';
 import type { AgentSessionImportClient } from '../application/agentSessions/importContracts';
 
 import type { SessionNavigationAgentAccess } from '../application/agentSessions/agentAccess';
@@ -191,6 +193,7 @@ export interface AppProps {
 
   readonly orchestrationClient: OrchestrationApplicationClient;
 
+  readonly voiceSessionClient?: VoiceSessionClient;
   readonly workflowAuthoringClient?: WorkflowAuthoringClient;
 
   readonly workflowInstanceClient?: WorkflowInstanceClient;
@@ -318,6 +321,7 @@ export function App({
 
   orchestrationClient,
 
+  voiceSessionClient,
   workflowAuthoringClient,
 
   workflowInstanceClient,
@@ -457,6 +461,8 @@ export function App({
         case 'agent_sessions':
           return true;
 
+        case 'voice_sessions':
+          return Boolean(voiceSessionClient);
         case 'workflow':
           return Boolean(workflowAuthoringClient);
 
@@ -499,12 +505,15 @@ export function App({
       executionConfigurationClient,
       nativeProfileClient,
 
+      voiceSessionClient,
       workflowAuthoringClient,
     ],
   );
 
   const initialNavigationDestination: ProductNavigationDestination =
-    initialApplicationSurface === 'agent-sessions'
+    initialApplicationSurface === 'voice-sessions'
+      ? { kind: 'voice_sessions' }
+      : initialApplicationSurface === 'agent-sessions'
       ? { kind: 'agent_sessions', selection: { kind: 'initial' }, focusedInvocationId: null }
       : initialApplicationSurface === 'workflows'
         ? { kind: 'workflow', workflowTypeId: null, workflowInstanceId: null }
@@ -1355,6 +1364,7 @@ export function App({
             </button>
           ) : null}
 
+          {voiceSessionClient && <button type="button" className={surface === 'voice-sessions' ? 'active' : undefined} aria-current={surface === 'voice-sessions' ? 'page' : undefined} onClick={() => dispatchProductNavigation({ type: 'navigate', intent: 'push', destination: { kind: 'voice_sessions' } })}>Voice Sessions</button>}
           {executionConfigurationClient ? (
             <button
               className={surface === 'capability-profiles' ? 'active' : undefined}
@@ -1647,6 +1657,8 @@ export function App({
             });
           }}
         />
+      ) : surface === 'voice-sessions' && voiceSessionClient ? (
+        <VoiceSessionsScreen client={voiceSessionClient} onOpenSession={(sessionId) => dispatchProductNavigation({ type: 'navigate', intent: 'push', destination: { kind: 'agent_sessions', selection: { kind: 'session', sessionId }, focusedInvocationId: null } })} />
       ) : surface === 'workflows' &&
         workflowAuthoringClient &&
         executionConfigurationClient &&

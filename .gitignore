@@ -11,3 +11,6 @@ src-tauri/gen/
 .DS_Store
 *.local
 *.log
+apps/orchid-android/.gradle/
+apps/orchid-android/**/build/
+apps/orchid-android/local.properties

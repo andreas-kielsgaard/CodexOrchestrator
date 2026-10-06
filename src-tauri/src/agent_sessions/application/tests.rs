@@ -75,6 +75,7 @@ impl AgentSessionApplication {
     }
 }
 mod preparation_tests;
+mod product_delivery_tests;
 mod repair_tests;
 mod skill_mention_tests;
 mod target_tests;

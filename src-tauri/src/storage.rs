@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 65;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 66;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 #[cfg(test)]
@@ -510,6 +510,7 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
 }
 
 fn initialize_session_navigation_schema(connection: &Connection) -> Result<(), String> {
+    connection.execute_batch(crate::voice_sessions::repository::SCHEMA).map_err(|e|e.to_string())?;
     connection
         .execute_batch(crate::agent_sessions::repository::PREPARATION_SCHEMA)
         .map_err(|e| e.to_string())?;
@@ -660,8 +661,8 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
         .map(|table_count| table_count == 0)
         .map_err(|error| format!("Unable to inspect retired Workflow V1 schema: {error}"))?;
     let session_navigation_schema_is_present = connection.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('agent_session_organization','session_navigation_order')", [], |row| row.get::<_, i64>(0),
-    ).map(|count| count == 2).map_err(|e| e.to_string())?;
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('agent_session_organization','session_navigation_order','voice_session_state')", [], |row| row.get::<_, i64>(0),
+    ).map(|count| count == 3).map_err(|e| e.to_string())?;
     let session_profile_schema_is_present = connection
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('agent_sessions') WHERE name IN ('session_profile_json','harness_version_ref_json','assigned_identity_json','workspace_origin','execution_target_json')",

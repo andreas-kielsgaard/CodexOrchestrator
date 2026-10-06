@@ -1,0 +1,203 @@
+use super::{
+    domain::{Playback, VoiceSettings},
+    VoiceSessionApplication,
+};
+use axum::{
+    extract::{
+        ws::{Message, WebSocket},
+        State, WebSocketUpgrade,
+    },
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::get,
+    Router,
+};
+use futures_util::{SinkExt, StreamExt};
+use serde_json::{json, Value};
+use std::{net::SocketAddr, sync::Arc, thread};
+use tokio_util::sync::CancellationToken;
+
+pub(crate) struct GatewayOwner {
+    cancellation: CancellationToken,
+    thread: Option<thread::JoinHandle<()>>,
+}
+impl Drop for GatewayOwner {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+#[derive(Clone)]
+struct GatewayState {
+    app: Arc<VoiceSessionApplication>,
+    token: String,
+    cancel: CancellationToken,
+}
+pub(crate) fn validate_address(value: &str) -> Result<SocketAddr, String> {
+    let address: SocketAddr = value
+        .parse()
+        .map_err(|_| "Use a numeric Tailscale address and port, such as 100.x.x.x:4818")?;
+    let private = match address.ip() {
+        std::net::IpAddr::V4(ip) => {
+            ip.is_loopback() || (ip.octets()[0] == 100 && (64..=127).contains(&ip.octets()[1]))
+        }
+        std::net::IpAddr::V6(ip) => ip.is_loopback(),
+    };
+    if !private || address.port() == 0 {
+        return Err(
+            "Bind to the laptop Tailscale IPv4 address (or loopback for local testing)".into(),
+        );
+    }
+    Ok(address)
+}
+pub(crate) fn start(
+    app: Arc<VoiceSessionApplication>,
+    settings: &VoiceSettings,
+) -> Result<GatewayOwner, String> {
+    let listener = std::net::TcpListener::bind(validate_address(&settings.bind_address)?)
+        .map_err(|e| e.to_string())?;
+    listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+    let cancel = CancellationToken::new();
+    let cancellation = cancel.clone();
+    let state = GatewayState {
+        app,
+        token: settings.token.clone(),
+        cancel: cancel.clone(),
+    };
+    let thread = thread::Builder::new()
+        .name("voice-phone".into())
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("voice gateway runtime");
+            runtime.block_on(async move {
+                let listener = tokio::net::TcpListener::from_std(listener).expect("voice listener");
+                let router = Router::new()
+                    .route("/phone", get(upgrade))
+                    .with_state(state);
+                let _ = axum::serve(listener, router)
+                    .with_graceful_shutdown(cancel.cancelled_owned())
+                    .await;
+            });
+            runtime.shutdown_timeout(std::time::Duration::from_secs(2));
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(GatewayOwner {
+        cancellation,
+        thread: Some(thread),
+    })
+}
+async fn upgrade(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Response {
+    if headers.get("authorization").and_then(|v| v.to_str().ok())
+        != Some(format!("Bearer {}", state.token).as_str())
+    {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let accepted = state.app.update(|snapshot| {
+        if snapshot.phone_connected {
+            return Err("Phone already connected".into());
+        }
+        snapshot.phone_connected = true;
+        Ok(())
+    });
+    if accepted.is_err() {
+        return StatusCode::CONFLICT.into_response();
+    }
+    ws.max_message_size(5_500_000)
+        .on_upgrade(move |socket| connection(socket, state))
+}
+async fn connection(socket: WebSocket, state: GatewayState) {
+    let (mut sink, mut source) = socket.split();
+    let mut events = state.app.events.subscribe();
+    let conversation = state.app.snapshot().ok().and_then(|s| s.conversation);
+    if sink.send(Message::Text(json!({"type":"hello","version":1,"conversationId":conversation.as_ref().map(|c|&c.id),"mainSessionId":conversation.map(|c|c.main_session_id)}).to_string().into())).await.is_err() { let _=state.app.update(|s|{s.phone_connected=false;Ok(())});return; }
+    let (inputs, mut pending) = tokio::sync::mpsc::channel::<Value>(4);
+    let app = state.app.clone();
+    let cancelled = state.cancel.clone();
+    let processor = tokio::spawn(async move {
+        loop {
+            let value =
+                tokio::select! {_ = cancelled.cancelled()=>break, value=pending.recv()=>value};
+            let Some(value) = value else { break };
+            let app = app.clone();
+            let error_app = app.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                let text = if value["type"] == "audio" {
+                    app.speech
+                        .transcribe(value["audio"].as_str().ok_or("Audio is missing")?)?
+                } else {
+                    value["text"].as_str().ok_or("Text is missing")?.to_string()
+                };
+                app.input(
+                    value["id"]
+                        .as_str()
+                        .ok_or("Input ID is missing")?
+                        .to_string(),
+                    text,
+                )
+            })
+            .await;
+            if let Ok(Err(error)) = result {
+                error_app.set_error(error);
+            }
+        }
+    });
+    loop {
+        tokio::select! {
+            _=state.cancel.cancelled()=>break,
+            event=events.recv()=>match event {
+                Ok(value)=>{if value["type"]!="changed" && sink.send(Message::Text(value.to_string().into())).await.is_err(){break;}}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>{let _=sink.send(Message::Text(json!({"type":"error","message":"Output connection fell behind; ask for the report again"}).to_string().into())).await;}
+                Err(_)=>break,
+            },
+            message=source.next()=>{
+                let Some(Ok(message))=message else{break};
+                match message {
+                    Message::Text(text)=>{
+                        let Ok(value)=serde_json::from_str::<Value>(&text) else{continue};
+                        match value["type"].as_str() {
+                            Some("audio"|"text")=>{if inputs.try_send(value).is_err(){state.app.set_error("Input queue is busy; please repeat shortly".into());}}
+                            Some("playback"|"interrupt")=>{if let Ok(playback)=serde_json::from_value::<Playback>(value["playback"].clone()){let _=state.app.playback(playback);}}
+                            Some("ping")=>{let _=sink.send(Message::Text(json!({"type":"pong"}).to_string().into())).await;}
+                            _=>{}
+                        }
+                    }
+                    Message::Ping(data)=>{let _=sink.send(Message::Pong(data)).await;}
+                    Message::Close(_)=>break,
+                    _=>{}
+                }
+            }
+        }
+    }
+    processor.abort();
+    let _ = state.app.update(|s| {
+        s.phone_connected = false;
+        Ok(())
+    });
+    let _ = sink.close().await;
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn gateway_cannot_bind_public_or_lan_interfaces() {
+        for address in [
+            "0.0.0.0:4818",
+            "192.168.0.139:4818",
+            "8.8.8.8:4818",
+            "100.128.1.1:4818",
+        ] {
+            assert!(validate_address(address).is_err());
+        }
+        for address in ["127.0.0.1:4818", "100.105.52.29:4818"] {
+            assert!(validate_address(address).is_ok());
+        }
+    }
+}

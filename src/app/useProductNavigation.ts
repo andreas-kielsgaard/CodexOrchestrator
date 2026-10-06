@@ -12,6 +12,7 @@ import {
 export type ApplicationSurface =
   | 'epics'
   | 'workflows'
+  | 'voice-sessions'
   | 'capability-profiles'
   | 'agent-sessions'
   | 'harness-inspector'
@@ -27,6 +28,8 @@ export function surfaceForDestination(
     case 'orchestration':
     case 'plan_builder':
       return 'epics';
+    case 'voice_sessions':
+      return 'voice-sessions';
     case 'workflow':
       return 'workflows';
     case 'capability_profiles':
@@ -53,10 +56,8 @@ export function useProductNavigation(
 ) {
   const epoch = useRef(0);
   const [state, reduce] = useReducer(
-    (
-      current: ReturnType<typeof createProductNavigation>,
-      action: ProductNavigationAction,
-    ) => productNavigationReducer(current, action, supports),
+    (current: ReturnType<typeof createProductNavigation>, action: ProductNavigationAction) =>
+      productNavigationReducer(current, action, supports),
     createProductNavigation(initialDestination),
   );
   const dispatch = useCallback((action: ProductNavigationAction) => {

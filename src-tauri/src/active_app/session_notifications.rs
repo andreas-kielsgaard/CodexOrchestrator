@@ -21,12 +21,15 @@ pub(super) struct SessionNotificationFanout {
     >,
     pub(super) workflow_execution:
         Arc<Mutex<Option<Weak<crate::workflows::execution::WorkflowExecutionService>>>>,
+    pub(super) voice: Arc<Mutex<Option<Weak<crate::voice_sessions::VoiceSessionApplication>>>>,
 }
 impl crate::agent_sessions::application::AgentSessionNotifier for SessionNotificationFanout {
     fn notify(
         &self,
         notification: crate::agent_sessions::application::AgentSessionNotification,
     ) -> Result<(), String> {
+        let voice=self.voice.lock().ok().and_then(|slot|slot.clone()).and_then(|service|service.upgrade());
+        if let Some(voice)=voice { voice.on_notification(&notification); }
         if let crate::agent_sessions::application::AgentSessionNotification::InvocationTerminal {
             invocation,
             ..

@@ -123,8 +123,16 @@ impl AgentSessionApplication {
     }
     pub(super) fn accept_prepared_inner(
         &self,
+        input: PreparedMessageInput,
+        provenance: AgentInvocationInputProvenance,
+    ) -> Result<SendAgentSessionMessageResult, AgentSessionApplicationError> {
+        self.accept_queued_content(input, provenance, false)
+    }
+    pub(super) fn accept_queued_content(
+        &self,
         mut input: PreparedMessageInput,
         provenance: AgentInvocationInputProvenance,
+        pinned_delivery: bool,
     ) -> Result<SendAgentSessionMessageResult, AgentSessionApplicationError> {
         let now = self.clock.now();
         let session = match &input.session_id {
@@ -151,7 +159,7 @@ impl AgentSessionApplication {
                 updated_at: now,
             },
         };
-        if session.harness_version.is_some() {
+        if session.harness_version.is_some() && !pinned_delivery {
             return Err(AgentSessionApplicationError::invalid(
                 "Mutable execution targets are available for ordinary sessions only",
             ));
@@ -167,8 +175,9 @@ impl AgentSessionApplication {
                 .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
             selection.capability_profile_revision = capability.revision;
         }
-        let operation =
-            self.target_operation_for_submission(&session, input.execution_selection.as_ref())?;
+        let operation = if pinned_delivery { None } else {
+            self.target_operation_for_submission(&session, input.execution_selection.as_ref())?
+        };
         let id = input.submission_id.clone();
         let pending = AgentInvocation {
             attachments: input.attachments,
@@ -177,7 +186,7 @@ impl AgentSessionApplication {
             submitted_text: input.submitted_text,
             input_provenance: provenance,
             status: AgentInvocationStatus::Pending,
-            requested_options: AgentRuntimeOptions::default(),
+            requested_options: if pinned_delivery { session.requested_options.clone() } else { AgentRuntimeOptions::default() },
             effective_options: None,
             started_at: None,
             completed_at: None,
@@ -189,6 +198,7 @@ impl AgentSessionApplication {
             updated_at: now,
         };
         let preparation = SessionPreparation {
+            pinned_delivery,
             invocation_id: id.clone(),
             session_id: session.id.clone(),
             phase: PreparationPhase::Accepted,
@@ -345,7 +355,7 @@ impl AgentSessionApplication {
         self.spawn_preparation(id.clone(), flag);
         Ok(())
     }
-    fn save_progress(&self, p: &SessionPreparation) -> Result<(), AgentSessionApplicationError> {
+    pub(super) fn save_progress(&self, p: &SessionPreparation) -> Result<(), AgentSessionApplicationError> {
         self.repository
             .save_preparation(p)
             .map_err(AgentSessionApplicationError::repository)?;
@@ -375,7 +385,7 @@ impl AgentSessionApplication {
         }
         self.save_progress(p)
     }
-    fn check_preparation_cancel(cancel: &AtomicBool) -> Result<(), AgentSessionApplicationError> {
+    pub(super) fn check_preparation_cancel(cancel: &AtomicBool) -> Result<(), AgentSessionApplicationError> {
         if cancel.load(Ordering::SeqCst) {
             Err(AgentSessionApplicationError::conflict(
                 "Setup canceled before prompt delivery",

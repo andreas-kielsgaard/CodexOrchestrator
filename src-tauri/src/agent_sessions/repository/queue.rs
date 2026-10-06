@@ -213,6 +213,7 @@ pub(crate) fn migrate_legacy_target_transitions(connection: &Connection) -> Resu
                     )
                     .map_err(|error| format!("Unable to migrate queued transition invocation: {error}"))?;
                 let preparation = SessionPreparation {
+                    pinned_delivery: false,
                     invocation_id: invocation_id.clone(),
                     session_id: session.id.clone(),
                     phase: PreparationPhase::Accepted,

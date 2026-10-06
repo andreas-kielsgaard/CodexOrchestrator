@@ -29,7 +29,10 @@
     "test:app-inspector": "node --test review-tools/app-inspector/test/interaction-adapter-framing.test.mjs review-tools/app-inspector/test/launch-paths.test.mjs review-tools/app-inspector/test/rendered-state.test.mjs review-tools/app-inspector/test/snapshot-compare.test.mjs review-tools/app-inspector/test/wait-for-change.test.mjs review-tools/app-inspector/test/webview-control.test.mjs review-tools/app-inspector/test/windows-adapter-framing.test.mjs review-tools/app-inspector/test/windows-webview-owner-boundary.test.mjs",
     "test:app-inspector:browser": "node --test review-tools/app-inspector/test/webview-control-live.test.mjs",
     "build:frontend": "tsc --noEmit && vite build",
-    "test:build-tools": "node --test scripts/build/*.test.mjs"
+    "test:build-tools": "node --test scripts/build/*.test.mjs",
+    "setup:voice": "powershell -NoProfile -File scripts/android/setup-voice.ps1",
+    "build:android": "powershell -NoProfile -File scripts/android/build.ps1",
+    "deploy:s21": "powershell -NoProfile -File scripts/android/deploy-s21.ps1"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

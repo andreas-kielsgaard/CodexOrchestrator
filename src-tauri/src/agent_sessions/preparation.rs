@@ -40,6 +40,9 @@ pub(crate) struct QueuedCapabilityProfile {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SessionPreparation {
+    /// Product delivery retains the Session's pinned policy and existing provider route.
+    #[serde(default)]
+    pub(crate) pinned_delivery: bool,
     pub(crate) invocation_id: AgentInvocationId,
     pub(crate) session_id: AgentSessionId,
     pub(crate) phase: PreparationPhase,

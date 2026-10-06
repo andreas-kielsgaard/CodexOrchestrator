@@ -20,6 +20,9 @@ impl AgentSessionApplication {
             .map_err(AgentSessionApplicationError::repository)?
             .ok_or_else(|| AgentSessionApplicationError::not_found("Preparation not found"))?;
         let history = self.load_session(&p.session_id)?;
+        if p.pinned_delivery {
+            return self.run_pinned_preparation(p, cancel);
+        }
         let session = history.session.clone();
         // Queue order owns the target. Refresh these source facts only when the entry reaches the
         // head so a drag across a target operation has concrete execution semantics.

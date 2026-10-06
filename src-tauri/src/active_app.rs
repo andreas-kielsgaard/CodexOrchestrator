@@ -1,6 +1,7 @@
 mod execution_configuration;
 mod session_notifications;
 mod sessions;
+mod voice_sessions;
 
 use session_notifications::SessionNotificationFanout;
 
@@ -127,6 +128,9 @@ pub(crate) fn run() {
             let transition_notification = Arc::new(Mutex::new(None));
             let sprint_transition_notification = Arc::new(Mutex::new(None));
             let workflow_execution_notification = Arc::new(Mutex::new(None));
+            let voice_notification = Arc::new(Mutex::new(None));
+            let mut product_tools = otp_registry.mcp_tools();
+            product_tools.extend(crate::orchid_control::tool_map());
             let notifier: Arc<dyn crate::agent_sessions::application::AgentSessionNotifier> =
                 Arc::new(SessionNotificationFanout {
                     inner: Arc::new(
@@ -138,10 +142,14 @@ pub(crate) fn run() {
                     transition: transition_notification.clone(),
                     sprint_transition: sprint_transition_notification.clone(),
                     workflow_execution: workflow_execution_notification.clone(),
+                    voice: voice_notification.clone(),
                 });
             let sessions::SessionServices { application, imports, capability_profiles, execution_targets } = sessions::compose(
-                database.clone(), &database_path, native_profiles.clone(), claude_setups.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier, otp_registry.mcp_tools(), otp_registry.catalogue().into_iter().filter(|package| !package.skill_roots.is_empty()).map(|package| (package.id, package.skill_roots)).collect(), cli_updates.clone(),
+                database.clone(), &database_path, native_profiles.clone(), claude_setups.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier, product_tools, otp_registry.catalogue().into_iter().filter(|package| !package.skill_roots.is_empty()).map(|package| (package.id, package.skill_roots)).collect(), cli_updates.clone(),
             )?;
+            let voice = voice_sessions::compose(database.clone(), application.clone(), capability_profiles.clone(), repository_catalog.clone(), managed_mcp_upstreams.clone())?;
+            *voice_notification.lock().map_err(|_| "Voice notifications unavailable")? = Some(Arc::downgrade(&voice));
+            app.manage(crate::voice_sessions::transport::VoiceSessionTauriState(voice));
             // Resolve runtime executable identity first, then update it off the UI thread. Sends
             // wait at the durable preparation boundary while this work is active. Review builds
             // leave machine-global CLI maintenance to the controller that launched them.
@@ -384,6 +392,11 @@ pub(crate) fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            crate::voice_sessions::transport::voice_session_view,
+            crate::voice_sessions::transport::configure_voice_session,
+            crate::voice_sessions::transport::start_voice_session,
+            crate::voice_sessions::transport::stop_voice_session,
+            crate::voice_sessions::transport::send_voice_session_text,
             crate::agent_cli_updates::agent_cli_update_overview,
             crate::session_navigation::agent_access::complete_session_navigation_command,
             crate::agent_sessions::transport::create_agent_session,
@@ -546,6 +559,9 @@ pub(crate) fn run() {
 
     app.run(|app_handle, event| {
         if let tauri::RunEvent::ExitRequested { api, .. } = event {
+            if let Some(voice)=app_handle.try_state::<crate::voice_sessions::transport::VoiceSessionTauriState>() {
+                let _=voice.0.stop();
+            }
             if let Some(state) =
                 app_handle.try_state::<crate::agent_sessions::transport::AgentSessionTauriState>()
             {

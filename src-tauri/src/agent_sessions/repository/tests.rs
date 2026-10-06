@@ -1053,6 +1053,7 @@ fn queued_preparations_accept_multiple_pending_messages_and_reorder_them_atomica
         .unwrap();
     let preparation =
         |invocation_id: AgentInvocationId| crate::agent_sessions::preparation::SessionPreparation {
+            pinned_delivery: false,
             invocation_id,
             session_id: session.id.clone(),
             phase: crate::agent_sessions::preparation::PreparationPhase::Accepted,

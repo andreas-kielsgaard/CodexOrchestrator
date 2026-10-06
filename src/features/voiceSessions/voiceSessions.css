@@ -1,0 +1,104 @@
+.voice-screen {
+  padding: 24px;
+  max-width: 1400px;
+  margin: auto;
+}
+.voice-screen header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  margin-bottom: 20px;
+}
+.voice-screen h1 {
+  margin: 0;
+  font-size: 24px;
+}
+.voice-screen h2 {
+  margin-top: 0;
+  font-size: 18px;
+}
+.voice-screen h3 {
+  margin-top: 24px;
+  font-size: 14px;
+}
+.voice-screen p {
+  line-height: 1.5;
+}
+.voice-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(320px, 1fr);
+  gap: 20px;
+}
+.voice-panel {
+  border: 1px solid var(--border-color, #334155);
+  background: var(--panel-bg, #121923);
+  border-radius: 10px;
+  padding: 20px;
+  min-width: 0;
+}
+.voice-panel label {
+  display: block;
+  margin: 16px 0 8px;
+  font-size: 13px;
+}
+.voice-panel input,
+.voice-panel select,
+.voice-panel textarea {
+  width: 100%;
+  box-sizing: border-box;
+  display: block;
+  margin-top: 6px;
+  background: #0d131c;
+  color: inherit;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 9px;
+}
+.voice-screen button {
+  padding: 8px 12px;
+  margin: 4px 6px 4px 0;
+  cursor: pointer;
+}
+.voice-actions {
+  display: flex;
+  flex-wrap: wrap;
+}
+.voice-panel article {
+  border-bottom: 1px solid #334155;
+  padding: 10px 0;
+  overflow-wrap: anywhere;
+}
+.voice-panel article p {
+  margin: 6px 0;
+  white-space: pre-wrap;
+}
+.voice-status {
+  border: 1px solid #334155;
+  border-radius: 20px;
+  padding: 8px 14px;
+  white-space: nowrap;
+}
+.voice-status.connected {
+  color: #9ce2bd;
+  border-color: #42775c;
+}
+.voice-muted,
+.voice-exchanges small {
+  color: #9aa8bc;
+}
+.voice-error {
+  color: #ffb1aa;
+}
+.voice-link {
+  text-align: left;
+}
+.voice-exchanges {
+  max-height: 360px;
+  overflow: auto;
+}
+@media (max-width: 900px) {
+  .voice-columns {
+    grid-template-columns: 1fr;
+  }
+}

@@ -675,6 +675,7 @@ impl AgentSessionApplication {
             self.ids.clone(),
             self.update_lanes.clone(),
         ));
+        sink = Arc::new(super::queue::QueueDispatchRuntimeUpdateSink::new(sink, self.clone()));
         sink = Arc::new(super::steering_queue::SteeringRuntimeUpdateSink::new(sink, self.clone()));
         if let (Some(targets), Some(device_id)) =
             (&self.execution_target_service, activity_device_id.as_ref())

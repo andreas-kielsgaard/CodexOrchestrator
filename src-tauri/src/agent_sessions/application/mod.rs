@@ -12,6 +12,7 @@ mod delivery;
 mod dependencies;
 mod diagnostics;
 mod direct_user;
+mod product_sessions;
 mod interactions;
 pub(crate) mod steering_queue;
 mod invocation;
