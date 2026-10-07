@@ -23,6 +23,10 @@ class ConversationService : Service() {
             "STOP" -> stopSelf()
             "TEXT" -> { val text = intent.getStringExtra("text") ?: ""; if (connection?.send(JSONObject().put("type", "text").put("id", UUID.randomUUID().toString()).put("text", text)) != true) settings.status = "Start the connection before sending" }
             "START" -> if (connection == null) try { begin() } catch (error: Exception) { settings.status = error.message ?: "Unable to start"; stopSelf() }
+            "MICROPHONE" -> {
+                settings.microphone = intent.getStringExtra("microphone") ?: settings.microphone
+                if (connection != null) try { startCapture() } catch (error: Exception) { status(error.message ?: "Microphone unavailable") }
+            }
         }
         return START_NOT_STICKY
     }
@@ -35,6 +39,10 @@ class ConversationService : Service() {
         cues = CuePlayer(this)
         connection = OrchidConnection(settings, { status(it) }, { value ->
             when (value.optString("type")) {
+                "hello" -> {
+                    connection?.send(JSONObject().put("type", "capture_status").put("capture", JSONObject(settings.captureStatus)))
+                    connection?.send(JSONObject().put("type", "speech_state").put("speaking", capture?.speaking == true))
+                }
                 "cue" -> cues?.play(value.optString("cue"))
                 "speak" -> { val utterance = value.getJSONObject("utterance"); settings.lastExchange = "Orchid: ${utterance.getString("text")}"; if (capture?.speaking != true) player?.speak(utterance) else connection?.send(JSONObject().put("type", "playback").put("playback", JSONObject().put("utteranceId", utterance.getString("id")).put("playedMs", 0).put("state", "interrupted"))) }
                 "transcript" -> settings.lastExchange = "You: ${value.getString("text")}"
@@ -42,9 +50,19 @@ class ConversationService : Service() {
                 "ended" -> handler.post { stopSelf() }
             }
         }).also { it.start() }
+        startCapture()
+    }
+    private fun startCapture() {
+        capture?.close()
+        connection?.send(JSONObject().put("type", "speech_state").put("speaking", false))
+        var segmentsSent = 0L
         capture = AudioCapture(this, { player?.interrupt(); connection?.send(JSONObject().put("type", "speech_state").put("speaking", true)) }, { bytes ->
-            if (connection?.connected == true) connection?.send(JSONObject().put("type", "audio").put("id", UUID.randomUUID().toString()).put("audio", Base64.encodeToString(bytes, Base64.NO_WRAP)))
-        }, { status(it) }, { connection?.send(JSONObject().put("type", "speech_state").put("speaking", false)) }).also { it.start() }
+            if (connection?.send(JSONObject().put("type", "audio").put("id", UUID.randomUUID().toString()).put("audio", Base64.encodeToString(bytes, Base64.NO_WRAP))) == true) segmentsSent++
+        }, { status(it) }, { connection?.send(JSONObject().put("type", "speech_state").put("speaking", false)) }, { report ->
+            report.put("segmentsSent", segmentsSent)
+            settings.captureStatus = report.toString()
+            connection?.send(JSONObject().put("type", "capture_status").put("capture", report))
+        }).also { it.start() }
     }
     private fun notification(text: String): Notification {
         val open = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)

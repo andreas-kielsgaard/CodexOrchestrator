@@ -23,6 +23,9 @@ class ConnectionSettings(context: Context) {
     var microphone: String
         get() = preferences.getString("microphone", "phone") ?: "phone"
         set(value) { require(value in listOf("phone", "headset")); preferences.edit().putString("microphone", value).apply() }
+    var captureStatus: String
+        get() = preferences.getString("capture-status", "{}") ?: "{}"
+        set(value) { preferences.edit().putString("capture-status", value).apply() }
     fun validate() {
         val uri = URI(endpoint)
         val octets = uri.host?.split('.')?.mapNotNull { it.toIntOrNull() } ?: emptyList()

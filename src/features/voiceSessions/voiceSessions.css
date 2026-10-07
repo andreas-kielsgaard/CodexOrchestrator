@@ -90,6 +90,17 @@
 .voice-exchanges small {
   color: #9aa8bc;
 }
+.voice-diagnostics {
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 12px;
+  margin: 16px 0;
+}
+.voice-diagnostics h3 { margin-top: 0; }
+.voice-diagnostics dl { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 10px; font-size: 13px; }
+.voice-diagnostics dt { color: #9aa8bc; }
+.voice-diagnostics dd { margin: 0; overflow-wrap: anywhere; }
+.voice-stage-status { display: flex; flex-wrap: wrap; gap: 4px; }
 .voice-error {
   color: #ffb1aa;
 }

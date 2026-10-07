@@ -68,7 +68,7 @@ impl VoiceSessionApplication {
     }
     pub(crate) fn view(&self) -> Result<Value, String> {
         Ok(
-            json!({"state":self.snapshot()?,"defaultPrompts":VoicePrompts::default(),"profiles":self.profiles.list().map_err(|e|e.to_string())?.iter().map(|p|json!({"id":p.capability_profile_id,"name":p.name})).collect::<Vec<_>>() }),
+            json!({"state":self.snapshot()?,"diagnostics":self.diagnostics()?,"defaultPrompts":VoicePrompts::default(),"profiles":self.profiles.list().map_err(|e|e.to_string())?.iter().map(|p|json!({"id":p.capability_profile_id,"name":p.name})).collect::<Vec<_>>() }),
         )
     }
     pub(crate) fn update<T>(

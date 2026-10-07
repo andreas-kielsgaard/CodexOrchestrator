@@ -1,5 +1,7 @@
 # Voice Sessions validation
 
+Live capture/pipeline visibility and the immediate microphone switch are covered by [transparency validation](transparency-2026-10-07.md).
+
 The JEV prefilter, separate reasoning stages, and editable desktop prompts are covered by [pipeline validation](pipeline-2026-10-07.md). Earlier evidence below describes the previous voice flow.
 
 Status: desktop reasoning, S21 microphone capture, mobile-data connection, TTS playback telemetry, screen-off operation, and interruption exercised. Audible quality and walking acceptance remain pending. See [the actual-app usability test](usability-2026-10-07.md) for findings and changes.

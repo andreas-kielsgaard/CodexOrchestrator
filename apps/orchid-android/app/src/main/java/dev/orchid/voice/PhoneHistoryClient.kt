@@ -23,7 +23,7 @@ class PhoneHistoryClient(private val settings: ConnectionSettings) {
                 override fun onResponse(call: Call, response: Response) {
                     response.use {
                         val result = runCatching {
-                            check(response.isSuccessful) { if (response.code == 401) "Access token was not accepted. Check Settings." else "Session history is unavailable (${response.code})." }
+                            check(response.isSuccessful) { if (response.code == 401) "Access token was not accepted. Check Settings." else "${if (path == "/status") "Live status" else "Session history"} is unavailable (${response.code})." }
                             JSONObject(response.body?.string() ?: "{}")
                         }
                         if (!call.isCanceled()) main.post { complete(result.getOrNull(), result.exceptionOrNull()?.message) }

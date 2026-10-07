@@ -105,8 +105,8 @@ mod tests {
 fn completion_question(instructions: &str) -> JevQuestion {
     JevQuestion::Choice {
         instructions: json!(instructions),
-        criteria: [("complete",json!("The latest speech indicates this input is finished or ready to handle.")),
-            ("continue",json!("The latest speech indicates the user is still explaining, trails off, promises more detail, or has not indicated readiness."))]
+        criteria: [("complete",json!("The latest speech indicates this input is ready to handle, including a self-contained question expecting an answer.")),
+            ("continue",json!("The user is still explaining, trails off, promises more detail, or the request is not ready to handle."))]
             .into_iter().map(|(k,v)|(k.into(),v)).collect(),
     }
 }
@@ -150,6 +150,7 @@ impl VoiceSessionApplication {
             filter_pending: true,
         };
         self.update(|s| {
+            s.error = None;
             s.conversation
                 .as_mut()
                 .ok_or("No conversation")?

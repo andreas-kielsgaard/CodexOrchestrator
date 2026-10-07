@@ -1,5 +1,6 @@
 pub(crate) mod application;
 mod delegation;
+mod diagnostics;
 mod domain;
 mod gateway;
 mod observations;

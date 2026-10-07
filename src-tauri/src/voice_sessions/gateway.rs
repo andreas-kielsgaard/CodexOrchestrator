@@ -1,5 +1,5 @@
 use super::{
-    domain::{Playback, VoiceSettings},
+    domain::{PhoneCapture, Playback, VoiceSettings},
     VoiceSessionApplication,
 };
 use axum::{
@@ -77,7 +77,8 @@ pub(crate) fn start(
                 let listener = tokio::net::TcpListener::from_std(listener).expect("voice listener");
                 let router = Router::new()
                     .route("/phone", get(upgrade))
-                    .route("/sessions", get(session_list))
+                .route("/sessions", get(session_list))
+                .route("/status", get(live_status))
                     .route("/sessions/{id}", get(session_history))
                     .with_state(state);
                 let _ = axum::serve(listener, router)
@@ -124,6 +125,10 @@ async fn session_list(State(state): State<GatewayState>, headers: HeaderMap) -> 
     let result = tokio::task::spawn_blocking(move || state.app.phone_sessions()).await;
     history_response(result)
 }
+async fn live_status(State(state): State<GatewayState>, headers: HeaderMap) -> Response {
+    if !authorized(&headers, &state.token) { return StatusCode::UNAUTHORIZED.into_response(); }
+    history_response(tokio::task::spawn_blocking(move || state.app.diagnostics()).await)
+}
 async fn session_history(
     State(state): State<GatewayState>,
     headers: HeaderMap,
@@ -165,8 +170,9 @@ async fn connection(socket: WebSocket, state: GatewayState) {
             let error_app = app.clone();
             let result = tokio::task::spawn_blocking(move || {
                 let text = if value["type"] == "audio" {
-                    app.speech
-                        .transcribe(value["audio"].as_str().ok_or("Audio is missing")?)?
+                    let result = app.speech.transcribe(value["audio"].as_str().ok_or("Audio is missing")?);
+                    let _ = app.audio_transcribed(result.as_deref().map_err(String::as_str));
+                    result?
                 } else {
                     value["text"].as_str().ok_or("Text is missing")?.to_string()
                 };
@@ -208,12 +214,14 @@ async fn connection(socket: WebSocket, state: GatewayState) {
                         match value["type"].as_str() {
                             Some("audio"|"text")=>{
                                 let _=state.app.audio_pending(1);
+                                if value["type"] == "audio" { let _=state.app.audio_received(); }
                                 if inputs.try_send(value).is_err(){
                                     let _=state.app.audio_pending(-1);
                                     state.app.set_error("Input queue is busy; please repeat shortly".into());
                                 }
                             }
                             Some("speech_state")=>{let _=state.app.speech_activity(value["speaking"].as_bool().unwrap_or(false));}
+                            Some("capture_status")=>{if let Ok(capture)=serde_json::from_value::<PhoneCapture>(value["capture"].clone()){let _=state.app.capture_report(capture);}}
                             Some("playback"|"interrupt")=>{if let Ok(playback)=serde_json::from_value::<Playback>(value["playback"].clone()){let _=state.app.playback(playback);}}
                             Some("ping")=>{let _=sink.send(Message::Text(json!({"type":"pong"}).to_string().into())).await;}
                             _=>{}
@@ -231,6 +239,7 @@ async fn connection(socket: WebSocket, state: GatewayState) {
         s.phone_connected = false;
         s.speaking = false;
         s.pending_audio = 0;
+        s.capture = None;
         if let Some(c) = &mut s.conversation {
             c.input_buffer.complete = false;
         }

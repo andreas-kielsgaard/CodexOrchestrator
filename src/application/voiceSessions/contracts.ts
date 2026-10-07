@@ -16,6 +16,16 @@ export interface VoiceSettings {
   prompts: VoicePrompts;
 }
 export interface VoiceView {
+  diagnostics?: {
+    updatedAt: string;
+    phoneConnected: boolean;
+    capture: { recording: boolean; requestedMicrophone: string; routedMicrophone: string; external: boolean; silenced: boolean; level: number; framesRead: number; segmentsSent: number; error: string | null; updatedAt: string } | null;
+    audio: { received: number; transcribed: number; lastTranscript: string | null; lastReceivedAt: string | null; lastTranscribedAt: string | null; error: string | null };
+    pendingAudio: number;
+    input: { title: string; detail: string; last: { text: string; relevance: string | null; completion: string | null; filterPending: boolean; createdAt: string } | null };
+    stages: { role: string; sessionId: string; status: string | null; queued: number; error: string | null }[];
+    error: string | null;
+  };
   defaultPrompts: VoicePrompts;
   profiles: { id: string; name: string }[];
   state: {

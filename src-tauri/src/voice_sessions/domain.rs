@@ -80,6 +80,35 @@ pub(crate) struct VoiceState {
     pub(crate) speaking: bool,
     #[serde(skip_deserializing)]
     pub(crate) pending_audio: usize,
+    #[serde(skip_deserializing)]
+    pub(crate) capture: Option<PhoneCapture>,
+    #[serde(skip_deserializing)]
+    pub(crate) audio_progress: AudioProgress,
+}
+#[derive(Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub(crate) struct PhoneCapture {
+    pub(crate) recording: bool,
+    pub(crate) requested_microphone: String,
+    pub(crate) routed_microphone: String,
+    pub(crate) external: bool,
+    pub(crate) silenced: bool,
+    pub(crate) level: f64,
+    pub(crate) frames_read: u64,
+    pub(crate) segments_sent: u64,
+    pub(crate) speech_detected: bool,
+    pub(crate) error: Option<String>,
+    pub(crate) updated_at: String,
+}
+#[derive(Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub(crate) struct AudioProgress {
+    pub(crate) received: u64,
+    pub(crate) transcribed: u64,
+    pub(crate) last_received_at: Option<String>,
+    pub(crate) last_transcript: Option<String>,
+    pub(crate) last_transcribed_at: Option<String>,
+    pub(crate) error: Option<String>,
 }
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
