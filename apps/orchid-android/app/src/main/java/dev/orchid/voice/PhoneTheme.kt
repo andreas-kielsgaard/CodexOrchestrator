@@ -16,6 +16,7 @@ object PhoneTheme {
     val secondary = Color.parseColor("#bdc8c2")
     val muted = Color.parseColor("#a2b0a8")
     val accent = Color.parseColor("#8dd5b3")
+    val inputContext = Color.parseColor("#8ab4f8")
     val selected = Color.parseColor("#233c33")
     val danger = Color.parseColor("#f0a5a0")
     fun dp(context: Context, value: Int) = (value * context.resources.displayMetrics.density).toInt()

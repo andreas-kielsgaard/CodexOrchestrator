@@ -32,6 +32,9 @@ class ConnectionSettings(context: Context) {
     var listeningStopReason: String
         get() = preferences.getString("listening-stop-reason", "") ?: ""
         set(value) { preferences.edit().putString("listening-stop-reason", value).apply() }
+    var detectedInput: String
+        get() = preferences.getString("detected-input", "[]") ?: "[]"
+        set(value) { preferences.edit().putString("detected-input", value).apply() }
     fun validate() {
         val uri = URI(endpoint)
         val octets = uri.host?.split('.')?.mapNotNull { it.toIntOrNull() } ?: emptyList()

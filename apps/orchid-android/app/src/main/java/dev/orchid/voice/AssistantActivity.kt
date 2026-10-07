@@ -12,26 +12,25 @@ import android.os.Looper
 import android.widget.TextView
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.ProgressBar
+import android.widget.Toast
 
-/** The locked-screen entry point exposes controls without revealing history or credentials. */
+/** Assistant activation controls and recent unfiltered transcripts. */
 class AssistantActivity : Activity() {
     private lateinit var settings: ConnectionSettings
-    private lateinit var status: TextView
-    private lateinit var captureStatus: TextView
-    private lateinit var levelMeter: ProgressBar
+    private lateinit var detectedInput: TextView
+    private lateinit var inputScroll: ScrollView
+    private var renderedInput = ""
     private var activationPending = true
     private val handler = Handler(Looper.getMainLooper())
     private val refresh = object : Runnable {
         override fun run() {
-            status.text = settings.status
-            val capture = runCatching { org.json.JSONObject(settings.captureStatus) }.getOrDefault(org.json.JSONObject())
-            val fresh = runCatching { java.time.Instant.parse(capture.optString("updatedAt")).toEpochMilli() > System.currentTimeMillis() - 5000 }.getOrDefault(false)
-            val recording = capture.optBoolean("recording") && fresh
-            levelMeter.progress = if (recording) (kotlin.math.sqrt(capture.optDouble("level", 0.0).coerceIn(0.0, 1.0)) * 100).toInt() else 0
-            captureStatus.text = if (recording)
-                "Microphone: ${capture.optString("routedMicrophone")}\nInput signal: ${String.format(java.util.Locale.ROOT, "%.1f", capture.optDouble("level") * 100)}%${if (capture.optBoolean("silenced")) " · blocked by Android" else ""}\n${if (capture.optBoolean("speechDetected")) "Speech detected" else "No speech detected"} · ${capture.optLong("segmentsSent")} segments sent\nListening timeout in ${capture.optLong("idleRemainingSeconds")} seconds"
-                else "Microphone stopped · tap Start listening"
+            val input = settings.detectedInput
+            if (renderedInput != input) {
+                val following = !inputScroll.canScrollVertically(1)
+                detectedInput.text = DetectedInput(settings).display()
+                renderedInput = input
+                if (following) inputScroll.post { inputScroll.fullScroll(android.view.View.FOCUS_DOWN) }
+            }
             handler.postDelayed(this, 1000)
         }
     }
@@ -47,14 +46,6 @@ class AssistantActivity : Activity() {
         val root = PhoneTheme.column(this).apply {
             setPadding(PhoneTheme.dp(this@AssistantActivity, 24), PhoneTheme.dp(this@AssistantActivity, 24), PhoneTheme.dp(this@AssistantActivity, 24), PhoneTheme.dp(this@AssistantActivity, 24))
         }
-        root.addView(PhoneTheme.text(this, "Orchid", 28f, bold = true))
-        status = PhoneTheme.text(this, settings.status, 16f, PhoneTheme.accent)
-        root.addView(status)
-        captureStatus = PhoneTheme.text(this, "Checking microphone…", 14f, PhoneTheme.secondary)
-        root.addView(captureStatus)
-        levelMeter = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
-        root.addView(levelMeter, LinearLayout.LayoutParams(-1, PhoneTheme.dp(this, 12)))
-        root.addView(PhoneTheme.text(this, "Address your request to Orchid. Listening stops after ${settings.listeningTimeoutSeconds} seconds without relevant input. Start listening to resume.", color = PhoneTheme.secondary))
         fun action(label: String, run: () -> Unit) {
             root.addView(PhoneTheme.button(this, label, run), LinearLayout.LayoutParams(-1, -2).apply { topMargin = PhoneTheme.dp(this@AssistantActivity, 8) })
         }
@@ -66,7 +57,20 @@ class AssistantActivity : Activity() {
         }
         action("Open Orchid") { openApp() }
         action("Dismiss") { finish() }
-        frame.addView(ScrollView(this).apply { addView(root) })
+        detectedInput = PhoneTheme.text(this, "", 16f).apply {
+            text = DetectedInput(settings).display()
+            setTextIsSelectable(true)
+            contentDescription = "Latest detected input before filtering"
+            setPadding(PhoneTheme.dp(this@AssistantActivity, 12), PhoneTheme.dp(this@AssistantActivity, 12), PhoneTheme.dp(this@AssistantActivity, 12), PhoneTheme.dp(this@AssistantActivity, 12))
+        }
+        inputScroll = ScrollView(this).apply {
+            isFillViewport = true
+            background = PhoneTheme.background(this@AssistantActivity, PhoneTheme.surface)
+            addView(detectedInput)
+        }
+        root.addView(inputScroll, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = PhoneTheme.dp(this@AssistantActivity, 16) })
+        inputScroll.post { inputScroll.fullScroll(android.view.View.FOCUS_DOWN) }
+        frame.addView(root, LinearLayout.LayoutParams(-1, -1))
         setContentView(frame)
     }
     override fun onNewIntent(intent: Intent) {
@@ -81,12 +85,12 @@ class AssistantActivity : Activity() {
     override fun onPause() { handler.removeCallbacks(refresh); super.onPause() }
     private fun begin() {
         try { settings.validate() } catch (_: Exception) {
-            status.text = "Open Orchid and save your laptop connection first."
+            Toast.makeText(this, "Open Orchid and save your laptop connection first.", Toast.LENGTH_LONG).show()
             handler.removeCallbacks(refresh)
             return
         }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            status.text = "Unlock your phone and allow Orchid to use the microphone."
+            Toast.makeText(this, "Unlock your phone and allow Orchid to use the microphone.", Toast.LENGTH_LONG).show()
             handler.removeCallbacks(refresh)
             if (!getSystemService(KeyguardManager::class.java).isKeyguardLocked) requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1)
             return
@@ -95,7 +99,7 @@ class AssistantActivity : Activity() {
             startForegroundService(Intent(this, ConversationService::class.java).setAction("START"))
             handler.removeCallbacks(refresh); handler.postDelayed(refresh, 250)
         } catch (_: Exception) {
-            status.text = "Unable to start listening. Unlock your phone and try again."
+            Toast.makeText(this, "Unable to start listening. Unlock your phone and try again.", Toast.LENGTH_LONG).show()
             handler.removeCallbacks(refresh)
         }
     }

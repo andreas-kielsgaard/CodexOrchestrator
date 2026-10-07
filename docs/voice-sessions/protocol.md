@@ -12,6 +12,7 @@ All WebSocket data messages are JSON text. Native WebSocket ping/pong maintains 
 | Phone to laptop | `speech_state` | `speaking: true` at speech start, `false` after its final audio segment |
 | Laptop to phone | `transcript` | `id`, completed `text` |
 | Laptop to phone | `relevant_input` | `id`, `relevance: direct_request` or `task_context`; emitted after each accepted JEV relevance decision |
+| Laptop to phone | `input_classification` | `id`, `relevance: direct_request`, `task_context`, or `unaddressed`; updates the color of an already displayed transcript |
 | Laptop to phone | `cue` | `cue: listening` when accepted input opens; `processing` when released |
 | Laptop to phone | `speak` | `utterance: {id,kind,text,topicId,createdAt}` |
 | Phone to laptop | `playback` or `interrupt` | `playback: {utteranceId,playedMs,state}` |

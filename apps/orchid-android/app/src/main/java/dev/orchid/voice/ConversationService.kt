@@ -71,7 +71,11 @@ class ConversationService : Service() {
                 }
                 "cue" -> cues?.play(value.optString("cue"))
                 "speak" -> { val utterance = value.getJSONObject("utterance"); settings.lastExchange = "Orchid: ${utterance.getString("text")}"; if (capture?.speaking != true) player?.speak(utterance) else connection?.send(JSONObject().put("type", "playback").put("playback", JSONObject().put("utteranceId", utterance.getString("id")).put("playedMs", 0).put("state", "interrupted"))) }
-                "transcript" -> settings.lastExchange = "You: ${value.getString("text")}"
+                "transcript" -> handler.post {
+                    settings.lastExchange = "You: ${value.getString("text")}"
+                    DetectedInput(settings).append(value.getString("id"), value.getString("text"))
+                }
+                "input_classification" -> handler.post { DetectedInput(settings).classify(value.getString("id"), value.getString("relevance")) }
                 "error" -> status(value.optString("message"))
                 "ended" -> handler.post { stopSelf() }
             }

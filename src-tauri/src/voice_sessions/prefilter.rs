@@ -287,6 +287,7 @@ impl VoiceSessionApplication {
             c.input_buffer.complete = false;
             Ok(opened)
         })?;
+        let _ = self.events.send(json!({"type":"input_classification","id":block.id,"relevance":relevance}));
         if opened {
             let _ = self.events.send(json!({"type":"cue","cue":"listening"}));
         }

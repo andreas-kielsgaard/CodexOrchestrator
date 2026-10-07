@@ -29,7 +29,9 @@ The phone has **Voice**, **Sessions**, and **Settings** tabs. Sessions separates
 
 **Voice → Live status** has a Phone / External microphone switch that applies immediately. The actual recording route and signal appear below it. The phone and desktop show segments reaching transcription, JEV decisions, why accepted input is held, and reasoning states/errors. Open **Input and reasoning details** on the phone for more detail.
 
-Listening stops after one minute without JEV-confirmed relevant input. Change the duration under **Settings → Listening timeout**. Voice shows the countdown and stop reason; the assistant activation screen shows the microphone route and signal. Start listening or activate the assistant to resume. Replies can still arrive with capture stopped. A received audio segment that produces no words is displayed separately and never reaches JEV.
+Listening stops after one minute without JEV-confirmed relevant input. Change the duration under **Settings → Listening timeout**. Voice shows the countdown and stop reason. Start listening or activate the assistant to resume. Replies can still arrive with capture stopped. A received audio segment that produces no words is displayed separately and never reaches JEV.
+
+The assistant activation screen keeps Start listening, Stop listening, Open Orchid, and Dismiss above a rolling view of the last 20 unfiltered transcript blocks. Pending input is neutral; JEV colors requests green, task context blue, and unaddressed speech gray. It follows new input while at the bottom and lets you scroll back. Diagnostic and explanatory text remains in the main app.
 
 Phone speech follows Android media volume and normal media routing. At media mute, speech is skipped with a zero-duration `muted` receipt; its text remains in history. The app's volume buttons control media volume.
 

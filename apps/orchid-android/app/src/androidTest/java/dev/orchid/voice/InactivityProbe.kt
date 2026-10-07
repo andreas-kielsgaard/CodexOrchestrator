@@ -16,7 +16,7 @@ object InactivityProbe {
         val clock = ListeningInactivity()
         clock.activate(0)
         check(clock.remainingSeconds(59_000, 60) == 1L)
-        for (type in listOf("transcript", "cue", "speak", "hello", "speech_state")) clock.receive(type, 59_000)
+        for (type in listOf("transcript", "input_classification", "cue", "speak", "hello", "speech_state")) clock.receive(type, 59_000)
         check(clock.remainingSeconds(60_000, 60) == 0L) { "Unrelated activity renewed listening" }
         clock.receive("relevant_input", 59_000)
         check(clock.remainingSeconds(60_000, 60) == 59L)
