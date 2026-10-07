@@ -21,6 +21,7 @@ Status: desktop reasoning, S21 microphone capture, mobile-data connection, TTS p
 - A controlled WAV invitation crossed the WebSocket, local transcription, reasoning, and deliberate publication path. It produced the transcript “Please tell me the readme finding that is ready.” and a concise explanation. This validates publication, not phone playback or user hearing.
 - Desktop restart retained the conversation, pending topics, and handoff relationships. Explicit resume restored the gateway and real reasoning continued with the refreshed managed MCP host.
 - Screenshot review covered empty setup and active conversation in the dedicated tab. Source material is available on demand under each ready topic.
+- The main release executable launched with normal application storage; migration and native/rendered checks passed. The S21 authenticated over LTE using saved settings. Live main-instance reasoning, independent workers, concurrent input, readiness announcements, and invited publication passed. A fresh conversation was left ready for use. See [main integration](main-2026-10-07.md).
 
 ## Remaining
 
