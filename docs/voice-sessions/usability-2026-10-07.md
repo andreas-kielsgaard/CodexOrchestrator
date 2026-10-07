@@ -10,6 +10,7 @@ Tested the running desktop prototype and installed S21 app, using rendered contr
 - A phrase played through the laptop speaker was captured by the actual phone microphone and transcribed as “Tell me the speech setup advice.” Reasoning published the requested explanation; Android reported 18.8 seconds of completed TTS playback. Audibility and voice quality have not been confirmed by the user.
 - Speech detected during an availability announcement interrupted playback at about 1.3 seconds. Screen-off capture and interruption also worked while the phone was locked and using mobile data. The longer overlapping question was split and garbled; reasoning asked for clarification.
 - The phone notification's **Stop** action was usable while locked. Capture stopped, the connection closed, the service and wake lock disappeared, and audio mode returned to normal. Desktop **Stop connection** also worked through its control.
+- A subsequent instrumentation probe exercised the actual Android `OrchidConnection` client over mobile data. It observed an abrupt desktop-process loss and automatically reauthenticated after desktop restart and explicit gateway resume: two authenticated hellos, recovery in 32,319 ms including desktop startup, successful instrumentation result. The saved conversation survived, and the resumed reasoning session answered another UI request. This probe did not use the microphone.
 
 ## Findings and changes
 
@@ -25,4 +26,4 @@ Evidence is retained in ignored `.dev/voice/usability-*` files. Representative c
 
 The desktop runnable build, Android assembly and lint, formatting, and diff checks passed. Installed updated APK SHA-256: `3E750D27C81527789035DD16F6A7E56AF50D2D7B853B80D58A42A1B484977F11`.
 
-Outdoor walking, the user's natural speech and audio setup, transient-network reconnect, and audible sound quality remain unverified. Microphone capture was stopped after testing. The desktop prototype remains available with its retained conversation.
+Outdoor walking, the user's natural speech and audio setup, foreground microphone-service recovery during a network drop, and audible sound quality remain unverified. The user stopped usability testing before the interruption-status retest. Microphone capture was stopped; the temporary USB display-awake setting was restored.

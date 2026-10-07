@@ -15,6 +15,8 @@ Android builds require Java 17 or later and Android SDK 36. The wrapper pins Gra
 
 For an authenticated connection and installed offline-voice check without microphone access, build with `powershell -File scripts/android/build.ps1 -ConnectionProbe`, install the generated Android test APK, and run `adb -s <verified-transport> shell am instrument -w dev.orchid.voice.test/dev.orchid.voice.ConnectionProbeInstrumentation`. The desktop gateway must already be enabled. This check uses the app's saved setup and does not verify recording or playback.
 
+Add `-e reconnect true` to test the actual Android connection client's recovery. After the connected status appears, interrupt the desktop process, restart it, and resume its gateway. The probe waits up to 40 seconds for each loss/recovery stage and closes its connection afterward; it does not open the microphone.
+
 ## Use
 
 Speak normally. Completed utterances are transcribed on the laptop and reach reasoning. No vocabulary of hardcoded commands is required. Relevant work can continue in delegated sessions while you discuss another topic.

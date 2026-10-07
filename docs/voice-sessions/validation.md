@@ -25,7 +25,7 @@ Status: desktop reasoning, S21 microphone capture, mobile-data connection, TTS p
 ## Remaining
 
 - User confirmation of audible output and voice quality; physical retest of the corrected interruption status.
-- Transient-network reconnect.
+- Foreground microphone-service recovery during a network drop; the Android connection client itself passed abrupt desktop-loss/recovery testing.
 - Audible outdoor walking test with the user's actual microphone/headset setup.
 
 Development evidence is retained under the ignored `.dev/voice/` directory. Development app launches use explicit executable, PID, debug endpoint, and isolated storage. A copied test database is not the live controller's current state.

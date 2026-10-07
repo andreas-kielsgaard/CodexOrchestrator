@@ -5,21 +5,30 @@ import android.app.Activity
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import okhttp3.*
 import org.json.JSONObject
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /** Tests the installed app's network route and credentials without opening its microphone. */
 class ConnectionProbeInstrumentation : Instrumentation() {
-    override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); start() }
+    private var reconnect = false
+    override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); reconnect = arguments?.getString("reconnect") == "true"; start() }
     override fun onStart() {
         val result = Bundle()
         val client = OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).build()
         try {
             val settings = ConnectionSettings(targetContext)
             settings.validate()
+            if (reconnect) {
+                probeReconnect(settings, result)
+                finish(Activity.RESULT_OK, result)
+                return
+            }
             val latch = CountDownLatch(1)
             var failure: String? = null
             var socket: WebSocket? = null
@@ -52,5 +61,31 @@ class ConnectionProbeInstrumentation : Instrumentation() {
         } catch (error: Exception) {
             result.putString("failure", error.message); finish(Activity.RESULT_CANCELED, result)
         } finally { client.dispatcher.executorService.shutdown(); client.connectionPool.evictAll() }
+    }
+    private fun probeReconnect(settings: ConnectionSettings, result: Bundle) {
+        val first = CountDownLatch(1)
+        val lost = CountDownLatch(1)
+        val restored = CountDownLatch(1)
+        val hellos = AtomicInteger()
+        val lostAt = AtomicLong()
+        val restoredAt = AtomicLong()
+        val connection = OrchidConnection(settings, { status ->
+            if (status.startsWith("Disconnected")) { lostAt.compareAndSet(0, SystemClock.elapsedRealtime()); lost.countDown() }
+        }, { message ->
+            if (message.optString("type") == "hello" && message.optInt("version") == 1) {
+                if (hellos.incrementAndGet() == 1) first.countDown()
+                else { restoredAt.set(SystemClock.elapsedRealtime()); restored.countDown() }
+            }
+        })
+        try {
+            connection.start()
+            check(first.await(15, TimeUnit.SECONDS)) { "Initial app connection timed out" }
+            sendStatus(1, Bundle().apply { putString("stage", "App connected; interrupt and restore the desktop gateway now") })
+            check(lost.await(40, TimeUnit.SECONDS)) { "App did not observe connection loss" }
+            check(restored.await(40, TimeUnit.SECONDS) && connection.connected) { "App did not reconnect" }
+            result.putString("reconnect", "OrchidConnection detected loss and received a new authenticated hello")
+            result.putLong("recoveryMs", restoredAt.get() - lostAt.get())
+            result.putInt("hellos", hellos.get())
+        } finally { connection.close() }
     }
 }
