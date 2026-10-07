@@ -40,7 +40,7 @@ class AssistantActivity : Activity() {
         root.addView(PhoneTheme.text(this, "Orchid", 28f, bold = true))
         status = PhoneTheme.text(this, settings.status, 16f, PhoneTheme.accent)
         root.addView(status)
-        root.addView(PhoneTheme.text(this, "Address your request to Orchid. Listening continues until you stop it.", color = PhoneTheme.secondary))
+        root.addView(PhoneTheme.text(this, "Address your request to Orchid. Listening stops after ${settings.listeningTimeoutSeconds} seconds without relevant input. Start listening to resume.", color = PhoneTheme.secondary))
         fun action(label: String, run: () -> Unit) {
             root.addView(PhoneTheme.button(this, label, run), LinearLayout.LayoutParams(-1, -2).apply { topMargin = PhoneTheme.dp(this@AssistantActivity, 8) })
         }
