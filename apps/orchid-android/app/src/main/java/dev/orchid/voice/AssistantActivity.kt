@@ -31,7 +31,7 @@ class AssistantActivity : Activity() {
                 renderedInput = input
                 if (following) inputScroll.post { inputScroll.fullScroll(android.view.View.FOCUS_DOWN) }
             }
-            handler.postDelayed(this, 1000)
+            handler.postDelayed(this, 250)
         }
     }
     override fun onCreate(state: Bundle?) {

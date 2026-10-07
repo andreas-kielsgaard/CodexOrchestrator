@@ -66,6 +66,13 @@ class ConversationService : Service() {
             handler.post { inactivity.receive(value.optString("type"), SystemClock.elapsedRealtime()) }
             when (value.optString("type")) {
                 "hello" -> {
+                    handler.post {
+                        val inputs = value.optJSONArray("inputClassifications")
+                        if (inputs != null) for (index in 0 until inputs.length()) {
+                            val input = inputs.getJSONObject(index)
+                            DetectedInput(settings).classify(input.getString("id"), input.getString("relevance"))
+                        }
+                    }
                     connection?.send(JSONObject().put("type", "capture_status").put("capture", JSONObject(settings.captureStatus)))
                     connection?.send(JSONObject().put("type", "speech_state").put("speaking", capture?.speaking == true))
                 }
@@ -75,6 +82,7 @@ class ConversationService : Service() {
                     settings.lastExchange = "You: ${value.getString("text")}"
                     DetectedInput(settings).append(value.getString("id"), value.getString("text"))
                 }
+                "transcript_preview" -> handler.post { DetectedInput(settings).preview(value.getString("id"), value.getString("text")) }
                 "input_classification" -> handler.post { DetectedInput(settings).classify(value.getString("id"), value.getString("relevance")) }
                 "error" -> status(value.optString("message"))
                 "ended" -> handler.post { stopSelf() }
@@ -86,13 +94,15 @@ class ConversationService : Service() {
         capture?.close()
         connection?.send(JSONObject().put("type", "speech_state").put("speaking", false))
         var segmentsSent = 0L
-        capture = AudioCapture(this, { player?.interrupt(); connection?.send(JSONObject().put("type", "speech_state").put("speaking", true)) }, { bytes ->
-            if (connection?.send(JSONObject().put("type", "audio").put("id", UUID.randomUUID().toString()).put("audio", Base64.encodeToString(bytes, Base64.NO_WRAP))) == true) segmentsSent++
+        capture = AudioCapture(this, { player?.interrupt(); connection?.send(JSONObject().put("type", "speech_state").put("speaking", true)) }, { id, bytes ->
+            if (connection?.send(JSONObject().put("type", "audio").put("id", id).put("audio", Base64.encodeToString(bytes, Base64.NO_WRAP))) == true) segmentsSent++
         }, { status(it) }, { connection?.send(JSONObject().put("type", "speech_state").put("speaking", false)) }, { report ->
             report.put("segmentsSent", segmentsSent)
             inactivity.remainingSeconds(SystemClock.elapsedRealtime(), settings.listeningTimeoutSeconds)?.let { report.put("idleRemainingSeconds", it) }
             settings.captureStatus = report.toString()
             connection?.send(JSONObject().put("type", "capture_status").put("capture", report))
+        }, { id, bytes ->
+            connection?.send(JSONObject().put("type", "audio_preview").put("id", id).put("audio", Base64.encodeToString(bytes, Base64.NO_WRAP)))
         }).also { it.start() }
     }
     private fun notification(text: String): Notification {

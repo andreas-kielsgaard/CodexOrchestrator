@@ -28,7 +28,7 @@ object HeadsetProbe {
         val handler = Handler(Looper.getMainLooper())
         val originalMode = audio.mode
         var captureFailure: String? = null
-        val capture = AudioCapture(context, {}, {}, { captureFailure = it })
+        val capture = AudioCapture(context, {}, { _, _ -> }, { captureFailure = it })
         val created = CountDownLatch(1)
         val finished = CountDownLatch(1)
         var player: SpeechPlayer? = null

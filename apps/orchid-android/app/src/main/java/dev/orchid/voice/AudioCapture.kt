@@ -14,8 +14,9 @@ import android.os.SystemClock
 import org.json.JSONObject
 import kotlin.math.sqrt
 import kotlin.concurrent.thread
+import java.util.UUID
 
-class AudioCapture(context: Context, private val speechStarted: () -> Unit, private val utterance: (ByteArray) -> Unit, private val failed: (String) -> Unit, private val speechEnded: () -> Unit = {}, private val progress: (JSONObject) -> Unit = {}) {
+class AudioCapture(context: Context, private val speechStarted: () -> Unit, private val utterance: (String, ByteArray) -> Unit, private val failed: (String) -> Unit, private val speechEnded: () -> Unit = {}, private val progress: (JSONObject) -> Unit = {}, private val preview: (String, ByteArray) -> Unit = { _, _ -> }) {
     private val settings = ConnectionSettings(context)
     private val phoneMicrophone = settings.microphone == "phone"
     private val routing = MicrophoneRouting(context, failed)
@@ -55,6 +56,7 @@ class AudioCapture(context: Context, private val speechStarted: () -> Unit, priv
                 try {
                     VadWebRTC(sampleRate = SampleRate.SAMPLE_RATE_16K, frameSize = FrameSize.FRAME_SIZE_480, mode = Mode.NORMAL, silenceDurationMs = 650, speechDurationMs = 90).use { vad ->
                         val samples = ShortArray(480); val preroll = ArrayDeque<ByteArray>(); var output = ByteArrayOutputStream(); var peakLevel = 0.0
+                        var segmentId = UUID.randomUUID().toString(); var previewAt = 0L
                         while (active) {
                             var offset = 0
                             while (active && offset < samples.size) { val count = audio.read(samples, offset, samples.size - offset); if (count < 0) throw IllegalStateException("Audio read failed: $count"); offset += count }
@@ -65,15 +67,19 @@ class AudioCapture(context: Context, private val speechStarted: () -> Unit, priv
                             val voice = vad.isSpeech(samples)
                             if (!speaking) {
                                 preroll.addLast(bytes); while (preroll.size > 12) preroll.removeFirst()
-                                if (voice) { speaking = true; speechStarted(); output = ByteArrayOutputStream(); preroll.forEach { output.write(it) }; preroll.clear() }
+                                if (voice) { speaking = true; speechStarted(); output = ByteArrayOutputStream(); preroll.forEach { output.write(it) }; preroll.clear(); segmentId = UUID.randomUUID().toString(); previewAt = SystemClock.elapsedRealtime() }
                             } else {
                                 output.write(bytes)
                                 if (!voice || output.size() >= 160_000) {
-                                    utterance(wav(output.toByteArray())); segmentsCaptured++; output.reset()
+                                    utterance(segmentId, wav(output.toByteArray())); segmentsCaptured++; output.reset()
+                                    segmentId = UUID.randomUUID().toString(); previewAt = SystemClock.elapsedRealtime()
                                     if (!voice) { speaking = false; speechEnded() }
                                 }
                             }
                             val now = SystemClock.elapsedRealtime()
+                            if (speaking && output.size() > 0 && now - previewAt >= 1000) {
+                                previewAt = now; preview(segmentId, wav(output.toByteArray()))
+                            }
                             if (now - lastReport >= 1000) {
                                 lastReport = now
                                 report(peakLevel); peakLevel = 0.0

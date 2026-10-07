@@ -157,7 +157,30 @@ async fn connection(socket: WebSocket, state: GatewayState) {
     let (mut sink, mut source) = socket.split();
     let mut events = state.app.events.subscribe();
     let conversation = state.app.snapshot().ok().and_then(|s| s.conversation);
-    if sink.send(Message::Text(json!({"type":"hello","version":1,"conversationId":conversation.as_ref().map(|c|&c.id),"mainSessionId":conversation.map(|c|c.main_session_id)}).to_string().into())).await.is_err() { let _=state.app.update(|s|{s.phone_connected=false;Ok(())});return; }
+    let classifications: Vec<Value> = conversation.as_ref().map(|c| c.inputs.iter().rev().take(20).filter_map(|input| input.relevance.as_ref().map(|relevance| json!({"id":input.id,"relevance":relevance}))).collect()).unwrap_or_default();
+    if sink.send(Message::Text(json!({"type":"hello","version":1,"conversationId":conversation.as_ref().map(|c|&c.id),"mainSessionId":conversation.map(|c|c.main_session_id),"inputClassifications":classifications}).to_string().into())).await.is_err() { let _=state.app.update(|s|{s.phone_connected=false;Ok(())});return; }
+    // Drafts are display-only and replace queued drafts instead of delaying final inputs.
+    let preview_cancel = state.cancel.child_token();
+    let (previews, mut latest_preview) = tokio::sync::watch::channel::<Option<Value>>(None);
+    let preview_app = state.app.clone();
+    let cancelled = preview_cancel.clone();
+    let preview_processor = tokio::spawn(async move {
+        loop {
+            tokio::select! { _ = cancelled.cancelled() => break, changed = latest_preview.changed() => { if changed.is_err() { break; } } }
+            let Some(value) = latest_preview.borrow_and_update().clone() else { continue };
+            let app = preview_app.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                app.speech.transcribe_preview(value["audio"].as_str().ok_or("Audio is missing")?)
+                    .map(|text| json!({"type":"transcript_preview","id":value["id"],"text":text}))
+            }).await;
+            if cancelled.is_cancelled() { break; }
+            if let Ok(Ok(value)) = result {
+                if value["text"].as_str().is_some_and(|text| !text.trim().is_empty()) {
+                    let _ = preview_app.events.send(value);
+                }
+            }
+        }
+    });
     let (inputs, mut pending) = tokio::sync::mpsc::channel::<Value>(4);
     let app = state.app.clone();
     let cancelled = state.cancel.clone();
@@ -176,6 +199,9 @@ async fn connection(socket: WebSocket, state: GatewayState) {
                 } else {
                     value["text"].as_str().ok_or("Text is missing")?.to_string()
                 };
+                if text.trim().is_empty() {
+                    let _ = app.events.send(json!({"type":"transcript","id":value["id"],"text":""}));
+                }
                 app.input(
                     value["id"]
                         .as_str()
@@ -212,6 +238,7 @@ async fn connection(socket: WebSocket, state: GatewayState) {
                     Message::Text(text)=>{
                         let Ok(value)=serde_json::from_str::<Value>(&text) else{continue};
                         match value["type"].as_str() {
+                            Some("audio_preview")=>{previews.send_replace(Some(value));}
                             Some("audio"|"text")=>{
                                 let _=state.app.audio_pending(1);
                                 if value["type"] == "audio" { let _=state.app.audio_received(); }
@@ -235,6 +262,8 @@ async fn connection(socket: WebSocket, state: GatewayState) {
         }
     }
     processor.abort();
+    preview_cancel.cancel();
+    preview_processor.abort();
     let _ = state.app.update(|s| {
         s.phone_connected = false;
         s.speaking = false;

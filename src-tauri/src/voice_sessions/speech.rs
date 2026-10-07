@@ -20,12 +20,14 @@ impl Drop for Worker {
 pub(crate) struct SpeechSession {
     root: PathBuf,
     worker: Mutex<Option<Worker>>,
+    preview_worker: Mutex<Option<Worker>>,
 }
 impl SpeechSession {
     pub(crate) fn new(root: PathBuf) -> Self {
         Self {
             root,
             worker: Mutex::new(None),
+            preview_worker: Mutex::new(None),
         }
     }
     pub(crate) fn configured(&self) -> bool {
@@ -35,18 +37,23 @@ impl SpeechSession {
         self.root.join("venv/Scripts/python.exe")
     }
     pub(crate) fn transcribe(&self, audio: &str) -> Result<String, String> {
+        self.transcribe_with(&self.worker, "transcribe.py", audio)
+    }
+    pub(crate) fn transcribe_preview(&self, audio: &str) -> Result<String, String> {
+        self.transcribe_with(&self.preview_worker, "transcribe-preview.py", audio)
+    }
+    fn transcribe_with(&self, worker: &Mutex<Option<Worker>>, script_name: &str, audio: &str) -> Result<String, String> {
         if audio.len() > 5_400_000 {
             return Err("Speech input exceeds 4 MB".into());
         }
         if !self.configured() {
             return Err("Run npm run setup:voice to install local transcription".into());
         }
-        let mut slot = self
-            .worker
+        let mut slot = worker
             .lock()
             .map_err(|_| "Transcription unavailable")?;
         if slot.is_none() {
-            let script = self.root.join("transcribe.py");
+            let script = self.root.join(script_name);
             std::fs::write(
                 &script,
                 include_str!("../../../resources/voice-sessions/transcribe.py"),
@@ -105,6 +112,9 @@ impl SpeechSession {
     }
     pub(crate) fn close(&self) {
         if let Ok(mut worker) = self.worker.lock() {
+            *worker = None;
+        }
+        if let Ok(mut worker) = self.preview_worker.lock() {
             *worker = None;
         }
     }

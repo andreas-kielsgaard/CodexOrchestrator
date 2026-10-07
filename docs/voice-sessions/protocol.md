@@ -6,11 +6,13 @@ All WebSocket data messages are JSON text. Native WebSocket ping/pong maintains 
 
 | Direction | Type | Fields |
 | --- | --- | --- |
-| Laptop to phone | `hello` | `version: 1`, `conversationId`, `mainSessionId` |
+| Laptop to phone | `hello` | `version: 1`, `conversationId`, `mainSessionId`, recent `inputClassifications: [{id,relevance}]` |
+| Phone to laptop | `audio_preview` | segment `id`, growing base64 WAV snapshot during speech; display only |
 | Phone to laptop | `audio` | unique `id`, `audio` containing base64 WAV: mono signed 16-bit PCM, little endian, 16 kHz |
 | Phone to laptop | `text` | unique `id`, `text` |
 | Phone to laptop | `speech_state` | `speaking: true` at speech start, `false` after its final audio segment |
 | Laptop to phone | `transcript` | `id`, completed `text` |
+| Laptop to phone | `transcript_preview` | segment `id`, draft `text`; replace draft text until finalized |
 | Laptop to phone | `relevant_input` | `id`, `relevance: direct_request` or `task_context`; emitted after each accepted JEV relevance decision |
 | Laptop to phone | `input_classification` | `id`, `relevance: direct_request`, `task_context`, or `unaddressed`; updates the color of an already displayed transcript |
 | Laptop to phone | `cue` | `cue: listening` when accepted input opens; `processing` when released |
@@ -30,6 +32,8 @@ Phone capture uses Android's `VOICE_RECOGNITION` source without an additional no
 Phone Settings offers Lower other audio (default), Pause other audio, and Keep other audio unchanged. The player holds transient audio focus only across queued speech, and releases it on completion, interruption, failure, or shutdown. Android controls ducking attenuation and other apps' response; an exact adjustable percentage is unavailable through the ordinary audio-focus API. See [Android audio focus](https://developer.android.com/media/optimize/audio-focus).
 
 The phone segments continuous speech approximately every five seconds and retains a short pre-roll for voice activity detection. Segment boundaries do not end speaking. Speech start interrupts current playback and clears queued speech locally. Segments reach a serial transcription queue; playback receipts remain responsive while transcription runs. Speech captured while disconnected is discarded, and reconnect does not replay output.
+
+While speaking, the phone also sends growing segment snapshots approximately once per second. A separate local transcriber processes the latest queued snapshot, dropping superseded drafts. Draft text appears before final transcription and is corrected by the completed block. Drafts never enter JEV, reasoning, or inactivity renewal. Classification updates recolor the same block after finalization; late drafts cannot replace finalized text.
 
 Every transcript passes separate typed JEV relevance and completion evaluations. Accepted blocks accumulate without reaching reasoning sessions until JEV judges the input ready and speaking, transcription, and filtering are idle. Silence alone does not release input. The two brief cues use media volume and are skipped at media mute.
 

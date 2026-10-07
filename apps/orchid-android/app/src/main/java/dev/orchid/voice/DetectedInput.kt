@@ -9,9 +9,18 @@ import android.text.style.ForegroundColorSpan
 /** Recent transcript blocks, before relevance filtering. */
 class DetectedInput(private val settings: ConnectionSettings) {
     fun append(id: String, text: String) {
+        update(id, text, true)
+    }
+    fun preview(id: String, text: String) {
+        if (text.isNotBlank()) update(id, text, false)
+    }
+    private fun update(id: String, text: String, finalized: Boolean) {
         val inputs = JSONArray(settings.detectedInput)
-        if ((0 until inputs.length()).any { inputs.getJSONObject(it).optString("id") == id }) return
-        inputs.put(JSONObject().put("id", id).put("text", text))
+        val existing = (0 until inputs.length()).map { inputs.getJSONObject(it) }.firstOrNull { it.optString("id") == id }
+        if (existing != null) {
+            if (!finalized && existing.optBoolean("finalized", true)) return
+            existing.put("text", text).put("finalized", finalized)
+        } else inputs.put(JSONObject().put("id", id).put("text", text).put("finalized", finalized))
         while (inputs.length() > 20) inputs.remove(0)
         settings.detectedInput = inputs.toString()
     }
