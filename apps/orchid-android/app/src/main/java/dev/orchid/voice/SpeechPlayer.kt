@@ -2,6 +2,7 @@ package dev.orchid.voice
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -12,7 +13,9 @@ import java.util.Locale
 
 class SpeechPlayer(context: Context, private val report: (JSONObject) -> Unit, private val status: (String) -> Unit, private val idle: () -> Unit) {
     private val handler = Handler(Looper.getMainLooper())
-    private var ready = false
+    @Volatile private var ready = false
+    val isReady get() = ready
+    private val audio = context.getSystemService(AudioManager::class.java)
     @Volatile private var current: String? = null
     @Volatile private var started = 0L
     private val queue = ArrayDeque<JSONObject>()
@@ -25,7 +28,7 @@ class SpeechPlayer(context: Context, private val report: (JSONObject) -> Unit, p
             val voice = engine.voices?.filter { !it.isNetworkConnectionRequired && it.locale.language == "en" && !it.features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) }?.sortedByDescending { it.quality }?.firstOrNull()
             if (voice == null) { status("Install an offline English voice in Android text-to-speech settings"); return@post }
             engine.language = Locale.US; engine.voice = voice
-            engine.setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+            engine.setAudioAttributes(playbackAttributes())
             engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(id: String) { if (current == id) { started = SystemClock.elapsedRealtime(); progress(id, "playing") } }
                 override fun onDone(id: String) { if (current == id) { progress(id, "completed"); current = null; handler.post { next() } } }
@@ -43,10 +46,18 @@ class SpeechPlayer(context: Context, private val report: (JSONObject) -> Unit, p
         if (current != null) return
         if (queue.isEmpty()) { idle(); return }
         val utterance = queue.removeFirst(); val id = utterance.getString("id")
+        if (audio.isStreamMute(AudioManager.STREAM_MUSIC) || audio.getStreamVolume(AudioManager.STREAM_MUSIC) == 0) {
+            report(JSONObject().put("type", "playback").put("playback", JSONObject().put("utteranceId", id).put("playedMs", 0).put("state", "muted")))
+            status("Media volume is muted"); next(); return
+        }
         current = id; started = 0; status("Speaking · you can interrupt")
         if (tts?.speak(utterance.getString("text"), TextToSpeech.QUEUE_FLUSH, null, id) == TextToSpeech.ERROR) { progress(id, "failed"); current = null; next() }
     }
     private fun progress(id: String, state: String) { report(JSONObject().put("type", if (state == "interrupted") "interrupt" else "playback").put("playback", JSONObject().put("utteranceId", id).put("playedMs", if (started == 0L) 0 else SystemClock.elapsedRealtime() - started).put("state", state))) }
     fun interrupt() { epoch++; val id = current; current = null; tts?.stop(); if (id != null) progress(id, "interrupted"); handler.post { queue.clear(); if (id != null) idle() } }
     fun close() { interrupt(); handler.removeCallbacksAndMessages(null); tts?.shutdown(); tts = null }
+    companion object {
+        fun playbackAttributes(): AudioAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
+    }
 }

@@ -22,3 +22,12 @@ Playback reports distinguish playing, completed, interrupted, failed, and unavai
 The phone keeps a bounded audio utterance and a short pre-roll for voice activity detection. Speech start interrupts current playback and clears queued speech locally. Completed utterances reach a serial transcription queue; playback receipts remain responsive while transcription runs. Speech captured while disconnected is discarded, and reconnect does not replay output.
 
 Conversation state, handoff relationships, transcripts, published text, pending topics, and playback context persist on the laptop. Raw audio is held in memory during transcription and is not retained by the feature.
+
+## Phone history
+
+The same enabled gateway serves authenticated read-only HTTP requests using the WebSocket bearer token:
+
+- `GET /sessions`: main and delegated session summaries for the active voice conversation, including nested delegations.
+- `GET /sessions/{id}?before={invocationId}`: up to ten turns, with input, replies, status, and normalized display events. `nextBefore` loads the previous page. Unrelated sessions are rejected.
+
+History does not open another WebSocket, activate a microphone, dispatch agent work, or return raw provider transport payloads. It remains available while the phone's voice connection is active.

@@ -3,8 +3,6 @@ package dev.orchid.voice
 import android.app.*
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.media.AudioManager
-import android.media.AudioDeviceInfo
 import android.os.*
 import android.util.Base64
 import org.json.JSONObject
@@ -16,7 +14,6 @@ class ConversationService : Service() {
     private var capture: AudioCapture? = null
     private var player: SpeechPlayer? = null
     private var wake: PowerManager.WakeLock? = null
-    private var audio: AudioManager? = null
     private val handler = Handler(Looper.getMainLooper())
     override fun onCreate() { super.onCreate(); settings = ConnectionSettings(this); getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("conversation", "Voice conversation", NotificationManager.IMPORTANCE_LOW)) }
     override fun onBind(intent: Intent?) = null
@@ -33,10 +30,6 @@ class ConversationService : Service() {
         val types = if (Build.VERSION.SDK_INT >= 30) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK else ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
         startForeground(1, notification("Connecting…"), types)
         wake = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Orchid:conversation").apply { acquire(8 * 60 * 60 * 1000L) }
-        audio = getSystemService(AudioManager::class.java).apply {
-            mode = AudioManager.MODE_IN_COMMUNICATION
-            if (Build.VERSION.SDK_INT >= 31 && availableCommunicationDevices.none { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET }) availableCommunicationDevices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }?.let { setCommunicationDevice(it) }
-        }
         player = SpeechPlayer(this, { connection?.send(it) }, { status(it) }, { if (connection?.connected == true) status("Listening · connected") })
         connection = OrchidConnection(settings, { status(it) }, { value ->
             when (value.optString("type")) {
@@ -58,7 +51,6 @@ class ConversationService : Service() {
     private fun status(text: String) { settings.status = text; getSystemService(NotificationManager::class.java).notify(1, notification(text)) }
     override fun onDestroy() {
         capture?.close(); player?.close(); connection?.close(); if (wake?.isHeld == true) wake?.release()
-        if (Build.VERSION.SDK_INT >= 31) audio?.clearCommunicationDevice(); audio?.mode = AudioManager.MODE_NORMAL
         settings.status = "Stopped"; stopForeground(STOP_FOREGROUND_REMOVE); super.onDestroy()
     }
 }

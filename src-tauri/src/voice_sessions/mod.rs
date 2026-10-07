@@ -3,6 +3,7 @@ mod delegation;
 mod domain;
 mod gateway;
 mod observations;
+mod phone_history;
 pub(crate) mod repository;
 mod speech;
 pub(crate) mod transport;

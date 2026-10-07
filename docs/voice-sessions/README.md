@@ -23,6 +23,10 @@ Speak normally and address requests explicitly to the agent. Transcribed utteran
 
 The agent announces available material before giving a full report. Invite the explanation. Speaking during playback stops current and queued phone speech; the next reasoning input includes the interruption position and relevant material. Playback positions are approximate elapsed milliseconds, not word alignment.
 
+The phone has **Voice**, **Sessions**, and **Settings** tabs. Sessions separates the main interaction from delegated workers, including further delegations. Open a session to see its input, replies, status, and expandable activity; load earlier turns for older history. History refreshes while visible and does not start the microphone. Voice Sessions must be enabled on the laptop.
+
+Phone speech follows Android media volume and normal media routing. At media mute, speech is skipped with a zero-duration `muted` receipt; its text remains in history. The app's volume buttons control media volume.
+
 **Stop** on the phone stops microphone capture, playback, and its connection. **Stop connection** on the desktop also closes the gateway and local transcription worker. Independent agent work retains its normal session lifetime. Resume reconnects the persistent conversation; it does not replay audio. **New conversation** creates a new ordinary reasoning session.
 
 Disconnected microphone audio is discarded. Keep Tailscale enabled on mobile data. Use the phone speaker for the initial test; headset routing, wind noise, echo cancellation, and call interruption require testing with the actual audio setup.

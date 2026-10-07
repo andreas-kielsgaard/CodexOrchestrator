@@ -5,12 +5,12 @@ use super::{
 use axum::{
     extract::{
         ws::{Message, WebSocket},
-        State, WebSocketUpgrade,
+        Path, Query, State, WebSocketUpgrade,
     },
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
-    Router,
+    Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -77,6 +77,8 @@ pub(crate) fn start(
                 let listener = tokio::net::TcpListener::from_std(listener).expect("voice listener");
                 let router = Router::new()
                     .route("/phone", get(upgrade))
+                    .route("/sessions", get(session_list))
+                    .route("/sessions/{id}", get(session_history))
                     .with_state(state);
                 let _ = axum::serve(listener, router)
                     .with_graceful_shutdown(cancel.cancelled_owned())
@@ -95,9 +97,7 @@ async fn upgrade(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
-    if headers.get("authorization").and_then(|v| v.to_str().ok())
-        != Some(format!("Bearer {}", state.token).as_str())
-    {
+    if !authorized(&headers, &state.token) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let accepted = state.app.update(|snapshot| {
@@ -112,6 +112,41 @@ async fn upgrade(
     }
     ws.max_message_size(5_500_000)
         .on_upgrade(move |socket| connection(socket, state))
+}
+fn authorized(headers: &HeaderMap, token: &str) -> bool {
+    headers.get("authorization").and_then(|v| v.to_str().ok())
+        == Some(format!("Bearer {token}").as_str())
+}
+async fn session_list(State(state): State<GatewayState>, headers: HeaderMap) -> Response {
+    if !authorized(&headers, &state.token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let result = tokio::task::spawn_blocking(move || state.app.phone_sessions()).await;
+    history_response(result)
+}
+async fn session_history(
+    State(state): State<GatewayState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if !authorized(&headers, &state.token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let result = tokio::task::spawn_blocking(move || {
+        state
+            .app
+            .phone_history(&id, query.get("before").map(String::as_str))
+    })
+    .await;
+    history_response(result)
+}
+fn history_response(result: Result<Result<Value, String>, tokio::task::JoinError>) -> Response {
+    match result {
+        Ok(Ok(value)) => Json(value).into_response(),
+        Ok(Err(message)) => (StatusCode::NOT_FOUND, Json(json!({"error":message}))).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 async fn connection(socket: WebSocket, state: GatewayState) {
     let (mut sink, mut source) = socket.split();
@@ -186,6 +221,15 @@ async fn connection(socket: WebSocket, state: GatewayState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn phone_history_requires_the_configured_bearer_token() {
+        let mut headers = HeaderMap::new();
+        assert!(!authorized(&headers, "phone-token"));
+        headers.insert("authorization", "Bearer wrong-token".parse().unwrap());
+        assert!(!authorized(&headers, "phone-token"));
+        headers.insert("authorization", "Bearer phone-token".parse().unwrap());
+        assert!(authorized(&headers, "phone-token"));
+    }
     #[test]
     fn gateway_cannot_bind_public_or_lan_interfaces() {
         for address in [
