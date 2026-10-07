@@ -17,3 +17,11 @@ Eleven focused Rust tests passed, including ignored input and the held-input/fil
 S21 UI clicks selected External while listening. Actual capture reported `External: soundcore Sport X20`, advancing sample counts, `silenced=false`, and one recorded/sent segment. Clicking Phone restored `Phone: SM-G991B` while the connection remained active. Screenshots showed the switch and actual route. This verifies routing and read activity, not the user's hearing or speech recognition accuracy.
 
 Receipts are retained under the main checkout's `.dev/voice-pipeline-main/` and the feature worktree's `.dev/voice-status-*` logs.
+
+The main release build from source `c52d439f` passed and was relaunched with the existing conversation, stage identities, phone settings, and custom prompt values preserved. Only the unchanged shipped completion prompt was upgraded. Main and phone screenshots agreed on the actual phone route and held-input reason. Authenticated `/status` returned 200, unauthenticated access returned 401, and successive reports showed advancing sample counts and timestamps.
+
+Real JEV queries classified the exact previously held question as `complete` (confidence 0.84), and a promise to add more detail as `continue` (confidence 0.98). This is a two-case check, not an accuracy benchmark. During the route test, a real headset audio segment reached transcription and was classified as unaddressed.
+
+Desktop executable SHA-256: `7E17E1865C5453398C776BB24F2D44AB77311CF990893F1D5EE2FE39C1B613BA`. Installed Android APK SHA-256: `9E2169E9F8838636AD0A7607F638B0C69C86B3A2A217AF7F1A69457B8CB92E14`.
+
+A controlled text question in the relaunched main app passed relevance and completion, released the old held question, and produced the brief summary-stage publication “Yes, your message came through.” Digest avoided a redundant reply. No additional worker was created; all reasoning stages completed and observation queues emptied. This checks the reasoning path with text, separately from the real headset audio/transcription observation. The gateway and phone were left connected with the original Phone microphone selection; the External switch remains available.

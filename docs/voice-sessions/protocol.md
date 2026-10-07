@@ -21,7 +21,7 @@ Publication kinds are `acknowledgement`, `announcement`, and `explanation`. The 
 
 Playback reports distinguish playing, completed, interrupted, failed, and unavailable output. `playedMs` is elapsed playback time reported by the phone; it is approximate. Publication and network send are not proof of listening.
 
-Phone Settings defaults to the phone microphone, keeping Bluetooth playback on its media route. The alternative headset-microphone setting selects a connected Bluetooth communication headset while capturing and releases that selection on stop. Device callbacks handle headset connection changes; without a headset, Android selects its normal input. Classic Bluetooth headset microphones require lower-quality call audio. Speech retains media-volume playback in either mode. Restart listening after changing microphone.
+Phone defaults to the phone microphone, keeping Bluetooth playback on its media route. The Voice tab's Phone / External microphone switch applies immediately while listening. External selects a connected Bluetooth communication headset or wired/USB microphone; the selected Bluetooth route is released on stop. Device callbacks handle headset connection changes; without an external microphone, Android selects its normal input. Classic Bluetooth headset microphones require lower-quality call audio. Speech retains media-volume playback in either mode. Live status displays the actual route, capture state, signal, recorded/sent segments, input decisions, and reasoning states separately.
 
 Phone Settings offers Lower other audio (default), Pause other audio, and Keep other audio unchanged. The player holds transient audio focus only across queued speech, and releases it on completion, interruption, failure, or shutdown. Android controls ducking attenuation and other apps' response; an exact adjustable percentage is unavailable through the ordinary audio-focus API. See [Android audio focus](https://developer.android.com/media/optimize/audio-focus).
 
@@ -45,5 +45,6 @@ The same enabled gateway serves authenticated read-only HTTP requests using the 
 
 - `GET /sessions`: main interaction, JEV, summarization, digest, output, and delegated session summaries, including nested delegations.
 - `GET /sessions/{id}?before={invocationId}`: up to ten turns, with input, replies, status, and normalized display events. `nextBefore` loads the previous page. Unrelated sessions are rejected.
+- `GET /status`: authenticated live capture, transcription, relevance/completion, held-input reason, and reasoning states. The phone sends `capture_status` telemetry once a second while recording; no audio samples are included.
 
 History does not open another WebSocket, activate a microphone, dispatch agent work, or return raw provider transport payloads. It remains available while the phone's voice connection is active.

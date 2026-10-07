@@ -27,6 +27,8 @@ The agent announces available material before giving a full report. Invite the e
 
 The phone has **Voice**, **Sessions**, and **Settings** tabs. Sessions separates the main interaction, reasoning stages, and delegated workers, including further delegations. Open a session to see its input, replies, status, and expandable activity; load earlier turns for older history. History refreshes while visible and does not start the microphone. Desktop Voice Sessions also shows the accepted buffer and recent JEV decisions. Voice Sessions must be enabled on the laptop.
 
+**Voice → Live status** has a Phone / External microphone switch that applies immediately. The actual recording route and signal appear below it. The phone and desktop show segments reaching transcription, JEV decisions, why accepted input is held, and reasoning states/errors. Open **Input and reasoning details** on the phone for more detail.
+
 Phone speech follows Android media volume and normal media routing. At media mute, speech is skipped with a zero-duration `muted` receipt; its text remains in history. The app's volume buttons control media volume.
 
 **Stop** on the phone stops microphone capture, playback, and its connection. **Stop connection** on the desktop also closes the gateway and local transcription worker. Independent agent work retains its normal session lifetime. Resume reconnects the persistent conversation and its reasoning stages; it does not replay audio. **New conversation** starts new stage sessions.
