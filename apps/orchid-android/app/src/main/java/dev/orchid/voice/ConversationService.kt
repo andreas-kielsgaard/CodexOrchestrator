@@ -10,6 +10,7 @@ import java.util.UUID
 
 class ConversationService : Service() {
     private lateinit var settings: ConnectionSettings
+    private lateinit var detectedInput: DetectedInput
     private var connection: OrchidConnection? = null
     private var capture: AudioCapture? = null
     private var player: SpeechPlayer? = null
@@ -32,7 +33,7 @@ class ConversationService : Service() {
             } else handler.postDelayed(this, 1000)
         }
     }
-    override fun onCreate() { super.onCreate(); settings = ConnectionSettings(this); getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("conversation", "Voice conversation", NotificationManager.IMPORTANCE_LOW)) }
+    override fun onCreate() { super.onCreate(); settings = ConnectionSettings(this); detectedInput = DetectedInput(settings); getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("conversation", "Voice conversation", NotificationManager.IMPORTANCE_LOW)) }
     override fun onBind(intent: Intent?) = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -70,7 +71,7 @@ class ConversationService : Service() {
                         val inputs = value.optJSONArray("inputClassifications")
                         if (inputs != null) for (index in 0 until inputs.length()) {
                             val input = inputs.getJSONObject(index)
-                            DetectedInput(settings).classify(input.getString("id"), input.getString("relevance"))
+                            detectedInput.classify(input.getString("id"), input.getString("relevance"))
                         }
                     }
                     connection?.send(JSONObject().put("type", "capture_status").put("capture", JSONObject(settings.captureStatus)))
@@ -80,10 +81,10 @@ class ConversationService : Service() {
                 "speak" -> { val utterance = value.getJSONObject("utterance"); settings.lastExchange = "Orchid: ${utterance.getString("text")}"; if (capture?.speaking != true) player?.speak(utterance) else connection?.send(JSONObject().put("type", "playback").put("playback", JSONObject().put("utteranceId", utterance.getString("id")).put("playedMs", 0).put("state", "interrupted"))) }
                 "transcript" -> handler.post {
                     settings.lastExchange = "You: ${value.getString("text")}"
-                    DetectedInput(settings).append(value.getString("id"), value.getString("text"))
+                    detectedInput.append(value.getString("id"), value.getString("text"))
                 }
-                "transcript_preview" -> handler.post { DetectedInput(settings).preview(value.getString("id"), value.getString("text")) }
-                "input_classification" -> handler.post { DetectedInput(settings).classify(value.getString("id"), value.getString("relevance")) }
+                "transcript_preview" -> handler.post { detectedInput.preview(value.getString("id"), value.getString("text")) }
+                "input_classification" -> handler.post { detectedInput.classify(value.getString("id"), value.getString("relevance")) }
                 "error" -> status(value.optString("message"))
                 "ended" -> handler.post { stopSelf() }
             }

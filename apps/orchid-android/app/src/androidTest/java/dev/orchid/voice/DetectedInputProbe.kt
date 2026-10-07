@@ -28,6 +28,13 @@ object DetectedInputProbe {
             inputs.classify("ambient", "unaddressed")
             val colors = inputs.display().let { it.getSpans(0, it.length, ForegroundColorSpan::class.java).map { span -> span.foregroundColor } }
             check(colors == listOf(PhoneTheme.accent, PhoneTheme.inputContext, PhoneTheme.muted))
+            inputs.append("empty", "")
+            inputs.preview("empty", "late empty-segment draft")
+            check(JSONArray(settings.detectedInput).length() == 3)
+            inputs.preview("rejected", "temporary draft")
+            inputs.append("rejected", "")
+            inputs.preview("rejected", "late rejected draft")
+            check(JSONArray(settings.detectedInput).length() == 3)
             for (index in 0 until 25) inputs.preview("bounded-$index", "draft $index")
             check(JSONArray(settings.detectedInput).length() == 20)
             result.putString("transcripts", "Draft replacement, finalization, late-draft rejection, classification colors, and rolling limit passed")

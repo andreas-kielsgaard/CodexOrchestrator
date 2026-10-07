@@ -13,6 +13,7 @@ import android.widget.TextView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Toast
+import android.view.ViewTreeObserver
 
 /** Assistant activation controls and recent unfiltered transcripts. */
 class AssistantActivity : Activity() {
@@ -27,9 +28,9 @@ class AssistantActivity : Activity() {
             val input = settings.detectedInput
             if (renderedInput != input) {
                 val following = !inputScroll.canScrollVertically(1)
+                if (following) followAfterLayout()
                 detectedInput.text = DetectedInput(settings).display()
                 renderedInput = input
-                if (following) inputScroll.post { inputScroll.fullScroll(android.view.View.FOCUS_DOWN) }
             }
             handler.postDelayed(this, 250)
         }
@@ -69,7 +70,7 @@ class AssistantActivity : Activity() {
             addView(detectedInput)
         }
         root.addView(inputScroll, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = PhoneTheme.dp(this@AssistantActivity, 16) })
-        inputScroll.post { inputScroll.fullScroll(android.view.View.FOCUS_DOWN) }
+        followAfterLayout()
         frame.addView(root, LinearLayout.LayoutParams(-1, -1))
         setContentView(frame)
     }
@@ -83,6 +84,14 @@ class AssistantActivity : Activity() {
         if (activationPending) { activationPending = false; begin() }
     }
     override fun onPause() { handler.removeCallbacks(refresh); super.onPause() }
+    private fun followAfterLayout() {
+        inputScroll.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                inputScroll.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                inputScroll.fullScroll(android.view.View.FOCUS_DOWN)
+            }
+        })
+    }
     private fun begin() {
         try { settings.validate() } catch (_: Exception) {
             Toast.makeText(this, "Open Orchid and save your laptop connection first.", Toast.LENGTH_LONG).show()
