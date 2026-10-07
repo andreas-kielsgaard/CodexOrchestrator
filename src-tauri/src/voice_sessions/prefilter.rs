@@ -291,6 +291,7 @@ impl VoiceSessionApplication {
             let _ = self.events.send(json!({"type":"cue","cue":"listening"}));
         }
         if relevance != "unaddressed" {
+            let _ = self.events.send(json!({"type":"relevant_input","id":block.id,"relevance":relevance}));
             let conversation = self.snapshot()?.conversation.ok_or("No conversation")?;
             let completion = self.evaluate_choice(
                 &conversation,

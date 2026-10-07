@@ -26,6 +26,12 @@ class ConnectionSettings(context: Context) {
     var captureStatus: String
         get() = preferences.getString("capture-status", "{}") ?: "{}"
         set(value) { preferences.edit().putString("capture-status", value).apply() }
+    var listeningTimeoutSeconds: Int
+        get() = preferences.getInt("listening-timeout-seconds", 60)
+        set(value) { require(value > 0); preferences.edit().putInt("listening-timeout-seconds", value).apply() }
+    var listeningStopReason: String
+        get() = preferences.getString("listening-stop-reason", "") ?: ""
+        set(value) { preferences.edit().putString("listening-stop-reason", value).apply() }
     fun validate() {
         val uri = URI(endpoint)
         val octets = uri.host?.split('.')?.mapNotNull { it.toIntOrNull() } ?: emptyList()

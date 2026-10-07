@@ -51,7 +51,7 @@ class MainActivity : Activity() {
         override fun run() {
             val capture = runCatching { JSONObject(settings.captureStatus) }.getOrDefault(JSONObject())
             val fresh = runCatching { java.time.Instant.parse(capture.optString("updatedAt")).toEpochMilli() > System.currentTimeMillis() - 5000 }.getOrDefault(false)
-            status.text = if (capture.optBoolean("recording") && fresh) settings.status else capture.optString("error").takeUnless { it == "null" || it.isBlank() } ?: "Stopped"
+            status.text = if (capture.optBoolean("recording") && fresh) settings.status else settings.listeningStopReason.takeIf { it.isNotBlank() } ?: capture.optString("error").takeUnless { it == "null" || it.isBlank() } ?: "Stopped"
             exchange?.text = settings.lastExchange.ifBlank { "Your conversation will appear here." }
             volume?.text = if (getSystemService(AudioManager::class.java).getStreamVolume(AudioManager.STREAM_MUSIC) == 0)
                 "Media volume is muted" else "Speech follows your media volume"
@@ -184,6 +184,16 @@ class MainActivity : Activity() {
             catch (error: Exception) { Toast.makeText(this, error.message, Toast.LENGTH_LONG).show() }
         }
         content.addView(card)
+        section(content, "listening-timeout", "Listening timeout", true) { body ->
+            addText(body, "Stop the microphone after this many seconds without input accepted as relevant by JEV. Replies remain available. Start listening or use your assistant shortcut to resume.", color = PhoneTheme.secondary)
+            val timeout = EditText(this).apply { setSingleLine(); inputType = InputType.TYPE_CLASS_NUMBER; setText(settings.listeningTimeoutSeconds.toString()); hint = "Seconds"; contentDescription = "Listening timeout in seconds"; setTextColor(PhoneTheme.primary) }
+            body.addView(timeout)
+            action(body, "Save listening timeout") {
+                val seconds = timeout.text.toString().trim().toIntOrNull()
+                if (seconds == null || seconds <= 0) timeout.error = "Enter a positive number of seconds"
+                else { settings.listeningTimeoutSeconds = seconds; Toast.makeText(this, "Listening timeout saved", Toast.LENGTH_SHORT).show() }
+            }
+        }
         section(content, "assistant", "Assistant shortcuts", true) { body ->
             val role = getSystemService(android.app.role.RoleManager::class.java)
             addText(body, if (role.isRoleHeld(android.app.role.RoleManager.ROLE_ASSISTANT)) "Orchid is your phone assistant." else "Choose Orchid as your phone assistant to use the assistant gesture and connected device buttons.", color = PhoneTheme.secondary)
@@ -266,6 +276,8 @@ class MainActivity : Activity() {
         val lines = mutableListOf<String>()
         val details = mutableListOf<String>()
         lines += if (!recording) "Microphone: stopped · tap Start listening" else "Microphone: ${capture.optString("routedMicrophone", "Checking route")}${if (capture.optBoolean("silenced")) " · blocked by Android" else " · recording"}"
+        if (recording && capture.has("idleRemainingSeconds")) lines += "Listening timeout in ${capture.optLong("idleRemainingSeconds")} seconds without relevant input"
+        if (!recording && settings.listeningStopReason.isNotBlank()) lines += "${settings.listeningStopReason}. Resume here or through your assistant shortcut."
         if (recording && settings.microphone == "headset" && !capture.optBoolean("external")) lines += "External microphone requested; Android is using the phone. Check the headset's call audio connection."
         capture.optString("error").takeUnless { it == "null" || it.isBlank() }?.let { lines += "Capture error: $it" }
         val level = if (recording) capture.optDouble("level", 0.0) else 0.0

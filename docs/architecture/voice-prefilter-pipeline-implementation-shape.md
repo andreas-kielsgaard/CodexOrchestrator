@@ -35,4 +35,6 @@ The router retains context and dated task handoffs, chooses existing or new work
 
 ## Verification
 
+Listening inactivity is owned by Android `ListeningInactivity`, using monotonic elapsed time and a configurable 60-second default. `prefilter.rs` sends `relevant_input` after each accepted relevance decision. `ConversationService` renews the window only for that event or explicit activation, releases capture on expiry, and retains reply playback. `ConnectionSettings` and phone Settings own the duration; Voice displays the countdown and stop reason. No reasoning prompt or completion rule changes are needed.
+
 Test relevance/context/completion assembly, no dispatch while speaking or pending input exists, single cues, stage publication authority, durable restart state, and observation/steering delivery. Run focused Rust and frontend checks, Android build/lint, then exercise real JEV and reasoning sessions in an isolated Orchid instance. Verify phone cues and recording boundaries where the connected device permits; distinguish simulated input from live microphone and hardware-button evidence.

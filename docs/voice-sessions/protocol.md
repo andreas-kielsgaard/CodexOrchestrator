@@ -11,6 +11,7 @@ All WebSocket data messages are JSON text. Native WebSocket ping/pong maintains 
 | Phone to laptop | `text` | unique `id`, `text` |
 | Phone to laptop | `speech_state` | `speaking: true` at speech start, `false` after its final audio segment |
 | Laptop to phone | `transcript` | `id`, completed `text` |
+| Laptop to phone | `relevant_input` | `id`, `relevance: direct_request` or `task_context`; emitted after each accepted JEV relevance decision |
 | Laptop to phone | `cue` | `cue: listening` when accepted input opens; `processing` when released |
 | Laptop to phone | `speak` | `utterance: {id,kind,text,topicId,createdAt}` |
 | Phone to laptop | `playback` or `interrupt` | `playback: {utteranceId,playedMs,state}` |
@@ -35,7 +36,7 @@ Conversation state, handoff relationships, transcripts, published text, pending 
 
 Phone Settings > Assistant shortcuts requests Android's assistant role. Once selected, Android assistant gestures and compatible Bluetooth assistant buttons can activate Orchid. The voice-interaction service handles system sessions and locked-screen activation; `ACTION_ASSIST` and `ACTION_VOICE_COMMAND` also open the activation screen. Caller extras and screen context are ignored.
 
-Activation starts the existing conversation service with the saved microphone preference. Repeated activation reuses its recording and connection. Listening continues until stopped; dismissing the activation screen leaves listening active. Speech passes JEV before accepted, completed input reaches the reasoning stages. The locked activation screen exposes listening controls, while opening settings or history requires unlocking.
+Activation starts the existing conversation service with the saved microphone preference. Repeated activation reuses its recording and connection. Listening stops after 60 seconds without JEV-confirmed relevant input; Phone Settings > Listening timeout changes the duration in seconds, including while listening. Each accepted block renews the window, including unfinished task context. Background speech, transcripts awaiting evaluation, replies, reconnection, and microphone selection do not renew it. Expiry releases the microphone and Bluetooth communication route while retaining the connection for replies. The Voice tab shows the countdown and stop reason. Only app or assistant activation resumes capture; dismissing the activation screen does not stop it. Speech passes JEV before accepted, completed input reaches the reasoning stages. The locked activation screen exposes listening controls, while opening settings or history requires unlocking.
 
 Android requires recognition-service metadata for assistant registration. Orchid's registration component rejects generic Android speech-recognizer requests and is not selectable as a default dictation engine; Orchid continues using laptop transcription. The S21's existing Google dictation service remains selected. No custom wake phrase is registered. Garmin/H95 hardware invocation and Bluetooth routing require separate device-button verification.
 
