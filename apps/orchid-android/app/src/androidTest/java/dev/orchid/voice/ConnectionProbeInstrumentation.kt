@@ -19,7 +19,8 @@ import java.util.concurrent.atomic.AtomicLong
 class ConnectionProbeInstrumentation : Instrumentation() {
     private var reconnect = false
     private var probe = "connection"
-    override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); reconnect = arguments?.getString("reconnect") == "true"; probe = arguments?.getString("probe") ?: "connection"; start() }
+    private var endpointOverride: String? = null
+    override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); reconnect = arguments?.getString("reconnect") == "true"; probe = arguments?.getString("probe") ?: "connection"; endpointOverride = arguments?.getString("endpoint"); start() }
     override fun onStart() {
         val result = Bundle()
         val client = OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).build()
@@ -28,13 +29,13 @@ class ConnectionProbeInstrumentation : Instrumentation() {
             val settings = ConnectionSettings(targetContext)
             settings.validate()
             if (probe == "history") {
-                val base = settings.endpoint.substringBefore("/phone").replaceFirst("ws://", "http://")
+                val base = (endpointOverride ?: settings.endpoint).substringBefore("/phone").replaceFirst("ws://", "http://")
                 fun get(path: String, authenticated: Boolean = true): Response {
                     val request = Request.Builder().url(base + path)
                     if (authenticated) request.header("Authorization", "Bearer ${settings.token}")
                     return client.newCall(request.build()).execute()
                 }
-                get("/sessions", false).use { check(it.code == 401) { "Unauthenticated history was accepted" } }
+                get("/sessions", false).use { check(it.code == 401) { "Unauthenticated history returned HTTP ${it.code}; expected 401" } }
                 val list = get("/sessions").use { check(it.isSuccessful); JSONObject(it.body!!.string()).getJSONArray("sessions") }
                 check(list.length() >= 1) { "Main interaction session is missing" }
                 for (index in 0 until list.length()) {
@@ -92,7 +93,9 @@ class ConnectionProbeInstrumentation : Instrumentation() {
         var player: SpeechPlayer? = null
         var playback: JSONObject? = null
         val handler = Handler(Looper.getMainLooper())
-        handler.post { player = SpeechPlayer(targetContext, { value -> playback = value.getJSONObject("playback"); latch.countDown() }, {}, {}) }
+        val created = CountDownLatch(1)
+        handler.post { player = SpeechPlayer(targetContext, { value -> playback = value.getJSONObject("playback"); latch.countDown() }, {}, {}); created.countDown() }
+        check(created.await(5, TimeUnit.SECONDS)) { "Speech player was not created" }
         val deadline = SystemClock.elapsedRealtime() + 15000
         while (player?.isReady != true && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(100)
         try {
