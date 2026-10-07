@@ -17,6 +17,7 @@ import kotlin.concurrent.thread
 
 class AudioCapture(context: Context, private val speechStarted: () -> Unit, private val utterance: (ByteArray) -> Unit, private val failed: (String) -> Unit, private val speechEnded: () -> Unit = {}, private val progress: (JSONObject) -> Unit = {}) {
     private val settings = ConnectionSettings(context)
+    private val phoneMicrophone = settings.microphone == "phone"
     private val routing = MicrophoneRouting(context, failed)
     @Volatile private var active = false
     @Volatile var speaking = false; private set
@@ -42,22 +43,24 @@ class AudioCapture(context: Context, private val speechStarted: () -> Unit, priv
         try {
             routing.start()
             val size = AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-            val audio = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, 16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(size, 9600))
+            val source = if (phoneMicrophone) MediaRecorder.AudioSource.VOICE_RECOGNITION else MediaRecorder.AudioSource.VOICE_COMMUNICATION
+            val audio = AudioRecord(source, 16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(size, 9600))
             require(audio.state == AudioRecord.STATE_INITIALIZED) { "Microphone unavailable" }
             recorder = audio
             routing.preferredInput?.let { require(audio.setPreferredDevice(it)) { "Unable to select phone microphone" } }
             if (AcousticEchoCanceler.isAvailable()) echo = AcousticEchoCanceler.create(audio.audioSessionId)?.apply { enabled = true }
-            if (NoiseSuppressor.isAvailable()) noise = NoiseSuppressor.create(audio.audioSessionId)?.apply { enabled = true }
+            if (!phoneMicrophone && NoiseSuppressor.isAvailable()) noise = NoiseSuppressor.create(audio.audioSessionId)?.apply { enabled = true }
             active = true; audio.startRecording(); report()
             worker = thread(name = "orchid-microphone") {
                 try {
-                    VadWebRTC(sampleRate = SampleRate.SAMPLE_RATE_16K, frameSize = FrameSize.FRAME_SIZE_480, mode = Mode.VERY_AGGRESSIVE, silenceDurationMs = 650, speechDurationMs = 90).use { vad ->
-                        val samples = ShortArray(480); val preroll = ArrayDeque<ByteArray>(); var output = ByteArrayOutputStream()
+                    VadWebRTC(sampleRate = SampleRate.SAMPLE_RATE_16K, frameSize = FrameSize.FRAME_SIZE_480, mode = Mode.NORMAL, silenceDurationMs = 650, speechDurationMs = 90).use { vad ->
+                        val samples = ShortArray(480); val preroll = ArrayDeque<ByteArray>(); var output = ByteArrayOutputStream(); var peakLevel = 0.0
                         while (active) {
                             var offset = 0
                             while (active && offset < samples.size) { val count = audio.read(samples, offset, samples.size - offset); if (count < 0) throw IllegalStateException("Audio read failed: $count"); offset += count }
                             if (!active) break
                             framesRead += samples.size
+                            peakLevel = maxOf(peakLevel, sqrt(samples.sumOf { it.toDouble() * it.toDouble() } / samples.size) / 32768.0)
                             val bytes = ByteBuffer.allocate(960).order(ByteOrder.LITTLE_ENDIAN).apply { samples.forEach { putShort(it) } }.array()
                             val voice = vad.isSpeech(samples)
                             if (!speaking) {
@@ -73,7 +76,7 @@ class AudioCapture(context: Context, private val speechStarted: () -> Unit, priv
                             val now = SystemClock.elapsedRealtime()
                             if (now - lastReport >= 1000) {
                                 lastReport = now
-                                report(sqrt(samples.sumOf { it.toDouble() * it.toDouble() } / samples.size) / 32768.0)
+                                report(peakLevel); peakLevel = 0.0
                             }
                         }
                     }

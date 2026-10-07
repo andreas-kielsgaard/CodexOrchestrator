@@ -288,6 +288,12 @@ class MainActivity : Activity() {
         liveState?.let { state ->
             val audio = state.optJSONObject("audio") ?: JSONObject()
             lines += "Laptop: ${audio.optLong("received")} segments received · ${audio.optLong("transcribed")} transcribed · ${state.optInt("pendingAudio")} queued"
+            if (audio.has("lastTranscript") && !audio.isNull("lastTranscript")) {
+                val transcript = audio.optString("lastTranscript")
+                if (transcript.isBlank()) lines += "Last audio: no words recognized · not sent to JEV"
+                else details += "Last audio transcript: $transcript"
+            }
+            audio.optString("error").takeUnless { it == "null" || it.isBlank() }?.let { lines += "Transcription error: $it" }
             val input = state.optJSONObject("input") ?: JSONObject()
             lines += "Input: ${input.optString("title")}"
             details += input.optString("detail")
