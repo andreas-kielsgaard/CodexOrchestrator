@@ -180,8 +180,16 @@ async fn connection(socket: WebSocket, state: GatewayState) {
             })
             .await;
             if let Ok(Err(error)) = result {
+                let _ = error_app.update(|s| {
+                    if let Some(c) = &mut s.conversation {
+                        c.input_buffer.complete = false;
+                    }
+                    Ok(())
+                });
                 error_app.set_error(error);
             }
+            let _ = error_app.audio_pending(-1);
+            let _ = error_app.release_input();
         }
     });
     loop {
@@ -198,7 +206,14 @@ async fn connection(socket: WebSocket, state: GatewayState) {
                     Message::Text(text)=>{
                         let Ok(value)=serde_json::from_str::<Value>(&text) else{continue};
                         match value["type"].as_str() {
-                            Some("audio"|"text")=>{if inputs.try_send(value).is_err(){state.app.set_error("Input queue is busy; please repeat shortly".into());}}
+                            Some("audio"|"text")=>{
+                                let _=state.app.audio_pending(1);
+                                if inputs.try_send(value).is_err(){
+                                    let _=state.app.audio_pending(-1);
+                                    state.app.set_error("Input queue is busy; please repeat shortly".into());
+                                }
+                            }
+                            Some("speech_state")=>{let _=state.app.speech_activity(value["speaking"].as_bool().unwrap_or(false));}
                             Some("playback"|"interrupt")=>{if let Ok(playback)=serde_json::from_value::<Playback>(value["playback"].clone()){let _=state.app.playback(playback);}}
                             Some("ping")=>{let _=sink.send(Message::Text(json!({"type":"pong"}).to_string().into())).await;}
                             _=>{}
@@ -214,6 +229,11 @@ async fn connection(socket: WebSocket, state: GatewayState) {
     processor.abort();
     let _ = state.app.update(|s| {
         s.phone_connected = false;
+        s.speaking = false;
+        s.pending_audio = 0;
+        if let Some(c) = &mut s.conversation {
+            c.input_buffer.complete = false;
+        }
         Ok(())
     });
     let _ = sink.close().await;

@@ -3,8 +3,7 @@ use crate::agent_sessions::{domain::AgentSessionId, ports::AgentInvocationHistor
 use serde_json::{json, Value};
 
 fn is_member(conversation: &Conversation, id: &str) -> bool {
-    conversation.main_session_id == id
-        || conversation.delegations.iter().any(|d| d.session_id == id)
+    conversation.role(id).is_some()
 }
 
 fn turn(history: &AgentInvocationHistory) -> Value {
@@ -41,6 +40,14 @@ impl VoiceSessionApplication {
             .conversation
             .ok_or("No voice conversation")?;
         let mut ids = vec![conversation.main_session_id.clone()];
+        if let Some(p) = &conversation.pipeline {
+            ids.extend([
+                p.filter.clone(),
+                p.summary.clone(),
+                p.digest.clone(),
+                p.output.clone(),
+            ]);
+        }
         for delegation in &conversation.delegations {
             if !ids.contains(&delegation.session_id) {
                 ids.push(delegation.session_id.clone());
@@ -61,7 +68,8 @@ impl VoiceSessionApplication {
                     .rev()
                     .find(|d| d.session_id == *id);
                 Ok(json!({"id":id,"title":history.session.title,
-                "role":if id == &conversation.main_session_id {"conversation"} else {"worker"},
+                "role":match conversation.role(id) {Some("router")=>"conversation",Some("worker")=>"worker",_=>"reasoning"},
+                "stage":conversation.role(id),
                 "parentSessionId":delegation.map(|d| &d.from_session_id),
                 "task":delegation.map(|d| &d.task),
                 "status":history.invocations.last().map(|h| h.invocation.status),
@@ -108,7 +116,7 @@ impl VoiceSessionApplication {
         }
         Ok(
             json!({"sessionId":id,"title":history.session.title,"turns":turns,
-            "exchanges":exchanges,
+            "exchanges":exchanges,"inputBuffer":conversation.input_buffer,"inputDecisions":conversation.inputs,
             "nextBefore":if start > 0 {Some(history.invocations[start].invocation.id.as_str())} else {None}}),
         )
     }
@@ -122,8 +130,11 @@ mod tests {
         let conversation: Conversation = serde_json::from_value(json!({"id":"voice","mainSessionId":"main",
             "delegations":[{"sessionId":"worker","fromSessionId":"main","returnSessionId":"main","task":"Inspect","invocationId":null},
                 {"sessionId":"nested","fromSessionId":"worker","returnSessionId":"worker","task":"Read","invocationId":null}],
-            "observedSessions":["unrelated"],"observations":[],"pendingTopics":[],"utterances":[],"inputs":[],"playback":null})).unwrap();
-        for id in ["main", "worker", "nested"] {
+            "observedSessions":["unrelated"],"observations":[],"pendingTopics":[],"utterances":[],"inputs":[],"playback":null,
+            "pipeline":{"filter":"filter","summary":"summary","digest":"digest","output":"output"}})).unwrap();
+        for id in [
+            "main", "filter", "summary", "digest", "output", "worker", "nested",
+        ] {
             assert!(is_member(&conversation, id));
         }
         assert!(!is_member(&conversation, "unrelated"));

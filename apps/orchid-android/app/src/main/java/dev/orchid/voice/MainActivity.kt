@@ -34,6 +34,8 @@ class MainActivity : Activity() {
     private var nextBefore: String? = null
     private var sessions: JSONObject? = null
     private var exchanges = org.json.JSONArray()
+    private var inputDecisions = org.json.JSONArray()
+    private var inputBuffer = JSONObject()
     private val turns = linkedMapOf<String, JSONObject>()
     private val expanded = mutableSetOf<String>()
     private val collapsed = mutableSetOf<String>()
@@ -204,11 +206,13 @@ class MainActivity : Activity() {
             if (selectedSession == null) sessions = value else {
                 selectedTitle = value.optString("title", selectedTitle)
                 exchanges = value.optJSONArray("exchanges") ?: org.json.JSONArray()
+                inputDecisions = value.optJSONArray("inputDecisions") ?: org.json.JSONArray()
+                inputBuffer = value.optJSONObject("inputBuffer") ?: JSONObject()
                 if (before != null || turns.isEmpty()) nextBefore = value.optString("nextBefore").takeUnless { it == "null" || it.isBlank() }
                 val entries = value.optJSONArray("turns")
                 if (entries != null) for (index in 0 until entries.length()) { val turn = entries.getJSONObject(index); turns[turn.getString("id")] = turn }
             }
-            val signature = if (selectedSession == null) sessions.toString() else turns.values.joinToString() + nextBefore + exchanges
+            val signature = if (selectedSession == null) sessions.toString() else turns.values.joinToString() + nextBefore + exchanges + inputDecisions + inputBuffer
             if (signature != rendered) { val y = scroll.scrollY; renderHistory(); rendered = signature; scroll.post { scroll.scrollTo(0, y) } }
             historyStatus.text = "Updated · read only"; historyStatus.setTextColor(PhoneTheme.muted)
         }
@@ -219,7 +223,7 @@ class MainActivity : Activity() {
             addText(content, "Sessions", 20f, bold = true)
             addText(content, "Follow the conversation and the agents working behind it.", color = PhoneTheme.secondary)
             val entries = sessions?.optJSONArray("sessions")
-            for ((role, title) in listOf("conversation" to "Main interaction", "worker" to "Working sessions")) {
+            for ((role, title) in listOf("conversation" to "Main interaction", "reasoning" to "Reasoning sessions", "worker" to "Working sessions")) {
                 section(content, "group-$role", title, true) { body ->
                     var count = 0
                     if (entries != null) for (index in 0 until entries.length()) {
@@ -239,6 +243,20 @@ class MainActivity : Activity() {
         } else {
             action(content, "‹ All sessions") { selectedSession = null; generation++; pending?.cancel(); pending = null; rendered = ""; renderHistory(); loadHistory() }
             addText(content, selectedTitle, 20f, bold = true)
+            val held = inputBuffer.optJSONArray("blocks")
+            if (held != null && held.length() > 0) section(content, "held-$selectedSession", "Accepted input held (${held.length()})", true) { body ->
+                for (index in 0 until held.length()) addText(body, held.getJSONObject(index).optString("text"))
+                addText(body, if (inputBuffer.optBoolean("complete")) "Ready · waiting for speech and queued processing" else "Waiting for the input to be complete", 13f, PhoneTheme.muted)
+            }
+            if (inputDecisions.length() > 0) section(content, "decisions-$selectedSession", "Recent speech decisions") { body ->
+                for (index in maxOf(0, inputDecisions.length() - 10) until inputDecisions.length()) {
+                    val entry = inputDecisions.getJSONObject(index)
+                    val relevance = entry.optString("relevance").takeUnless { it == "null" || it.isBlank() } ?: "Earlier input"
+                    val completion = entry.optString("completion").takeUnless { it == "null" || it.isBlank() }
+                    addText(body, if (entry.optBoolean("filterPending")) "Evaluating" else relevance + (completion?.let { " · $it" } ?: ""), 13f, PhoneTheme.accent, true)
+                    addText(body, entry.optString("text"))
+                }
+            }
             if (exchanges.length() > 0) section(content, "speech-$selectedSession", "Spoken exchanges (${exchanges.length()})") { body ->
                 for (index in 0 until exchanges.length()) {
                     val entry = exchanges.getJSONObject(index)

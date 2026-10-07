@@ -1,0 +1,1 @@
+References such as voice_session.publish name logical product packages. Harness may expose these tools with session_capability server aliases; discover them by their terminal tool names and descriptions, without requiring voice_session or orchid_control in the runtime prefix.

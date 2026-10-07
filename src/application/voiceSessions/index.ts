@@ -1,1 +1,1 @@
-export type { VoiceSettings, VoiceView, VoiceSessionClient } from './contracts';
+export type { VoicePrompts, VoiceSettings, VoiceView, VoiceSessionClient } from './contracts';

@@ -4,9 +4,13 @@ use crate::{
     orchid_control::{optional, required},
 };
 use serde_json::{json, Value};
+use std::sync::Arc;
 impl VoiceSessionApplication {
-    pub(crate) fn delegate(&self, caller: &str, arguments: Value) -> Result<Value, String> {
+    pub(crate) fn delegate(self: &Arc<Self>, caller: &str, arguments: Value) -> Result<Value, String> {
         let conversation = self.require_member(caller)?;
+        if !matches!(conversation.role(caller), Some("router" | "worker")) {
+            return Err("The router and delegated workers own work handoffs".into());
+        }
         let task = required(&arguments, "task")?.to_string();
         let state = self.snapshot()?;
         let recipient = if let Some(id) = optional(&arguments, "sessionId") {
@@ -25,6 +29,12 @@ impl VoiceSessionApplication {
             return Err("Delegate to an independent session".into());
         }
         // Record membership before dispatch: a fast recipient may finish during launch.
+        if conversation
+            .role(recipient.as_str())
+            .is_some_and(|role| role != "worker")
+        {
+            return Err("Delegate work to a worker, not an internal voice stage".into());
+        }
         self.update(|state| {
             state
                 .conversation
@@ -37,6 +47,7 @@ impl VoiceSessionApplication {
                     return_session_id: caller.into(),
                     task: task.clone(),
                     invocation_id: None,
+                    created_at: chrono::Utc::now().to_rfc3339(),
                 });
             Ok(())
         })?;
@@ -77,6 +88,8 @@ impl VoiceSessionApplication {
             }
             Ok(())
         })?;
+        self.record_activity(caller, "task_handoff", json!({"sessionId":recipient,"task":task,"delivery":receipt.as_ref().ok()}), &self.digest_targets())?;
+        self.schedule_observations();
         receipt.map(|delivery| json!({"accepted":true,"delivery":delivery,"task":task}))
     }
     pub(crate) fn observe(&self, caller: &str, arguments: Value) -> Result<Value, String> {

@@ -48,6 +48,7 @@ mod tests {
         state.enabled = true;
         state.phone_connected = true;
         state.settings.profile_id = "profile".into();
+        state.settings.prompts.output = "Custom concise output instructions".into();
         state.conversation = Some(super::super::domain::Conversation {
             id: "conversation".into(),
             main_session_id: "main".into(),
@@ -66,15 +67,40 @@ mod tests {
                 played_ms: 1600,
                 state: "interrupted".into(),
             }),
+            ..Default::default()
         });
         repository.save(&state).unwrap();
         let restarted = repository.load().unwrap();
         assert!(!restarted.enabled);
         assert!(!restarted.phone_connected);
+        assert_eq!(
+            restarted.settings.prompts.output,
+            "Custom concise output instructions"
+        );
         let conversation = restarted.conversation.unwrap();
         assert_eq!(conversation.main_session_id, "main");
         assert_eq!(conversation.pending_topics[0].material, "Retained facts");
         assert_eq!(conversation.playback.unwrap().played_ms, 1600);
         assert_eq!(conversation.observed_sessions, ["outside-workflow"]);
+    }
+    #[test]
+    fn restart_retains_pipeline_and_accepted_buffer_without_live_capture_flags() {
+        let mut state = VoiceState::default();
+        state.enabled = true;
+        state.speaking = true;
+        state.pending_audio = 3;
+        state.conversation = Some(serde_json::from_value(serde_json::json!({
+            "id":"conversation","mainSessionId":"router","delegations":[],"observedSessions":[],"observations":[],
+            "pendingTopics":[],"utterances":[],"inputs":[],"playback":null,
+            "pipeline":{"filter":"jev","summary":"summary","digest":"digest","output":"output"},
+            "inputBuffer":{"complete":false,"blocks":[{"id":"input","text":"Orchid, inspect","createdAt":"2026-10-07T10:00:00Z","relevance":"direct_request"}]}
+        })).unwrap());
+        let restarted: VoiceState =
+            serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        assert!(!restarted.enabled && !restarted.speaking && restarted.pending_audio == 0);
+        let c = restarted.conversation.unwrap();
+        assert_eq!(c.pipeline.unwrap().digest, "digest");
+        assert_eq!(c.input_buffer.blocks[0].text, "Orchid, inspect");
+        assert!(!c.input_buffer.complete);
     }
 }

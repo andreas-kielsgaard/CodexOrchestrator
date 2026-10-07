@@ -1,4 +1,7 @@
 .voice-screen {
+  height: calc(100vh - var(--app-top-offset, 48px));
+  overflow: auto;
+  box-sizing: border-box;
   padding: 24px;
   max-width: 1400px;
   margin: auto;

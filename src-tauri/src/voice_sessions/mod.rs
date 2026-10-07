@@ -4,6 +4,8 @@ mod domain;
 mod gateway;
 mod observations;
 mod phone_history;
+mod pipeline;
+mod prefilter;
 pub(crate) mod repository;
 mod speech;
 pub(crate) mod transport;

@@ -13,6 +13,7 @@ class ConversationService : Service() {
     private var connection: OrchidConnection? = null
     private var capture: AudioCapture? = null
     private var player: SpeechPlayer? = null
+    private var cues: CuePlayer? = null
     private var wake: PowerManager.WakeLock? = null
     private val handler = Handler(Looper.getMainLooper())
     override fun onCreate() { super.onCreate(); settings = ConnectionSettings(this); getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("conversation", "Voice conversation", NotificationManager.IMPORTANCE_LOW)) }
@@ -31,17 +32,19 @@ class ConversationService : Service() {
         startForeground(1, notification("Connecting…"), types)
         wake = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Orchid:conversation").apply { acquire(8 * 60 * 60 * 1000L) }
         player = SpeechPlayer(this, { connection?.send(it) }, { status(it) }, { if (connection?.connected == true) status("Listening · connected") })
+        cues = CuePlayer(this)
         connection = OrchidConnection(settings, { status(it) }, { value ->
             when (value.optString("type")) {
+                "cue" -> cues?.play(value.optString("cue"))
                 "speak" -> { val utterance = value.getJSONObject("utterance"); settings.lastExchange = "Orchid: ${utterance.getString("text")}"; if (capture?.speaking != true) player?.speak(utterance) else connection?.send(JSONObject().put("type", "playback").put("playback", JSONObject().put("utteranceId", utterance.getString("id")).put("playedMs", 0).put("state", "interrupted"))) }
                 "transcript" -> settings.lastExchange = "You: ${value.getString("text")}"
                 "error" -> status(value.optString("message"))
                 "ended" -> handler.post { stopSelf() }
             }
         }).also { it.start() }
-        capture = AudioCapture(this, { player?.interrupt() }, { bytes ->
+        capture = AudioCapture(this, { player?.interrupt(); connection?.send(JSONObject().put("type", "speech_state").put("speaking", true)) }, { bytes ->
             if (connection?.connected == true) connection?.send(JSONObject().put("type", "audio").put("id", UUID.randomUUID().toString()).put("audio", Base64.encodeToString(bytes, Base64.NO_WRAP)))
-        }, { status(it) }).also { it.start() }
+        }, { status(it) }, { connection?.send(JSONObject().put("type", "speech_state").put("speaking", false)) }).also { it.start() }
     }
     private fun notification(text: String): Notification {
         val open = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
@@ -50,7 +53,7 @@ class ConversationService : Service() {
     }
     private fun status(text: String) { settings.status = text; getSystemService(NotificationManager::class.java).notify(1, notification(text)) }
     override fun onDestroy() {
-        capture?.close(); player?.close(); connection?.close(); if (wake?.isHeld == true) wake?.release()
+        capture?.close(); cues?.close(); player?.close(); connection?.close(); if (wake?.isHeld == true) wake?.release()
         settings.status = "Stopped"; stopForeground(STOP_FOREGROUND_REMOVE); super.onDestroy()
     }
 }

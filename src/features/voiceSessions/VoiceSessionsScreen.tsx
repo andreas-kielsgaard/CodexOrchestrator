@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { VoiceSessionClient, VoiceSettings, VoiceView } from '../../application/voiceSessions';
+import type { VoicePrompts, VoiceSessionClient, VoiceSettings, VoiceView } from '../../application/voiceSessions';
 import './voiceSessions.css';
 
 export function VoiceSessionsScreen({
@@ -14,6 +14,7 @@ export function VoiceSessionsScreen({
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [text, setText] = useState('');
+  const [promptStage, setPromptStage] = useState<keyof VoicePrompts>('relevance');
   useEffect(() => {
     let alive = true;
     const read = () =>
@@ -138,8 +139,32 @@ export function VoiceSessionsScreen({
                 className="voice-link"
                 onClick={() => onOpenSession(conversation.mainSessionId)}
               >
-                Open reasoning session
+                Open routing session
               </button>
+              {conversation.pipeline && (
+                <section>
+                  <h3>Reasoning sessions</h3>
+                  {Object.entries(conversation.pipeline).map(([role, id]) => (
+                    <button key={role} className="voice-link" onClick={() => onOpenSession(id)}>
+                      Open {role === 'filter' ? 'JEV prefilter' : role}
+                    </button>
+                  ))}
+                  <p>{state.speaking ? 'Capturing speech' : state.pendingAudio ? 'Transcribing queued speech' : 'Waiting for input'} · {conversation.inputBuffer?.blocks.length ?? 0} accepted blocks held</p>
+                  {!!conversation.inputBuffer?.blocks.length && (
+                    <details open>
+                      <summary>Accepted input held</summary>
+                      {conversation.inputBuffer.blocks.map((input) => <p key={input.id}>{input.text}</p>)}
+                      <p className="voice-muted">{conversation.inputBuffer.complete ? 'Ready · waiting for speech and queued processing' : 'Waiting for the input to be complete'}</p>
+                    </details>
+                  )}
+                  <details>
+                    <summary>Input decisions</summary>
+                    {conversation.inputs.slice(-10).map((input) => (
+                      <p key={input.id}>{input.text} · {input.filterPending ? 'Evaluating' : input.relevance ?? 'Earlier input'} {input.completion ? '· ' + input.completion : ''}</p>
+                    ))}
+                  </details>
+                </section>
+              )}
               <h3>Ready to discuss</h3>
               {conversation.pendingTopics.length ? (
                 conversation.pendingTopics.map((topic) => (
@@ -250,7 +275,35 @@ export function VoiceSessionsScreen({
             and runtime requests.
           </p>
           <details>
-            <summary>Conversation instructions</summary>
+            <summary>Voice prompts</summary>
+            <label>
+              Stage
+              <select value={promptStage} onChange={(event) => setPromptStage(event.target.value as keyof VoicePrompts)}>
+                <option value="relevance">JEV relevance</option>
+                <option value="completion">JEV input completion</option>
+                <option value="summary">Input summarization</option>
+                <option value="router">Routing</option>
+                <option value="digest">Digest</option>
+                <option value="output">Output</option>
+                <option value="tools">Shared tool discovery</option>
+              </select>
+            </label>
+            <label>
+              Prompt
+              <textarea
+                disabled={state.enabled}
+                rows={16}
+                value={settings.prompts[promptStage]}
+                onChange={(event) => edit({ prompts: { ...settings.prompts, [promptStage]: event.target.value } })}
+              />
+            </label>
+            <button disabled={busy || state.enabled} onClick={() => edit({ prompts: { ...settings.prompts, [promptStage]: view.defaultPrompts[promptStage] } })}>
+              Reset this prompt
+            </button>
+            <p className="voice-muted">Stop the connection to edit. Save setup applies prompts to subsequent evaluations and agent turns.</p>
+          </details>
+          <details>
+            <summary>Routing preferences</summary>
             <textarea
               disabled={state.enabled}
               rows={16}

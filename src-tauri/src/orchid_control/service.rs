@@ -48,7 +48,15 @@ pub(crate) fn tool_map() -> BTreeMap<String, BTreeSet<String>> {
         ),
         (
             "voice_session",
-            ["delegate_work", "publish", "observe_sessions"].as_slice(),
+            [
+                "delegate_work",
+                "publish",
+                "observe_sessions",
+                "read_context",
+                "report_progress",
+                "request_output",
+            ]
+            .as_slice(),
         ),
     ]
     .into_iter()

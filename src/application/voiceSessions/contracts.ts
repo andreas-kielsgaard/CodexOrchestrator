@@ -1,11 +1,22 @@
+export interface VoicePrompts {
+  relevance: string;
+  completion: string;
+  summary: string;
+  router: string;
+  digest: string;
+  output: string;
+  tools: string;
+}
 export interface VoiceSettings {
   bindAddress: string;
   token: string;
   profileId: string;
   workingDirectory: string | null;
   instructions: string;
+  prompts: VoicePrompts;
 }
 export interface VoiceView {
+  defaultPrompts: VoicePrompts;
   profiles: { id: string; name: string }[];
   state: {
     settings: VoiceSettings;
@@ -13,13 +24,17 @@ export interface VoiceView {
     phoneConnected: boolean;
     speechConfigured: boolean;
     error: string | null;
+    speaking?: boolean;
+    pendingAudio?: number;
     conversation: {
       id: string;
       mainSessionId: string;
+      pipeline?: { filter: string; summary: string; digest: string; output: string } | null;
+      inputBuffer?: { blocks: { id: string; text: string }[]; complete: boolean };
       delegations: { sessionId: string; task: string; invocationId: string | null }[];
       pendingTopics: { id: string; title: string; material: string }[];
       utterances: { id: string; kind: string; text: string; createdAt: string }[];
-      inputs: { id: string; text: string; createdAt: string }[];
+      inputs: { id: string; text: string; createdAt: string; relevance?: string | null; completion?: string | null; filterPending?: boolean }[];
       playback: { utteranceId: string; playedMs: number; state: string } | null;
     } | null;
   };

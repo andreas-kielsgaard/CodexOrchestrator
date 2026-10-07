@@ -4,6 +4,41 @@ pub(crate) const DEFAULT_INSTRUCTIONS: &str =
     include_str!("../../../resources/voice-sessions/instructions.md");
 pub(crate) const INPUT_INSTRUCTIONS: &str =
     include_str!("../../../resources/voice-sessions/input-instructions.md");
+pub(crate) const SUMMARY_INSTRUCTIONS: &str =
+    include_str!("../../../resources/voice-sessions/summary-instructions.md");
+pub(crate) const DIGEST_INSTRUCTIONS: &str =
+    include_str!("../../../resources/voice-sessions/digest-instructions.md");
+pub(crate) const OUTPUT_INSTRUCTIONS: &str =
+    include_str!("../../../resources/voice-sessions/output-instructions.md");
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub(crate) struct VoicePrompts {
+    pub(crate) relevance: String,
+    pub(crate) completion: String,
+    pub(crate) summary: String,
+    pub(crate) router: String,
+    pub(crate) digest: String,
+    pub(crate) output: String,
+    pub(crate) tools: String,
+}
+impl Default for VoicePrompts {
+    fn default() -> Self {
+        Self {
+            relevance: include_str!("../../../resources/voice-sessions/relevance-instructions.md")
+                .into(),
+            completion: include_str!(
+                "../../../resources/voice-sessions/completion-instructions.md"
+            )
+            .into(),
+            summary: SUMMARY_INSTRUCTIONS.into(),
+            router: INPUT_INSTRUCTIONS.into(),
+            digest: DIGEST_INSTRUCTIONS.into(),
+            output: OUTPUT_INSTRUCTIONS.into(),
+            tools: include_str!("../../../resources/voice-sessions/tool-instructions.md").into(),
+        }
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -13,6 +48,8 @@ pub(crate) struct VoiceSettings {
     pub(crate) profile_id: String,
     pub(crate) working_directory: Option<String>,
     pub(crate) instructions: String,
+    #[serde(default)]
+    pub(crate) prompts: VoicePrompts,
 }
 impl Default for VoiceSettings {
     fn default() -> Self {
@@ -22,6 +59,7 @@ impl Default for VoiceSettings {
             profile_id: String::new(),
             working_directory: None,
             instructions: DEFAULT_INSTRUCTIONS.into(),
+            prompts: VoicePrompts::default(),
         }
     }
 }
@@ -38,8 +76,12 @@ pub(crate) struct VoiceState {
     pub(crate) speech_configured: bool,
     #[serde(skip_deserializing)]
     pub(crate) error: Option<String>,
+    #[serde(skip_deserializing)]
+    pub(crate) speaking: bool,
+    #[serde(skip_deserializing)]
+    pub(crate) pending_audio: usize,
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Conversation {
     pub(crate) id: String,
@@ -51,6 +93,58 @@ pub(crate) struct Conversation {
     pub(crate) utterances: Vec<Utterance>,
     pub(crate) inputs: Vec<SpokenInput>,
     pub(crate) playback: Option<Playback>,
+    #[serde(default)]
+    pub(crate) pipeline: Option<PipelineSessions>,
+    #[serde(default)]
+    pub(crate) input_buffer: InputBuffer,
+    #[serde(default)]
+    pub(crate) activity: Vec<Activity>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PipelineSessions {
+    pub(crate) filter: String,
+    pub(crate) summary: String,
+    pub(crate) digest: String,
+    pub(crate) output: String,
+}
+#[derive(Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct InputBuffer {
+    pub(crate) blocks: Vec<SpokenInput>,
+    pub(crate) complete: bool,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Activity {
+    pub(crate) id: String,
+    pub(crate) source: String,
+    pub(crate) kind: String,
+    pub(crate) created_at: String,
+    pub(crate) data: serde_json::Value,
+}
+impl Conversation {
+    pub(crate) fn role(&self, id: &str) -> Option<&'static str> {
+        if id == self.main_session_id {
+            return Some("router");
+        }
+        if let Some(p) = &self.pipeline {
+            for (session, role) in [
+                (&p.filter, "filter"),
+                (&p.summary, "summary"),
+                (&p.digest, "digest"),
+                (&p.output, "output"),
+            ] {
+                if id == session {
+                    return Some(role);
+                }
+            }
+        }
+        self.delegations
+            .iter()
+            .any(|d| d.session_id == id)
+            .then_some("worker")
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,6 +154,8 @@ pub(crate) struct Delegation {
     pub(crate) return_session_id: String,
     pub(crate) task: String,
     pub(crate) invocation_id: Option<String>,
+    #[serde(default)]
+    pub(crate) created_at: String,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,6 +164,8 @@ pub(crate) struct Observation {
     pub(crate) invocation_id: String,
     pub(crate) return_session_id: String,
     pub(crate) detail: String,
+    #[serde(default)]
+    pub(crate) created_at: String,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -91,6 +189,12 @@ pub(crate) struct SpokenInput {
     pub(crate) id: String,
     pub(crate) text: String,
     pub(crate) created_at: String,
+    #[serde(default)]
+    pub(crate) relevance: Option<String>,
+    #[serde(default)]
+    pub(crate) completion: Option<String>,
+    #[serde(default)]
+    pub(crate) filter_pending: bool,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

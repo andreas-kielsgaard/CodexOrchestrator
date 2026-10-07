@@ -12,7 +12,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.concurrent.thread
 
-class AudioCapture(context: Context, private val speechStarted: () -> Unit, private val utterance: (ByteArray) -> Unit, private val failed: (String) -> Unit) {
+class AudioCapture(context: Context, private val speechStarted: () -> Unit, private val utterance: (ByteArray) -> Unit, private val failed: (String) -> Unit, private val speechEnded: () -> Unit = {}) {
     private val routing = MicrophoneRouting(context, failed)
     @Volatile private var active = false
     @Volatile var speaking = false; private set
@@ -47,7 +47,10 @@ class AudioCapture(context: Context, private val speechStarted: () -> Unit, priv
                                 if (voice) { speaking = true; speechStarted(); output = ByteArrayOutputStream(); preroll.forEach { output.write(it) }; preroll.clear() }
                             } else {
                                 output.write(bytes)
-                                if (!voice || output.size() >= 1_280_000) { speaking = false; utterance(wav(output.toByteArray())); output.reset() }
+                                if (!voice || output.size() >= 160_000) {
+                                    utterance(wav(output.toByteArray())); output.reset()
+                                    if (!voice) { speaking = false; speechEnded() }
+                                }
                             }
                         }
                     }

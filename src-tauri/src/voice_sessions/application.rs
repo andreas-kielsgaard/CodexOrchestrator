@@ -2,7 +2,7 @@ use super::{
     domain::*, gateway::GatewayOwner, repository::VoiceSessionRepository, speech::SpeechSession,
 };
 use crate::agent_sessions::{
-    application::{AgentSessionApplication, SteerAgentSessionCommand},
+    application::AgentSessionApplication,
     domain::{AgentInvocationInputProvenance, AgentSessionId},
     ports::{InvocationContent, InvocationContextPart},
 };
@@ -12,10 +12,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::sync::broadcast;
-
-fn speech_fragment(id: &str, text: &str) -> String {
-    json!({"type":"speech_fragment","id":id,"text":text}).to_string()
-}
 
 pub(crate) struct VoiceSessionApplication {
     pub(crate) agents: Arc<AgentSessionApplication>,
@@ -27,6 +23,7 @@ pub(crate) struct VoiceSessionApplication {
     lifecycle: Mutex<()>,
     pub(crate) speech: SpeechSession,
     pub(crate) observer_dispatch: Mutex<()>,
+    pub(crate) input_dispatch: Mutex<()>,
 }
 impl VoiceSessionApplication {
     pub(crate) fn new(
@@ -39,6 +36,12 @@ impl VoiceSessionApplication {
         state.enabled = false;
         state.phone_connected = false;
         state.error = None;
+        if let Some(c) = &mut state.conversation {
+            c.input_buffer.complete = false;
+            for input in &mut c.inputs {
+                input.filter_pending = false;
+            }
+        }
         let speech = SpeechSession::new(speech_root);
         state.speech_configured = speech.configured();
         Ok(Arc::new(Self {
@@ -51,6 +54,7 @@ impl VoiceSessionApplication {
             lifecycle: Mutex::new(()),
             speech,
             observer_dispatch: Mutex::new(()),
+            input_dispatch: Mutex::new(()),
         }))
     }
     pub(crate) fn snapshot(&self) -> Result<VoiceState, String> {
@@ -64,7 +68,7 @@ impl VoiceSessionApplication {
     }
     pub(crate) fn view(&self) -> Result<Value, String> {
         Ok(
-            json!({"state":self.snapshot()?,"profiles":self.profiles.list().map_err(|e|e.to_string())?.iter().map(|p|json!({"id":p.capability_profile_id,"name":p.name})).collect::<Vec<_>>() }),
+            json!({"state":self.snapshot()?,"defaultPrompts":VoicePrompts::default(),"profiles":self.profiles.list().map_err(|e|e.to_string())?.iter().map(|p|json!({"id":p.capability_profile_id,"name":p.name})).collect::<Vec<_>>() }),
         )
     }
     pub(crate) fn update<T>(
@@ -126,10 +130,12 @@ impl VoiceSessionApplication {
                     utterances: vec![],
                     inputs: vec![],
                     playback: None,
+                    ..Default::default()
                 });
                 Ok(())
             })?;
         }
+        self.ensure_pipeline()?;
         let owner = super::gateway::start(self.clone(), &state.settings)?;
         *self
             .gateway
@@ -157,6 +163,8 @@ impl VoiceSessionApplication {
         self.update(|state| {
             state.enabled = false;
             state.phone_connected = false;
+            state.speaking = false;
+            state.pending_audio = 0;
             Ok(())
         })
     }
@@ -165,80 +173,13 @@ impl VoiceSessionApplication {
             .snapshot()?
             .conversation
             .ok_or("Start a voice conversation first")?;
-        if conversation.main_session_id != caller
-            && !conversation
-                .delegations
-                .iter()
-                .any(|d| d.session_id == caller)
-        {
+        if conversation.role(caller).is_none() {
             return Err("Caller does not belong to this voice conversation".into());
         }
         Ok(conversation)
     }
-    pub(crate) fn input(&self, id: String, text: String) -> Result<Value, String> {
-        if text.trim().is_empty() {
-            return Ok(json!({"ignored":"empty transcript"}));
-        }
-        let state = self.snapshot()?;
-        if !state.enabled {
-            return Err("Voice connection is stopped".into());
-        }
-        let conversation = state.conversation.ok_or("No active voice conversation")?;
-        if conversation.inputs.iter().any(|input| input.id == id) {
-            return Ok(json!({"duplicate":true}));
-        }
-        let context = self.context(&conversation);
-        let fragment = speech_fragment(&id, &text);
-        let main =
-            AgentSessionId::new(conversation.main_session_id.clone()).map_err(|e| e.to_string())?;
-        let history = self.agents.load_session(&main).map_err(|e| e.to_string())?;
-        let active = history
-            .invocations
-            .iter()
-            .rev()
-            .find(|h| !h.invocation.status.is_terminal());
-        let receipt = if let Some(active) = active {
-            match self.agents.steer_session(SteerAgentSessionCommand {
-                session_id: main.clone(),
-                invocation_id: active.invocation.id.clone(),
-                input_id: id.clone(),
-                text: format!(
-                    "{INPUT_INSTRUCTIONS}\n\nIncoming speech fragment: {fragment}\n\nApplication playback and pending-topic context: {context}"
-                ),
-                attachments: vec![],
-            }) {
-                Ok(receipt) => json!({"steering":receipt}),
-                Err(_) => self.deliver(
-                    &main,
-                    fragment.clone(),
-                    AgentInvocationInputProvenance::Application,
-                    &conversation,
-                )?,
-            }
-        } else {
-            self.deliver(
-                &main,
-                fragment,
-                AgentInvocationInputProvenance::Application,
-                &conversation,
-            )?
-        };
-        self.update(|state| {
-            let conversation = state.conversation.as_mut().ok_or("Conversation ended")?;
-            conversation.inputs.push(SpokenInput {
-                id: id.clone(),
-                text: text.clone(),
-                created_at: chrono::Utc::now().to_rfc3339(),
-            });
-            Ok(())
-        })?;
-        let _ = self
-            .events
-            .send(json!({"type":"transcript","id":id,"text":text}));
-        Ok(receipt)
-    }
     pub(crate) fn context(&self, conversation: &Conversation) -> Value {
-        json!({"conversationId":conversation.id,"mainSessionId":conversation.main_session_id,"delegations":conversation.delegations,"pendingTopics":conversation.pending_topics,"playback":conversation.playback,
+        json!({"conversationId":conversation.id,"mainSessionId":conversation.main_session_id,"pipeline":conversation.pipeline,"delegations":conversation.delegations,"pendingTopics":conversation.pending_topics,"playback":conversation.playback,
             "utterance":conversation.playback.as_ref().and_then(|p| conversation.utterances.iter().find(|u|u.id==p.utterance_id))})
     }
     pub(crate) fn deliver(
@@ -250,19 +191,29 @@ impl VoiceSessionApplication {
     ) -> Result<Value, String> {
         let state = self.snapshot()?;
         let mut content = InvocationContent::query(text);
+        content
+            .context
+            .push(InvocationContextPart::InitialInstructions {
+                source: "voice_tool_access".into(),
+                version: 1,
+                content: state.settings.prompts.tools.clone(),
+            });
+        if let Some(instructions) =
+            self.role_instructions(conversation, target.as_str(), &state.settings.prompts)
+        {
+            content
+                .context
+                .push(InvocationContextPart::InitialInstructions {
+                    source: "voice_stage".into(),
+                    version: 2,
+                    content: instructions.into(),
+                });
+        }
         if target.as_str() == conversation.main_session_id {
             content
                 .context
-                .push(InvocationContextPart::InitialInstructions {
-                    source: "voice_input".into(),
-                    version: 1,
-                    content: INPUT_INSTRUCTIONS.into(),
-                });
-            content
-                .context
-                .push(InvocationContextPart::InitialInstructions {
-                    source: "voice_session".into(),
-                    version: 1,
+                .push(InvocationContextPart::ReferencedProductContent {
+                    source: "voice_preferences".into(),
                     content: state.settings.instructions,
                 });
         }
@@ -280,13 +231,12 @@ impl VoiceSessionApplication {
             json!({"sessionId":receipt.acknowledgement.session_id,"invocationId":receipt.acknowledgement.invocation_id,"launchAccepted":receipt.launch_accepted}),
         )
     }
-    pub(crate) fn publish(&self, caller: &str, arguments: Value) -> Result<Value, String> {
+    pub(crate) fn publish(
+        self: &Arc<Self>,
+        caller: &str,
+        arguments: Value,
+    ) -> Result<Value, String> {
         let conversation = self.require_member(caller)?;
-        if caller != conversation.main_session_id {
-            return Err(
-                "Return material to the reasoning session; only it publishes to the phone".into(),
-            );
-        }
         let text = crate::orchid_control::required(&arguments, "text")?.to_string();
         if text.len() > 8000 {
             return Err("Split long explanations into concise spoken passages".into());
@@ -294,6 +244,11 @@ impl VoiceSessionApplication {
         let kind = crate::orchid_control::required(&arguments, "kind")?.to_string();
         if !["acknowledgement", "announcement", "explanation"].contains(&kind.as_str()) {
             return Err("Invalid publication kind".into());
+        }
+        if !super::pipeline::may_publish(conversation.role(caller), &kind) {
+            return Err(
+                "Only output publishes speech; the summarizer may acknowledge receipt".into(),
+            );
         }
         let utterance = Utterance {
             id: uuid::Uuid::new_v4().to_string(),
@@ -316,6 +271,13 @@ impl VoiceSessionApplication {
             conversation.utterances.push(utterance.clone());
             Ok(())
         })?;
+        self.record_activity(
+            caller,
+            "publication",
+            json!({"utterance":utterance}),
+            &self.digest_targets(),
+        )?;
+        self.schedule_observations();
         let sent = self
             .events
             .send(json!({"type":"speak","utterance":utterance}))
