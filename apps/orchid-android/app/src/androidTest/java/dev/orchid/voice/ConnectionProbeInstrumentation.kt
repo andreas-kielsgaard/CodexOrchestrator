@@ -25,6 +25,7 @@ class ConnectionProbeInstrumentation : Instrumentation() {
         val result = Bundle()
         val client = OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).build()
         try {
+            if (probe == "headset") { HeadsetProbe.run(targetContext, result); finish(Activity.RESULT_OK, result); return }
             if (probe == "audio") { probeMutedSpeech(result); finish(Activity.RESULT_OK, result); return }
             val settings = ConnectionSettings(targetContext)
             settings.validate()

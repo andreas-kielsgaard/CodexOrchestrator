@@ -23,3 +23,12 @@ Desktop executable SHA-256: `A16049C28A3A47B39D53229062528AD428EAF3A7F1DA591454F
 An initial phone screenshot confirmed the dark layout and muted-volume status. The final APK is installed, but the S21 locked during testing. Final tab navigation, scrolling, section expansion, and layout review remain pending an unlocked phone. Audible speech at nonzero volume, headset routing, and acoustic microphone/echo behavior were not tested.
 
 The normal desktop gateway is running at the phone's existing port 4818. The isolated test gateway/application were stopped. Database/executable backups, command receipts, and screenshots are retained under `.dev/phone-history/`; build logs are under `.dev/`.
+
+## Bluetooth check at 10:11 local time
+
+The S21 had a connected Beoplay H95, with both A2DP playback and a SCO headset microphone available. A test-only instrumentation probe exercised the installed production `SpeechPlayer` and `AudioCapture`; captured audio was discarded locally.
+
+- Speech completed with media volume unchanged. Android's playback log recorded the test's Google TTS player using `USAGE_MEDIA`, routed to device 13073. Audio policy identified that device as the connected H95's Bluetooth A2DP output.
+- The production recorder returned routed device 15, type 15 (`TYPE_BUILTIN_MIC`), product `SM-G991B`. Recording was not silenced. Audio policy independently showed the active Orchid recording client using `AUDIO_DEVICE_IN_BUILTIN_MIC`, address `bottom`.
+
+Therefore Bluetooth speech playback works with this headset, but Orchid currently uses the phone microphone rather than the headset microphone. This check does not establish acoustic intelligibility or reconnection behavior. The probe stopped playback and capture afterward; no production code or volume settings changed. Evidence: `headset-probe.txt`, `headset-playing-audio.txt`, and `headset-playing-policy.txt` under `.dev/phone-history/`.
