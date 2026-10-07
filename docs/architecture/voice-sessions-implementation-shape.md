@@ -1,6 +1,6 @@
 # Voice Sessions: implementation shape
 
-Status: implemented on `feature/reasoned-voice-workflow`; live validation in progress. See `docs/voice-sessions/validation.md` for verified outcomes.
+Status: merged into `main` and compiled as a release executable. See `docs/voice-sessions/validation.md` and `docs/voice-sessions/main-2026-10-07.md` for verification and remaining limits.
 
 ## Functional target
 

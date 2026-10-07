@@ -4,7 +4,7 @@ Status: desktop reasoning, S21 microphone capture, mobile-data connection, TTS p
 
 ## Confirmed
 
-- Branch `feature/reasoned-voice-workflow` in worktree `17c9f61d-635e-4e7f-9015-b917e07306ba`.
+- Developed on `feature/reasoned-voice-workflow` in worktree `17c9f61d-635e-4e7f-9015-b917e07306ba`; fast-forwarded into `main` at `ea55402d`.
 - Native Codex 0.159.0 accepted the experimental realtime request, then rejected the current account with `realtime conversation requires API key auth`.
 - The user declined OpenAI speech API use. Claude Code's documented dictation does not accept the Job Agent API authentication.
 - Tailscale laptop `100.105.52.29` and S21 `100.90.249.49` are signed in and reachable. Home Wi-Fi Tailscale ping succeeded; actual S21 app traffic over mobile data was subsequently exercised in the usability test.
@@ -30,4 +30,4 @@ Status: desktop reasoning, S21 microphone capture, mobile-data connection, TTS p
 
 Development evidence is retained under the ignored `.dev/voice/` directory. Development app launches use explicit executable, PID, debug endpoint, and isolated storage. A copied test database is not the live controller's current state.
 
-The retained desktop build and exact PID/storage are recorded in `.dev/voice/instance.json`. The app is running with the gateway enabled and the S21 endpoint/token prepared. The phone was manually unlocked for testing; capture was stopped afterward. The earlier failed stored-helper attempt was not repeated.
+The exploratory desktop instance was closed when the user stopped usability testing. Phone capture remains stopped. The main release executable and desktop smoke verification are recorded in [main integration](main-2026-10-07.md). No further phone usability testing was performed.
