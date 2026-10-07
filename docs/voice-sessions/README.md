@@ -19,7 +19,7 @@ Add `-e reconnect true` to test the actual Android connection client's recovery.
 
 ## Use
 
-Speak normally. Completed utterances are transcribed on the laptop and reach reasoning. No vocabulary of hardcoded commands is required. Relevant work can continue in delegated sessions while you discuss another topic.
+Speak normally and address requests explicitly to the agent. Transcribed utterances reach the persistent input agent as speech fragments, not executable requests. It reasons across fragments, waits or clarifies when intent is unclear, and formulates understood requests for the agents doing the work. A pause does not complete a request. Relevant work can continue in delegated sessions while you discuss another topic.
 
 The agent announces available material before giving a full report. Invite the explanation. Speaking during playback stops current and queued phone speech; the next reasoning input includes the interruption position and relevant material. Playback positions are approximate elapsed milliseconds, not word alignment.
 
@@ -29,7 +29,7 @@ Disconnected microphone audio is discarded. Keep Tailscale enabled on mobile dat
 
 ## Instructions and tools
 
-The tab owns an editable copy of [the default instructions](../../resources/voice-sessions/instructions.md). Changes apply to subsequent reasoning deliveries. Readiness, work division, and reactions to steering are agent decisions.
+The tab owns an editable copy of [the default instructions](../../resources/voice-sessions/instructions.md). Changes apply to subsequent reasoning deliveries. The [input agent instructions](../../resources/voice-sessions/input-instructions.md) also accompany deliveries and active-turn speech, including conversations with previously saved instructions. Readiness, request interpretation, work division, and reactions to steering are agent decisions.
 
 The selected profile supplies the runtime and normal capabilities. Conversation creation explicitly adds `orchid_control` and `voice_session` product tools to its pinned Session Profile. Managed MCP requests use Harness-supplied caller identity. `orchid_control` discovers and operates sessions across the same Orchid instance; `voice_session` records handoffs, observations, pending topics, and deliberate speech.
 

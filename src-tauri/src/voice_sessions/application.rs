@@ -13,6 +13,10 @@ use std::{
 };
 use tokio::sync::broadcast;
 
+fn speech_fragment(id: &str, text: &str) -> String {
+    json!({"type":"speech_fragment","id":id,"text":text}).to_string()
+}
+
 pub(crate) struct VoiceSessionApplication {
     pub(crate) agents: Arc<AgentSessionApplication>,
     pub(crate) profiles: Arc<crate::execution_configuration::CapabilityProfileService>,
@@ -184,6 +188,7 @@ impl VoiceSessionApplication {
             return Ok(json!({"duplicate":true}));
         }
         let context = self.context(&conversation);
+        let fragment = speech_fragment(&id, &text);
         let main =
             AgentSessionId::new(conversation.main_session_id.clone()).map_err(|e| e.to_string())?;
         let history = self.agents.load_session(&main).map_err(|e| e.to_string())?;
@@ -198,23 +203,23 @@ impl VoiceSessionApplication {
                 invocation_id: active.invocation.id.clone(),
                 input_id: id.clone(),
                 text: format!(
-                    "{text}\n\nApplication playback and pending-topic context: {context}"
+                    "{INPUT_INSTRUCTIONS}\n\nIncoming speech fragment: {fragment}\n\nApplication playback and pending-topic context: {context}"
                 ),
                 attachments: vec![],
             }) {
                 Ok(receipt) => json!({"steering":receipt}),
                 Err(_) => self.deliver(
                     &main,
-                    text.clone(),
-                    AgentInvocationInputProvenance::User,
+                    fragment.clone(),
+                    AgentInvocationInputProvenance::Application,
                     &conversation,
                 )?,
             }
         } else {
             self.deliver(
                 &main,
-                text.clone(),
-                AgentInvocationInputProvenance::User,
+                fragment,
+                AgentInvocationInputProvenance::Application,
                 &conversation,
             )?
         };
@@ -246,6 +251,13 @@ impl VoiceSessionApplication {
         let state = self.snapshot()?;
         let mut content = InvocationContent::query(text);
         if target.as_str() == conversation.main_session_id {
+            content
+                .context
+                .push(InvocationContextPart::InitialInstructions {
+                    source: "voice_input".into(),
+                    version: 1,
+                    content: INPUT_INSTRUCTIONS.into(),
+                });
             content
                 .context
                 .push(InvocationContextPart::InitialInstructions {

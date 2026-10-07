@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) const DEFAULT_INSTRUCTIONS: &str =
     include_str!("../../../resources/voice-sessions/instructions.md");
+pub(crate) const INPUT_INSTRUCTIONS: &str =
+    include_str!("../../../resources/voice-sessions/input-instructions.md");
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
