@@ -28,6 +28,7 @@ class AudioCapture(context: Context, private val speechStarted: () -> Unit, priv
             val audio = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, 16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(size, 9600))
             require(audio.state == AudioRecord.STATE_INITIALIZED) { "Microphone unavailable" }
             recorder = audio
+            routing.preferredInput?.let { require(audio.setPreferredDevice(it)) { "Unable to select phone microphone" } }
             if (AcousticEchoCanceler.isAvailable()) echo = AcousticEchoCanceler.create(audio.audioSessionId)?.apply { enabled = true }
             if (NoiseSuppressor.isAvailable()) noise = NoiseSuppressor.create(audio.audioSessionId)?.apply { enabled = true }
             active = true; audio.startRecording()

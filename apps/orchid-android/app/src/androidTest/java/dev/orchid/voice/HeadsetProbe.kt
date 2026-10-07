@@ -14,7 +14,14 @@ import java.util.concurrent.TimeUnit
 
 /** Exercises production playback/capture; captured audio is discarded locally. */
 object HeadsetProbe {
-    fun run(context: Context, result: Bundle) {
+    fun run(context: Context, result: Bundle, microphone: String = "headset") {
+        val settings = ConnectionSettings(context)
+        val preferences = context.getSharedPreferences("connection", Context.MODE_PRIVATE)
+        val previous = preferences.getString("microphone", null)
+        try { settings.microphone = microphone; exercise(context, result, microphone) }
+        finally { if (previous == null) preferences.edit().remove("microphone").apply() else settings.microphone = previous }
+    }
+    private fun exercise(context: Context, result: Bundle, microphone: String) {
         val audio = context.getSystemService(AudioManager::class.java)
         val volume = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
         check(volume > 0) { "Media is muted; no playback route can be observed" }
@@ -31,9 +38,10 @@ object HeadsetProbe {
             val field = AudioCapture::class.java.getDeclaredField("recorder").apply { isAccessible = true }
             val recorder = field.get(capture) as AudioRecord
             val routeDeadline = SystemClock.elapsedRealtime() + 30000
-            while (recorder.routedDevice?.type !in listOf(AudioDeviceInfo.TYPE_BLUETOOTH_SCO, AudioDeviceInfo.TYPE_BLE_HEADSET) && SystemClock.elapsedRealtime() < routeDeadline) SystemClock.sleep(100)
+            val expectedTypes = if (microphone == "phone") listOf(AudioDeviceInfo.TYPE_BUILTIN_MIC) else listOf(AudioDeviceInfo.TYPE_BLUETOOTH_SCO, AudioDeviceInfo.TYPE_BLE_HEADSET)
+            while (recorder.routedDevice?.type !in expectedTypes && SystemClock.elapsedRealtime() < routeDeadline) SystemClock.sleep(100)
             val device = recorder.routedDevice ?: error("No active microphone route")
-            check(device.type in listOf(AudioDeviceInfo.TYPE_BLUETOOTH_SCO, AudioDeviceInfo.TYPE_BLE_HEADSET)) { "Headset microphone was not selected: ${device.type}" }
+            check(device.type in expectedTypes) { "Requested microphone was not selected: ${device.type}" }
             result.putInt("microphoneType", device.type)
             result.putString("microphoneName", device.productName.toString())
             result.putInt("microphoneDeviceId", device.id)
@@ -53,7 +61,7 @@ object HeadsetProbe {
                 while (player?.isReady != true && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(100)
                 check(player?.isReady == true) { "Speech engine did not initialize" }
                 player!!.speak(JSONObject().put("id", "headset-route-probe").put("text",
-                    "This is the Orchid headset routing check. This short message should be heard in your connected headphones. We are checking the playback route, and then the microphone route. No recorded audio will be sent to your laptop."))
+                    "Orchid audio check. Recording is active and speech is playing in your headphones."))
                 check(finished.await(30, TimeUnit.SECONDS)) { "Playback did not finish" }
                 check(playback == "completed") { "Playback ended with $playback" }
                 result.putString("playback", playback)

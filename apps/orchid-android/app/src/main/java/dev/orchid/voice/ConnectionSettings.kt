@@ -20,6 +20,9 @@ class ConnectionSettings(context: Context) {
     var backgroundAudio: String
         get() = preferences.getString("background-audio", "lower") ?: "lower"
         set(value) { require(value in listOf("lower", "pause", "off")); preferences.edit().putString("background-audio", value).apply() }
+    var microphone: String
+        get() = preferences.getString("microphone", "phone") ?: "phone"
+        set(value) { require(value in listOf("phone", "headset")); preferences.edit().putString("microphone", value).apply() }
     fun validate() {
         val uri = URI(endpoint)
         val octets = uri.host?.split('.')?.mapNotNull { it.toIntOrNull() } ?: emptyList()

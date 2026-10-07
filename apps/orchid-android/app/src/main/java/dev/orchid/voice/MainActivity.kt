@@ -153,6 +153,18 @@ class MainActivity : Activity() {
             catch (error: Exception) { Toast.makeText(this, error.message, Toast.LENGTH_LONG).show() }
         }
         content.addView(card)
+        section(content, "microphone", "Microphone", true) { body ->
+            val choices = RadioGroup(this)
+            listOf("phone" to "Phone microphone · preserve playback quality", "headset" to "Headset microphone · Bluetooth call quality").forEach { (value, label) ->
+                choices.addView(RadioButton(this).apply {
+                    id = View.generateViewId(); text = label; setTextColor(PhoneTheme.primary); minHeight = dp(48)
+                    isChecked = settings.microphone == value
+                    setOnCheckedChangeListener { _, checked -> if (checked) settings.microphone = value }
+                })
+            }
+            body.addView(choices)
+            addText(body, "Restart listening after changing microphone. Classic Bluetooth headsets switch to lower-quality call audio when their microphone is active.", color = PhoneTheme.secondary)
+        }
         section(content, "background-audio", "Other audio during speech", true) { body ->
             val choices = RadioGroup(this)
             listOf("lower" to "Lower other audio", "pause" to "Pause other audio", "off" to "Keep other audio unchanged").forEach { (value, label) ->

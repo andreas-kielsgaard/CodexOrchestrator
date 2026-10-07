@@ -20,12 +20,13 @@ class ConnectionProbeInstrumentation : Instrumentation() {
     private var reconnect = false
     private var probe = "connection"
     private var endpointOverride: String? = null
-    override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); reconnect = arguments?.getString("reconnect") == "true"; probe = arguments?.getString("probe") ?: "connection"; endpointOverride = arguments?.getString("endpoint"); start() }
+    private var microphone = "headset"
+    override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); reconnect = arguments?.getString("reconnect") == "true"; probe = arguments?.getString("probe") ?: "connection"; endpointOverride = arguments?.getString("endpoint"); microphone = arguments?.getString("microphone") ?: "headset"; start() }
     override fun onStart() {
         val result = Bundle()
         val client = OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).build()
         try {
-            if (probe == "headset") { HeadsetProbe.run(targetContext, result); finish(Activity.RESULT_OK, result); return }
+            if (probe == "headset") { HeadsetProbe.run(targetContext, result, microphone); finish(Activity.RESULT_OK, result); return }
             if (probe == "audio") { probeMutedSpeech(result); finish(Activity.RESULT_OK, result); return }
             val settings = ConnectionSettings(targetContext)
             settings.validate()

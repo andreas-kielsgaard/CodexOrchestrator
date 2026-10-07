@@ -11,6 +11,9 @@ import android.os.Looper
 /** Owns headset communication routing only while Orchid captures audio. */
 class MicrophoneRouting(context: Context, private val failed: (String) -> Unit) {
     private val audio = context.getSystemService(AudioManager::class.java)
+    private val phoneMicrophone = ConnectionSettings(context).microphone == "phone"
+    val preferredInput: AudioDeviceInfo?
+        get() = if (phoneMicrophone) audio.getDevices(AudioManager.GET_DEVICES_INPUTS).firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC } else null
     private val handler = Handler(Looper.getMainLooper())
     private var active = false
     private var selected: Int? = null
@@ -27,7 +30,7 @@ class MicrophoneRouting(context: Context, private val failed: (String) -> Unit) 
     }
 
     @Synchronized private fun update() {
-        if (!active) return
+        if (!active || phoneMicrophone) return
         if (Build.VERSION.SDK_INT >= 31) {
             val available = audio.availableCommunicationDevices.filter {
                 it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == AudioDeviceInfo.TYPE_BLE_HEADSET

@@ -19,7 +19,7 @@ Publication kinds are `acknowledgement`, `announcement`, and `explanation`. The 
 
 Playback reports distinguish playing, completed, interrupted, failed, and unavailable output. `playedMs` is elapsed playback time reported by the phone; it is approximate. Publication and network send are not proof of listening.
 
-While capturing audio, the phone selects a connected Bluetooth communication headset and releases that selection on stop. Device callbacks handle headset connection changes; without a headset, Android selects its normal input. Speech retains media-volume playback even while the Bluetooth communication route is active.
+Phone Settings defaults to the phone microphone, keeping Bluetooth playback on its media route. The alternative headset-microphone setting selects a connected Bluetooth communication headset while capturing and releases that selection on stop. Device callbacks handle headset connection changes; without a headset, Android selects its normal input. Classic Bluetooth headset microphones require lower-quality call audio. Speech retains media-volume playback in either mode. Restart listening after changing microphone.
 
 Phone Settings offers Lower other audio (default), Pause other audio, and Keep other audio unchanged. The player holds transient audio focus only across queued speech, and releases it on completion, interruption, failure, or shutdown. Android controls ducking attenuation and other apps' response; an exact adjustable percentage is unavailable through the ordinary audio-focus API. See [Android audio focus](https://developer.android.com/media/optimize/audio-focus).
 
