@@ -16,6 +16,7 @@ class SpeechPlayer(context: Context, private val report: (JSONObject) -> Unit, p
     @Volatile private var ready = false
     val isReady get() = ready
     private val audio = context.getSystemService(AudioManager::class.java)
+    private val focus = SpeechAudioFocus(context) { interrupt() }
     @Volatile private var current: String? = null
     @Volatile private var started = 0L
     private val queue = ArrayDeque<JSONObject>()
@@ -44,17 +45,21 @@ class SpeechPlayer(context: Context, private val report: (JSONObject) -> Unit, p
     } }
     private fun next() {
         if (current != null) return
-        if (queue.isEmpty()) { idle(); return }
+        if (queue.isEmpty()) { focus.release(); idle(); return }
         val utterance = queue.removeFirst(); val id = utterance.getString("id")
         if (audio.isStreamMute(AudioManager.STREAM_MUSIC) || audio.getStreamVolume(AudioManager.STREAM_MUSIC) == 0) {
             report(JSONObject().put("type", "playback").put("playback", JSONObject().put("utteranceId", id).put("playedMs", 0).put("state", "muted")))
             status("Media volume is muted"); next(); return
         }
+        if (!focus.acquire()) {
+            report(JSONObject().put("type", "playback").put("playback", JSONObject().put("utteranceId", id).put("playedMs", 0).put("state", "unavailable")))
+            status("Speech unavailable while another app holds audio focus"); next(); return
+        }
         current = id; started = 0; status("Speaking · you can interrupt")
         if (tts?.speak(utterance.getString("text"), TextToSpeech.QUEUE_FLUSH, null, id) == TextToSpeech.ERROR) { progress(id, "failed"); current = null; next() }
     }
     private fun progress(id: String, state: String) { report(JSONObject().put("type", if (state == "interrupted") "interrupt" else "playback").put("playback", JSONObject().put("utteranceId", id).put("playedMs", if (started == 0L) 0 else SystemClock.elapsedRealtime() - started).put("state", state))) }
-    fun interrupt() { epoch++; val id = current; current = null; tts?.stop(); if (id != null) progress(id, "interrupted"); handler.post { queue.clear(); if (id != null) idle() } }
+    fun interrupt() { epoch++; val id = current; current = null; tts?.stop(); focus.release(); if (id != null) progress(id, "interrupted"); handler.post { queue.clear(); if (id != null) idle() } }
     fun close() { interrupt(); handler.removeCallbacksAndMessages(null); tts?.shutdown(); tts = null }
     companion object {
         fun playbackAttributes(): AudioAttributes = AudioAttributes.Builder()

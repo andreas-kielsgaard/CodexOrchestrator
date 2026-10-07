@@ -153,6 +153,19 @@ class MainActivity : Activity() {
             catch (error: Exception) { Toast.makeText(this, error.message, Toast.LENGTH_LONG).show() }
         }
         content.addView(card)
+        section(content, "background-audio", "Other audio during speech", true) { body ->
+            val choices = RadioGroup(this)
+            listOf("lower" to "Lower other audio", "pause" to "Pause other audio", "off" to "Keep other audio unchanged").forEach { (value, label) ->
+                val choice = RadioButton(this).apply {
+                    id = View.generateViewId(); text = label; setTextColor(PhoneTheme.primary); minHeight = dp(48)
+                    isChecked = settings.backgroundAudio == value
+                    setOnCheckedChangeListener { _, checked -> if (checked) settings.backgroundAudio = value }
+                }
+                choices.addView(choice)
+            }
+            body.addView(choices)
+            addText(body, "Applies while Orchid speaks, then restores the previous app. Android controls how much other audio is lowered; some spoken content pauses instead.", color = PhoneTheme.secondary)
+        }
         section(content, "privacy", "Audio and history", true) {
             addText(it, "Audio is transcribed on your laptop. Deliberate agent output is spoken on your phone at media volume. Browsing Sessions does not start your microphone.", color = PhoneTheme.secondary)
             addText(it, "Session history comes from the laptop and updates while this tab is open.", color = PhoneTheme.secondary)
