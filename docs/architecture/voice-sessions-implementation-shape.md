@@ -30,7 +30,7 @@ The initial version uses distributed agents: the main conversation hands relevan
 - The feature has its own tab; reuse workflow capabilities only when they fit.
 - Distributed agents and asynchronous handoffs are required in the initial slice. Delegated work continues while the main conversation processes new input.
 - No required three-agent split or workflow-instance observation restriction.
-- Every completed spoken input reaches reasoning. No keyword routing between clarification, investigation, steering, and cancellation.
+- Every transcribed speech fragment reaches the persistent input agent for reasoning. It waits for a complete request explicitly addressed to it, then formulates the request for the agents doing the work. No keyword routing between clarification, investigation, steering, and cancellation.
 - Agents determine when there is useful information and what to announce. Prompts can tune this behaviour; completion events do not automatically become spoken reports.
 - Announcements precede full reports; user invitation permits the relevant explanation.
 - Commands receive accurate brief acknowledgements. Interruptions can require lookup work; the agent should offer to continue relevant unfinished output.
@@ -104,8 +104,8 @@ Add `scripts/android/build.ps1` and `scripts/android/deploy-s21.ps1` plus discov
 ## End-to-end behaviour
 
 1. The user enables Voice Sessions on the laptop and starts the Android conversation. The desktop creates or reuses its ordinary coordinator session; the phone connects using the configured private endpoint/token.
-2. Captured speech produces a transcript. The service supplies it to the coordinator with relevant playback and pending-topic context. Partial transcription can be displayed; actionable delivery uses completed speech input.
-3. The main agent acknowledges through an explicit voice tool and hands relevant work to other sessions. Handoff returns accepted delivery references so the conversation remains available while recipients work independently. Starting work and confirming its result remain different facts.
+2. Captured speech produces a transcript. The service supplies it as a speech fragment to the input agent with relevant playback and pending-topic context. The agent reasons across fragments; a transcription boundary does not establish a complete request.
+3. Once it determines that a complete request was explicitly addressed to it, the input agent formulates the request for the relevant sessions and acknowledges accepted work through an explicit voice tool. Handoff returns accepted delivery references so the conversation remains available while recipients work independently. Starting work and confirming its result remain different facts.
 4. Delegated agents can inspect application state, execute tasks, or delegate further work. Their activity/results return to the intended reasoning session as referenced observations. Reasoning may read additional history, delegate report preparation, remain quiet, or publish an availability announcement and pending material. Existing sessions outside the delegation relationships remain discoverable through application tools.
 5. A spoken invitation reaches reasoning like any other input. It selects the relevant material, investigates further if needed, and publishes a concise explanation. Native voice must not automatically read worker final messages.
 6. New speech during playback pauses audio locally. Reasoning receives the question and last confirmed playback position. It decides what to investigate or change and whether to offer continuation. Track played segments or milliseconds, without claiming word-perfect knowledge of what was heard.
