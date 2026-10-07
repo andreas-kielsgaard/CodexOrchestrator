@@ -10,7 +10,7 @@ import android.speech.tts.UtteranceProgressListener
 import org.json.JSONObject
 import java.util.Locale
 
-class SpeechPlayer(context: Context, private val report: (JSONObject) -> Unit, private val status: (String) -> Unit) {
+class SpeechPlayer(context: Context, private val report: (JSONObject) -> Unit, private val status: (String) -> Unit, private val idle: () -> Unit) {
     private val handler = Handler(Looper.getMainLooper())
     private var ready = false
     @Volatile private var current: String? = null
@@ -41,12 +41,12 @@ class SpeechPlayer(context: Context, private val report: (JSONObject) -> Unit, p
     } }
     private fun next() {
         if (current != null) return
-        if (queue.isEmpty()) { status("Listening · connected"); return }
+        if (queue.isEmpty()) { idle(); return }
         val utterance = queue.removeFirst(); val id = utterance.getString("id")
         current = id; started = 0; status("Speaking · you can interrupt")
         if (tts?.speak(utterance.getString("text"), TextToSpeech.QUEUE_FLUSH, null, id) == TextToSpeech.ERROR) { progress(id, "failed"); current = null; next() }
     }
     private fun progress(id: String, state: String) { report(JSONObject().put("type", if (state == "interrupted") "interrupt" else "playback").put("playback", JSONObject().put("utteranceId", id).put("playedMs", if (started == 0L) 0 else SystemClock.elapsedRealtime() - started).put("state", state))) }
-    fun interrupt() { epoch++; val id = current; current = null; tts?.stop(); if (id != null) progress(id, "interrupted"); handler.post { queue.clear() } }
+    fun interrupt() { epoch++; val id = current; current = null; tts?.stop(); if (id != null) progress(id, "interrupted"); handler.post { queue.clear(); if (id != null) idle() } }
     fun close() { interrupt(); handler.removeCallbacksAndMessages(null); tts?.shutdown(); tts = null }
 }

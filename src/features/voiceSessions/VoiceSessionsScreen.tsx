@@ -113,6 +113,25 @@ export function VoiceSessionsScreen({
               </button>
             )}
           </div>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void run(async () => {
+                await client.sendText(text);
+                setText('');
+              });
+            }}
+          >
+            <label>
+              Text input
+              <input
+                value={text}
+                onChange={(event) => setText(event.target.value)}
+                placeholder="Try a request before using the phone"
+              />
+            </label>
+            <button disabled={busy || !state.enabled || !text.trim()}>Send</button>
+          </form>
           {conversation && (
             <>
               <button
@@ -142,8 +161,12 @@ export function VoiceSessionsScreen({
                 conversation.delegations.map((work, i) => (
                   <article key={`${work.sessionId}-${i}`}>
                     <button className="voice-link" onClick={() => onOpenSession(work.sessionId)}>
-                      {work.task}
+                      {work.task.length > 120 ? `${work.task.slice(0, 120)}…` : work.task}
                     </button>
+                    <details>
+                      <summary>Task instructions</summary>
+                      <p>{work.task}</p>
+                    </details>
                   </article>
                 ))
               ) : (
@@ -151,14 +174,14 @@ export function VoiceSessionsScreen({
                   Independent work will appear here and in Agent Sessions.
                 </p>
               )}
-              <h3>Recent exchanges</h3>
+              <h3>Latest exchanges</h3>
               <div className="voice-exchanges">
                 {[
                   ...conversation.inputs.map((u) => ({ ...u, who: 'You' })),
                   ...conversation.utterances.map((u) => ({ ...u, who: u.kind })),
                 ]
-                  .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-                  .slice(-20)
+                  .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+                  .slice(0, 20)
                   .map((u) => (
                     <article key={u.id}>
                       <small>{u.who}</small>
@@ -174,25 +197,6 @@ export function VoiceSessionsScreen({
               )}
             </>
           )}
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              void run(async () => {
-                await client.sendText(text);
-                setText('');
-              });
-            }}
-          >
-            <label>
-              Text input
-              <input
-                value={text}
-                onChange={(event) => setText(event.target.value)}
-                placeholder="Try a request before using the phone"
-              />
-            </label>
-            <button disabled={busy || !state.enabled || !text.trim()}>Send</button>
-          </form>
         </section>
         <section className="voice-panel">
           <h2>Phone setup</h2>

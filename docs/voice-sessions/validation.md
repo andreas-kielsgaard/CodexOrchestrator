@@ -1,13 +1,13 @@
 # Voice Sessions validation
 
-Status: desktop reasoning and phone connection validated. The phone remains locked; microphone, audible output, interruption, and walking acceptance are pending.
+Status: desktop reasoning, S21 microphone capture, mobile-data connection, TTS playback telemetry, screen-off operation, and interruption exercised. Audible quality and walking acceptance remain pending. See [the actual-app usability test](usability-2026-10-07.md) for findings and changes.
 
 ## Confirmed
 
 - Branch `feature/reasoned-voice-workflow` in worktree `17c9f61d-635e-4e7f-9015-b917e07306ba`.
 - Native Codex 0.159.0 accepted the experimental realtime request, then rejected the current account with `realtime conversation requires API key auth`.
 - The user declined OpenAI speech API use. Claude Code's documented dictation does not accept the Job Agent API authentication.
-- Tailscale laptop `100.105.52.29` and S21 `100.90.249.49` are signed in and reachable. Home Wi-Fi Tailscale ping succeeded. Mobile-data operation is not yet verified.
+- Tailscale laptop `100.105.52.29` and S21 `100.90.249.49` are signed in and reachable. Home Wi-Fi Tailscale ping succeeded; actual S21 app traffic over mobile data was subsequently exercised in the usability test.
 - S21 serial `R3CRA0BAYXD`, model `SM-G991B`, Android 15/API 35. Debug APK installed and its activity launched through authenticated wireless ADB without USB.
 - Android project builds with Gradle 9.6.1, AGP 9.2.0, Java 21, and Android SDK 36.
 - Desktop frontend typecheck/build and native runnable debug build passed. Voice persistence/private-address checks passed (2 tests). Related Agent Session checks passed (66 tests; 1 pre-existing ignored test), including pinned delivery behind an active invocation.
@@ -24,10 +24,10 @@ Status: desktop reasoning and phone connection validated. The phone remains lock
 
 ## Remaining
 
-- Phone microphone permission, audible playback, interruption, screen-off recording, reconnect, and stop cleanup.
-- Phone on mobile data while laptop remains on home Wi-Fi.
+- User confirmation of audible output and voice quality; physical retest of the corrected interruption status.
+- Transient-network reconnect.
 - Audible outdoor walking test with the user's actual microphone/headset setup.
 
 Development evidence is retained under the ignored `.dev/voice/` directory. Development app launches use explicit executable, PID, debug endpoint, and isolated storage. A copied test database is not the live controller's current state.
 
-The retained desktop build and exact PID/storage are recorded in `.dev/voice/instance.json`. The app is running with the gateway enabled and the S21 endpoint/token prepared. Unlocking through the stored helper failed after one attempt; no repeated attempts were made. The user has been asked to unlock the phone for the remaining checks.
+The retained desktop build and exact PID/storage are recorded in `.dev/voice/instance.json`. The app is running with the gateway enabled and the S21 endpoint/token prepared. The phone was manually unlocked for testing; capture was stopped afterward. The earlier failed stored-helper attempt was not repeated.

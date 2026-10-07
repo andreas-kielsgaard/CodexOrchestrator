@@ -21,7 +21,7 @@ The initial version uses distributed agents: the main conversation hands relevan
 
 - The next departure time is unknown. The delivery order below brings remote connection and voice feasibility forward so problems are discovered before desktop UI polish.
 - Claude Code's documented dictation uses a local microphone and does not expose the required phone audio bridge. Desktop/web sign-in does not establish Claude Code authentication; the existing Orchid provider checks its own setup.
-- Tailscale is recommended, not yet installed or connected. Account sign-in and Android VPN approval need user participation.
+- Tailscale is signed in on both devices. The actual S21 app has connected over mobile data; outdoor continuity remains to be tested.
 - The first walking test should use the user's actual audio setup. No headset or Bluetooth route has been assumed; the S21 microphone/speaker is the initial test baseline.
 - One manually started conversation, one laptop, and one phone are sufficient. Laptop remains awake on its current Wi-Fi with Orchid running. Basic reconnect restores conversation context; disconnected microphone audio is discarded rather than silently queued for later execution.
 
