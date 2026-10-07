@@ -8,7 +8,7 @@ Use the selected voice Capability Profile for four ordinary persistent reasoning
 
 Let the input summarizer publish its brief receipt acknowledgment before summarizing. This meets the immediate acknowledgment requirement without waiting for the digest/output chain. Record that publication for digest context. Other spoken material comes from the output session after a digest request.
 
-Use existing Agent Session delivery, steering, terminal notifications, profiled sessions, MCP tools, and the typed JEV facade. JEV calls are independent: the voice feature supplies recent speech, the accepted buffer, timestamps, and task references explicitly. Relevance and completion are separate Choice evaluations. Preserve completed evaluations through ordinary invocation storage.
+Use existing Agent Session delivery, steering, terminal notifications, profiled sessions, MCP tools, and the typed JEV facade. JEV calls are independent: supply chronological speech text, timestamps, accepted speech, and task references. Keep queue flags and previous classification results out of evaluator context. Relevance and completion are separate Choice evaluations. Preserve completed evaluations through ordinary invocation storage.
 
 ## Approximate choices
 
