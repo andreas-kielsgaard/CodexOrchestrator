@@ -39,7 +39,7 @@ class ConversationService : Service() {
                 "ended" -> handler.post { stopSelf() }
             }
         }).also { it.start() }
-        capture = AudioCapture({ player?.interrupt() }, { bytes ->
+        capture = AudioCapture(this, { player?.interrupt() }, { bytes ->
             if (connection?.connected == true) connection?.send(JSONObject().put("type", "audio").put("id", UUID.randomUUID().toString()).put("audio", Base64.encodeToString(bytes, Base64.NO_WRAP)))
         }, { status(it) }).also { it.start() }
     }

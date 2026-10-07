@@ -17,6 +17,9 @@ class ConnectionSettings(context: Context) {
     var lastExchange: String
         get() = preferences.getString("exchange", "") ?: ""
         set(value) { preferences.edit().putString("exchange", value).apply() }
+    var backgroundAudio: String
+        get() = preferences.getString("background-audio", "lower") ?: "lower"
+        set(value) { require(value in listOf("lower", "pause", "off")); preferences.edit().putString("background-audio", value).apply() }
     fun validate() {
         val uri = URI(endpoint)
         val octets = uri.host?.split('.')?.mapNotNull { it.toIntOrNull() } ?: emptyList()

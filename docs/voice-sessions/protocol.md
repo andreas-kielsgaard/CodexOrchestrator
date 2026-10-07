@@ -19,6 +19,10 @@ Publication kinds are `acknowledgement`, `announcement`, and `explanation`. The 
 
 Playback reports distinguish playing, completed, interrupted, failed, and unavailable output. `playedMs` is elapsed playback time reported by the phone; it is approximate. Publication and network send are not proof of listening.
 
+While capturing audio, the phone selects a connected Bluetooth communication headset and releases that selection on stop. Device callbacks handle headset connection changes; without a headset, Android selects its normal input. Speech retains media-volume playback even while the Bluetooth communication route is active.
+
+Phone Settings offers Lower other audio (default), Pause other audio, and Keep other audio unchanged. The player holds transient audio focus only across queued speech, and releases it on completion, interruption, failure, or shutdown. Android controls ducking attenuation and other apps' response; an exact adjustable percentage is unavailable through the ordinary audio-focus API. See [Android audio focus](https://developer.android.com/media/optimize/audio-focus).
+
 The phone keeps a bounded audio utterance and a short pre-roll for voice activity detection. Speech start interrupts current playback and clears queued speech locally. Completed utterances reach a serial transcription queue; playback receipts remain responsive while transcription runs. Speech captured while disconnected is discarded, and reconnect does not replay output.
 
 Conversation state, handoff relationships, transcripts, published text, pending topics, and playback context persist on the laptop. Raw audio is held in memory during transcription and is not retained by the feature.
