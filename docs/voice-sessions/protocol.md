@@ -27,6 +27,14 @@ The phone keeps a bounded audio utterance and a short pre-roll for voice activit
 
 Conversation state, handoff relationships, transcripts, published text, pending topics, and playback context persist on the laptop. Raw audio is held in memory during transcription and is not retained by the feature.
 
+## Assistant activation
+
+Phone Settings > Assistant shortcuts requests Android's assistant role. Once selected, Android assistant gestures and compatible Bluetooth assistant buttons can activate Orchid. The voice-interaction service handles system sessions and locked-screen activation; `ACTION_ASSIST` and `ACTION_VOICE_COMMAND` also open the activation screen. Caller extras and screen context are ignored.
+
+Activation starts the existing conversation service with the saved microphone preference. Repeated activation reuses its recording and connection. Listening continues until stopped; dismissing the activation screen leaves listening active. Speech still enters the input agent as fragments, with work dispatched only after an explicitly addressed request is understood. The locked activation screen exposes listening controls, while opening settings or history requires unlocking.
+
+Android requires recognition-service metadata for assistant registration. Orchid's registration component rejects generic Android speech-recognizer requests and is not selectable as a default dictation engine; Orchid continues using laptop transcription. The S21's existing Google dictation service remains selected. No custom wake phrase is registered. Garmin/H95 hardware invocation and Bluetooth routing require separate device-button verification.
+
 ## Phone history
 
 The same enabled gateway serves authenticated read-only HTTP requests using the WebSocket bearer token:

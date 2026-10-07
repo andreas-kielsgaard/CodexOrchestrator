@@ -153,6 +153,15 @@ class MainActivity : Activity() {
             catch (error: Exception) { Toast.makeText(this, error.message, Toast.LENGTH_LONG).show() }
         }
         content.addView(card)
+        section(content, "assistant", "Assistant shortcuts", true) { body ->
+            val role = getSystemService(android.app.role.RoleManager::class.java)
+            addText(body, if (role.isRoleHeld(android.app.role.RoleManager.ROLE_ASSISTANT)) "Orchid is your phone assistant." else "Choose Orchid as your phone assistant to use the assistant gesture and connected device buttons.", color = PhoneTheme.secondary)
+            action(body, "Choose phone assistant") {
+                if (role.isRoleAvailable(android.app.role.RoleManager.ROLE_ASSISTANT) && !role.isRoleHeld(android.app.role.RoleManager.ROLE_ASSISTANT)) startActivityForResult(role.createRequestRoleIntent(android.app.role.RoleManager.ROLE_ASSISTANT), 3)
+                else startActivity(Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
+            }
+            addText(body, "Garmin and headset buttons depend on the device's assistant support. Your microphone setting still applies. A custom wake phrase is not enabled.", color = PhoneTheme.secondary)
+        }
         section(content, "microphone", "Microphone", true) { body ->
             val choices = RadioGroup(this)
             listOf("phone" to "Phone microphone · preserve playback quality", "headset" to "Headset microphone · Bluetooth call quality").forEach { (value, label) ->
@@ -271,6 +280,7 @@ class MainActivity : Activity() {
         startForegroundService(Intent(this, ConversationService::class.java).setAction("START"))
     }
     override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) { super.onRequestPermissionsResult(code, permissions, results); if (results.isNotEmpty() && results[0] == PackageManager.PERMISSION_GRANTED) begin() }
+    override fun onActivityResult(code: Int, result: Int, data: Intent?) { super.onActivityResult(code, result, data); if (code == 3 && tab == 2) showTab() }
     override fun onResume() { super.onResume(); handler.post(refresh) }
     override fun onPause() { handler.removeCallbacks(refresh); pending?.cancel(); pending = null; generation++; super.onPause() }
     override fun onDestroy() { client.close(); super.onDestroy() }
