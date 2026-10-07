@@ -1,0 +1,6 @@
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="dev.orchid.voice.OrchidAssistantSessionService"
+    android:recognitionService="dev.orchid.voice.OrchidRecognitionService"
+    android:settingsActivity="dev.orchid.voice.MainActivity"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="true" />
