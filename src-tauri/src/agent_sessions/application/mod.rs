@@ -16,6 +16,7 @@ mod product_sessions;
 mod interactions;
 pub(crate) mod steering_queue;
 mod invocation;
+pub(crate) mod jev;
 mod lifecycle;
 pub(crate) mod observation;
 pub(crate) mod preparation;

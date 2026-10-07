@@ -130,6 +130,12 @@ Codex is registered at the composition root. Its app-server adapter, options, na
 - Stored Codex-era references and personality settings were converted once by `runtime/providers/codex/legacy_migration.rs` (schema v59).
 - The shared UI never constructs a Codex approval response.
 
+## Jev API sessions
+
+Jev's typed HTTP runtime lives in `crates/orchid-engine/src/providers/jev/`; desktop registration and configuration live in `src-tauri/src/runtime/providers/jev/`. The typed application facade is `agent_sessions/application/jev.rs`. It reuses invocation lifecycle and event persistence, with explicit state/questions as input and structured answers as output.
+
+Jev has no native conversation ID. Every invocation is independent, including later invocations in the same Orchid session. It does not advertise UI setups or agent tools. See [Jev API sessions](../jev-api-sessions.md) for backend calls, authentication, and supported behaviour.
+
 ## Current Claude implementation
 
 Claude Code is driven through its CLI in stream-json mode, one `claude -p` process per invocation. The engine module (`crates/orchid-engine/src/providers/claude/`) holds the runtime, and the desktop module (`src-tauri/src/runtime/providers/claude/`) holds setups, configuration and launch preparation.

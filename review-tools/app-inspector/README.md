@@ -47,6 +47,10 @@ The same owner options support `click --selector`, `type --selector --text-file`
 
 These process/endpoint checks are point-in-time observations, not race-free identity proof. Debug endpoints and raw evidence paths belong to development tooling rather than the product's application contract.
 
+## Jev API queries
+
+`node review-tools/app-inspector/jev-query.mjs request.json result.json` creates or reuses a Jev session in the identified running executable, submits typed state/questions, and waits for the persisted result. Use the same executable/PID/debug endpoint ownership inputs as native commands. See [Jev API sessions](../../docs/jev-api-sessions.md) for the request and credential requirements. This verifies the backend application path; it does not exercise a Jev UI.
+
 ## Checks
 
 The inspector uses Node's test runner, not Vitest. It has no additional package dependency for ordinary checks. Use Node.js 24+ on Windows with `powershell.exe`. Run the eight non-browser test files through the npm command:

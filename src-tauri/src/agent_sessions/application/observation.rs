@@ -169,6 +169,12 @@ fn is_provider_activity(event: &AgentRuntimeEvent) -> bool {
         return false;
     };
     normalized.kind == NormalizedRuntimeEventKind::ProcessingStarted
+        || matches!(
+            normalized.kind,
+            NormalizedRuntimeEventKind::AgentMessage
+                | NormalizedRuntimeEventKind::ToolActivity
+                | NormalizedRuntimeEventKind::Usage
+        )
         || (event.source == AgentRuntimeEventSource::Stdout
             && !matches!(
                 normalized.kind,

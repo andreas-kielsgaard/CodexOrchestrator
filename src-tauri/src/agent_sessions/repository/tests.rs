@@ -511,7 +511,13 @@ fn survives_close_and_reopen_with_complete_multi_invocation_history() {
     let observation =
         crate::agent_sessions::application::project_invocation_observation(&history.invocations[0]);
     assert_eq!(observation.launch_accepted_at, Some(at(4)));
-    assert!(observation.provider_activity.is_none());
+    assert_eq!(
+        observation
+            .provider_activity
+            .as_ref()
+            .map(|activity| activity.sequence),
+        Some(9)
+    );
     assert!(observation.provider_terminal.is_none());
     assert_eq!(
         observation

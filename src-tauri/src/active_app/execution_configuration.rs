@@ -40,6 +40,7 @@ pub(super) fn compose(
         &product_skills,
     )?;
     crate::runtime::providers::claude::register(&mut providers, claude_setups, product_tools)?;
+    crate::runtime::providers::jev::register(&mut providers)?;
     let endpoints = Arc::new(
         crate::execution_targets::endpoints::ExecutionEndpoints::new(providers)
             .with_local_sessions_directory(workspaces.sessions_directory()),

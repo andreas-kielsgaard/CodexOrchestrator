@@ -2632,9 +2632,12 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",
+ "tokio",
+ "tokio-util",
  "uuid",
  "windows-sys 0.61.2",
 ]

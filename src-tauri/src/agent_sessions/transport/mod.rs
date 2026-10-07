@@ -4,6 +4,7 @@ pub(crate) mod clipboard;
 mod dto;
 pub(crate) use dto::AgentSessionSummaryDto;
 pub(crate) mod interactions;
+pub(crate) mod jev;
 pub(crate) mod quick_features;
 pub(crate) mod selections;
 
