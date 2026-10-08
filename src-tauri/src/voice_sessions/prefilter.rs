@@ -47,6 +47,16 @@ fn sticky_relevance(previous: Option<&str>, next: &str) -> String {
     }
     .into()
 }
+fn prepare_window(c: &mut Conversation, seconds: u64) {
+    let recent = recent_inputs(c, seconds);
+    for input in &mut c.inputs {
+        input.filter_pending = recent.iter().any(|r| r.id == input.id);
+    }
+    if !recent.is_empty() {
+        c.input_buffer.complete = false;
+    }
+}
+
 fn may_accumulate(input: &SpokenInput, continuation: bool) -> bool {
     input.delivered_revision == 0 || (continuation && input.revision > input.delivered_revision)
 }
@@ -92,16 +102,7 @@ impl VoiceSessionApplication {
                 return Ok(());
             }
             let c = state.conversation.as_mut().ok_or("No conversation")?;
-            let recent = recent_inputs(c, state.input_policy.context_seconds);
-            for input in &mut c.inputs {
-                input.filter_pending = recent.iter().any(|r| r.id == input.id);
-            }
-            c.input_buffer
-                .blocks
-                .retain(|b| recent.iter().any(|r| r.id == b.id));
-            if !recent.is_empty() {
-                c.input_buffer.complete = false;
-            }
+            prepare_window(c, state.input_policy.context_seconds);
             Ok(())
         })?;
         let app = self.clone();
@@ -377,6 +378,36 @@ impl VoiceSessionApplication {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rolling_queries_keep_the_beginning_of_an_unfinished_request() {
+        let first = SpokenInput {
+            id: "first".into(),
+            text: "Orchid, investigate this long request.".into(),
+            created_at: (chrono::Utc::now() - chrono::Duration::seconds(90)).to_rfc3339(),
+            relevance: Some("direct_request".into()),
+            completion: Some("continue".into()),
+            ..Default::default()
+        };
+        let latest = SpokenInput {
+            id: "latest".into(),
+            text: "Here is the final detail.".into(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            ..Default::default()
+        };
+        let mut c = Conversation {
+            inputs: vec![first.clone(), latest],
+            input_buffer: InputBuffer {
+                blocks: vec![first],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        prepare_window(&mut c, 60);
+        assert_eq!(recent_inputs(&c, 60).len(), 1);
+        assert_eq!(c.input_buffer.blocks[0].id, "first");
+        assert!(!c.inputs[0].filter_pending);
+        assert!(c.inputs[1].filter_pending);
+    }
     #[test]
     fn delivered_revision_requires_a_confirmed_continuation() {
         let mut input = SpokenInput {
