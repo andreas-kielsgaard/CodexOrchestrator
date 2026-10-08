@@ -96,11 +96,11 @@ export function VoiceSessionsScreen({
                   <>{view.diagnostics.capture.routedMicrophone} · {!captureFresh ? 'capture update missing' : view.diagnostics.capture.recording ? 'recording' : 'stopped'}
                     {view.diagnostics.capture.silenced && ' · blocked by Android'}
                     {view.diagnostics.capture.requestedMicrophone === 'headset' && !view.diagnostics.capture.external && ' · external requested, phone fallback'}
-                    <br />Input signal {(view.diagnostics.capture.level * 100).toFixed(1)}% · {view.diagnostics.capture.segmentsSent} segments sent
+                    <br />Input signal {(view.diagnostics.capture.level * 100).toFixed(1)}% · {view.diagnostics.capture.segmentsSent} packets sent
                     {view.diagnostics.capture.error && <p className="voice-error">{view.diagnostics.capture.error}</p>}
                   </>}</dd>
                 <dt>Transcription</dt>
-                <dd>{view.diagnostics.audio.received} audio segments received · {view.diagnostics.audio.transcribed} transcribed · {view.diagnostics.pendingAudio} queued
+                <dd>{view.diagnostics.audio.received} audio packets received · {view.diagnostics.audio.transcribed} context windows decoded · {view.diagnostics.pendingAudio} queued
                   {view.diagnostics.audio.lastReceivedAt && <><br />Last audio {new Date(view.diagnostics.audio.lastReceivedAt).toLocaleTimeString()}</>}
                   {view.diagnostics.audio.lastTranscript != null && <><br />Last transcript: {view.diagnostics.audio.lastTranscript || '(no speech recognized)'}</>}
                   {view.diagnostics.audio.error && <p className="voice-error">{view.diagnostics.audio.error}</p>}

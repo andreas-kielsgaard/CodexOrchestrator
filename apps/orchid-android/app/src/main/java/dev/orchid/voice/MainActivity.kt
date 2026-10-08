@@ -308,7 +308,7 @@ class MainActivity : Activity() {
         if (liveError != null) lines += "Laptop status: $liveError"
         liveState?.let { state ->
             val audio = state.optJSONObject("audio") ?: JSONObject()
-            lines += "Laptop: ${audio.optLong("received")} packets received · ${audio.optLong("transcribed")} transcribed · ${state.optInt("pendingAudio")} queued"
+            lines += "Laptop: ${audio.optLong("received")} packets received · ${audio.optLong("transcribed")} context windows decoded · ${state.optInt("pendingAudio")} queued"
             if (audio.has("lastTranscript") && !audio.isNull("lastTranscript")) {
                 val transcript = audio.optString("lastTranscript")
                 if (transcript.isBlank()) lines += "Last audio: no words recognized · not sent to JEV"
