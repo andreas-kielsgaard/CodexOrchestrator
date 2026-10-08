@@ -9,5 +9,8 @@ mod pipeline;
 mod prefilter;
 pub(crate) mod repository;
 mod speech;
+mod continuous_audio;
+mod transcript;
+mod query_schedule;
 pub(crate) mod transport;
 pub(crate) use application::VoiceSessionApplication;

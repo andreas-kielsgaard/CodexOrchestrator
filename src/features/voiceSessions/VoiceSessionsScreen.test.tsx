@@ -4,7 +4,7 @@ import { VoiceSessionsScreen } from './VoiceSessionsScreen';
 import type { VoiceView } from '../../application/voiceSessions';
 
 it('shows held input, actual microphone fallback, and a failed reasoning stage', async () => {
-  const prompts = { relevance: '', completion: '', summary: '', router: '', digest: '', output: '', tools: '' };
+  const prompts = { relevance: '', completion: '', continuation: '', summary: '', router: '', digest: '', output: '', tools: '' };
   const view: VoiceView = {
     defaultPrompts: prompts, profiles: [],
     state: { settings: { bindAddress: '', token: '', profileId: 'profile', workingDirectory: null, instructions: '', prompts }, enabled: true, phoneConnected: true, speechConfigured: true, error: null, conversation: null },

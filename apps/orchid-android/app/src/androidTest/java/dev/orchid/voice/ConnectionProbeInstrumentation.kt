@@ -62,8 +62,8 @@ class ConnectionProbeInstrumentation : Instrumentation() {
             socket = client.newWebSocket(Request.Builder().url(settings.endpoint).header("Authorization", "Bearer ${settings.token}").build(), object : WebSocketListener() {
                 override fun onMessage(ws: WebSocket, text: String) {
                     val value = JSONObject(text)
-                    if (value.optString("type") == "hello" && value.optInt("version") == 1) {
-                        result.putString("connection", "Authenticated version-1 hello received from Orchid")
+                    if (value.optString("type") == "hello" && value.optInt("version") == 2) {
+                        result.putString("connection", "Authenticated version-2 hello received from Orchid")
                         ws.close(1000, "Probe complete"); latch.countDown()
                     }
                 }
@@ -122,7 +122,7 @@ class ConnectionProbeInstrumentation : Instrumentation() {
         val connection = OrchidConnection(settings, { status ->
             if (status.startsWith("Disconnected")) { lostAt.compareAndSet(0, SystemClock.elapsedRealtime()); lost.countDown() }
         }, { message ->
-            if (message.optString("type") == "hello" && message.optInt("version") == 1) {
+            if (message.optString("type") == "hello" && message.optInt("version") == 2) {
                 if (hellos.incrementAndGet() == 1) first.countDown()
                 else { restoredAt.set(SystemClock.elapsedRealtime()); restored.countDown() }
             }

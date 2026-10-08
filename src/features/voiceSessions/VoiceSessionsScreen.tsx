@@ -313,6 +313,7 @@ export function VoiceSessionsScreen({
               <select value={promptStage} onChange={(event) => setPromptStage(event.target.value as keyof VoicePrompts)}>
                 <option value="relevance">JEV relevance</option>
                 <option value="completion">JEV input completion</option>
+                <option value="continuation">JEV continuation</option>
                 <option value="summary">Input summarization</option>
                 <option value="router">Routing</option>
                 <option value="digest">Digest</option>

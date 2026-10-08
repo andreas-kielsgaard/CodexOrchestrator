@@ -77,8 +77,8 @@ pub(crate) fn start(
                 let listener = tokio::net::TcpListener::from_std(listener).expect("voice listener");
                 let router = Router::new()
                     .route("/phone", get(upgrade))
-                .route("/sessions", get(session_list))
-                .route("/status", get(live_status))
+                    .route("/sessions", get(session_list))
+                    .route("/status", get(live_status))
                     .route("/sessions/{id}", get(session_history))
                     .with_state(state);
                 let _ = axum::serve(listener, router)
@@ -126,7 +126,9 @@ async fn session_list(State(state): State<GatewayState>, headers: HeaderMap) -> 
     history_response(result)
 }
 async fn live_status(State(state): State<GatewayState>, headers: HeaderMap) -> Response {
-    if !authorized(&headers, &state.token) { return StatusCode::UNAUTHORIZED.into_response(); }
+    if !authorized(&headers, &state.token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
     history_response(tokio::task::spawn_blocking(move || state.app.diagnostics()).await)
 }
 async fn session_history(
@@ -154,82 +156,101 @@ fn history_response(result: Result<Result<Value, String>, tokio::task::JoinError
     }
 }
 async fn connection(socket: WebSocket, state: GatewayState) {
+    use super::{
+        continuous_audio::{AudioWindow, ContinuousAudio},
+        query_schedule::QuerySchedule,
+    };
+    use std::time::{Duration, Instant};
     let (mut sink, mut source) = socket.split();
     let mut events = state.app.events.subscribe();
     let conversation = state.app.snapshot().ok().and_then(|s| s.conversation);
-    let classifications: Vec<Value> = conversation.as_ref().map(|c| c.inputs.iter().rev().take(20).filter_map(|input| input.relevance.as_ref().map(|relevance| json!({"id":input.id,"relevance":relevance}))).collect()).unwrap_or_default();
-    if sink.send(Message::Text(json!({"type":"hello","version":1,"conversationId":conversation.as_ref().map(|c|&c.id),"mainSessionId":conversation.map(|c|c.main_session_id),"inputClassifications":classifications}).to_string().into())).await.is_err() { let _=state.app.update(|s|{s.phone_connected=false;Ok(())});return; }
-    // Drafts are display-only and replace queued drafts instead of delaying final inputs.
-    let preview_cancel = state.cancel.child_token();
-    let (previews, mut latest_preview) = tokio::sync::watch::channel::<Option<Value>>(None);
-    let preview_app = state.app.clone();
-    let cancelled = preview_cancel.clone();
-    let preview_processor = tokio::spawn(async move {
-        loop {
-            tokio::select! { _ = cancelled.cancelled() => break, changed = latest_preview.changed() => { if changed.is_err() { break; } } }
-            let Some(value) = latest_preview.borrow_and_update().clone() else { continue };
-            let app = preview_app.clone();
-            let result = tokio::task::spawn_blocking(move || {
-                app.speech.transcribe_preview(value["audio"].as_str().ok_or("Audio is missing")?)
-                    .map(|text| json!({"type":"transcript_preview","id":value["id"],"text":text}))
-            }).await;
-            if cancelled.is_cancelled() { break; }
-            if let Ok(Ok(value)) = result {
-                if value["text"].as_str().is_some_and(|text| !text.trim().is_empty()) {
-                    let _ = preview_app.events.send(value);
-                }
-            }
-        }
-    });
-    let (inputs, mut pending) = tokio::sync::mpsc::channel::<Value>(4);
+    let classifications: Vec<Value> = conversation
+        .as_ref()
+        .map(|c| {
+            c.inputs
+                .iter()
+                .rev()
+                .take(20)
+                .filter_map(|input| {
+                    input
+                        .relevance
+                        .as_ref()
+                        .map(|relevance| json!({"id":input.id,"relevance":relevance}))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if sink.send(Message::Text(json!({"type":"hello","version":2,"conversationId":conversation.as_ref().map(|c|&c.id),"mainSessionId":conversation.map(|c|c.main_session_id),"inputClassifications":classifications}).to_string().into())).await.is_err() {
+        let _=state.app.update(|s|{s.phone_connected=false;Ok(())}); return;
+    }
+    let connection_cancel = state.cancel.child_token();
+    let (windows, mut latest) = tokio::sync::watch::channel::<Option<AudioWindow>>(None);
     let app = state.app.clone();
-    let cancelled = state.cancel.clone();
-    let processor = tokio::spawn(async move {
+    let cancelled = connection_cancel.clone();
+    let decoder = tokio::spawn(async move {
         loop {
-            let value =
-                tokio::select! {_ = cancelled.cancelled()=>break, value=pending.recv()=>value};
-            let Some(value) = value else { break };
-            let app = app.clone();
-            let error_app = app.clone();
+            tokio::select! { _=cancelled.cancelled()=>break, changed=latest.changed()=>{if changed.is_err(){break;}} }
+            let Some(window) = latest.borrow_and_update().clone() else {
+                continue;
+            };
+            let decode_app = app.clone();
+            let decode_window = window.clone();
+            let _ = app.audio_pending(1);
             let result = tokio::task::spawn_blocking(move || {
-                let text = if value["type"] == "audio" {
-                    let result = app.speech.transcribe(value["audio"].as_str().ok_or("Audio is missing")?);
-                    let _ = app.audio_transcribed(result.as_deref().map_err(String::as_str));
-                    result?
-                } else {
-                    value["text"].as_str().ok_or("Text is missing")?.to_string()
-                };
-                if text.trim().is_empty() {
-                    let _ = app.events.send(json!({"type":"transcript","id":value["id"],"text":""}));
-                }
-                app.input(
-                    value["id"]
-                        .as_str()
-                        .ok_or("Input ID is missing")?
-                        .to_string(),
-                    text,
-                )
+                decode_app
+                    .speech
+                    .transcribe(&decode_window.audio, decode_window.start_ms)
             })
             .await;
-            if let Ok(Err(error)) = result {
-                let _ = error_app.update(|s| {
-                    if let Some(c) = &mut s.conversation {
-                        c.input_buffer.complete = false;
-                    }
-                    Ok(())
-                });
-                error_app.set_error(error);
+            let _ = app.audio_pending(-1);
+            if cancelled.is_cancelled() {
+                break;
             }
-            let _ = error_app.audio_pending(-1);
-            let _ = error_app.release_input();
+            if latest
+                .borrow()
+                .as_ref()
+                .is_some_and(|current| current.stream_id != window.stream_id)
+            {
+                continue;
+            }
+            match result {
+                Ok(Ok(transcript)) => {
+                    let _ = app.audio_transcribed(Ok(&transcript.text));
+                    if let Err(error) = app.transcript_window(&window, transcript) {
+                        app.set_error(error);
+                    }
+                }
+                Ok(Err(error)) => {
+                    let _ = app.audio_transcribed(Err(&error));
+                    app.set_error(error);
+                }
+                Err(error) => app.set_error(format!("Continuous transcription failed: {error}")),
+            }
         }
     });
+    let mut audio = ContinuousAudio::default();
+    let mut schedule = QuerySchedule::default();
+    let mut active_stream = String::new();
+    let mut last_voice = Instant::now();
+    let mut last_voice_ms = 0;
+    let mut tick = tokio::time::interval(Duration::from_millis(250));
     loop {
         tokio::select! {
             _=state.cancel.cancelled()=>break,
+            _=tick.tick()=>{
+                if let Ok(snapshot)=state.app.snapshot() {
+                    if let Some(c)=snapshot.conversation {
+                        let blocks:Vec<_>=c.inputs.iter().filter(|i|i.stream_id.as_deref()==Some(&active_stream)&&!i.text.is_empty()).cloned().collect();
+                        let quiet=if snapshot.speaking {0} else {last_voice.elapsed().as_millis() as u64};
+                        if schedule.due(&blocks,&snapshot.input_policy,quiet,last_voice_ms,c.inputs.iter().any(|i|i.filter_pending)) {
+                            if let Err(error)=state.app.request_filter(){state.app.set_error(error);}
+                        }
+                    }
+                }
+            },
             event=events.recv()=>match event {
                 Ok(value)=>{if value["type"]!="changed" && sink.send(Message::Text(value.to_string().into())).await.is_err(){break;}}
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>{let _=sink.send(Message::Text(json!({"type":"error","message":"Output connection fell behind; ask for the report again"}).to_string().into())).await;}
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>{let _=sink.send(Message::Text(json!({"type":"error","message":"Voice connection fell behind; reactivate listening"}).to_string().into())).await;}
                 Err(_)=>break,
             },
             message=source.next()=>{
@@ -238,14 +259,33 @@ async fn connection(socket: WebSocket, state: GatewayState) {
                     Message::Text(text)=>{
                         let Ok(value)=serde_json::from_str::<Value>(&text) else{continue};
                         match value["type"].as_str() {
-                            Some("audio_preview")=>{previews.send_replace(Some(value));}
-                            Some("audio"|"text")=>{
-                                let _=state.app.audio_pending(1);
-                                if value["type"] == "audio" { let _=state.app.audio_received(); }
-                                if inputs.try_send(value).is_err(){
-                                    let _=state.app.audio_pending(-1);
-                                    state.app.set_error("Input queue is busy; please repeat shortly".into());
+                            Some("input_settings")=>{
+                                match serde_json::from_value::<super::domain::VoiceInputPolicy>(value["settings"].clone()) {
+                                    Ok(policy)=>match policy.validate(){
+                                        Ok(())=>{let _=state.app.update(|s|{s.input_policy=policy;Ok(())});}
+                                        Err(error)=>state.app.set_error(error),
+                                    },
+                                    Err(error)=>state.app.set_error(error.to_string()),
                                 }
+                            }
+                            Some("audio_stream")=>{
+                                let policy=state.app.snapshot().map(|s|s.input_policy).unwrap_or_default();
+                                let stream=value["streamId"].as_str().unwrap_or("");
+                                if stream.is_empty(){state.app.set_error("Audio stream ID missing".into());continue;}
+                                match audio.push(stream,value["epochMs"].as_i64().unwrap_or(0),value["startSample"].as_u64().unwrap_or(0),value["pcm"].as_str().unwrap_or(""),policy.context_seconds) {
+                                    Ok(window)=>{
+                                        if active_stream!=stream {active_stream=stream.into();schedule=QuerySchedule::default();}
+                                        if value["hasSpeech"].as_bool().unwrap_or(false) {last_voice=Instant::now();last_voice_ms=window.end_ms;}
+                                        let _=state.app.audio_received(); windows.send_replace(Some(window));
+                                    }
+                                    Err(error)=>state.app.set_error(error),
+                                }
+                            }
+                            Some("text")=>{
+                                let app=state.app.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    if let (Some(id),Some(text))=(value["id"].as_str(),value["text"].as_str()) {if let Err(error)=app.input(id.into(),text.into()){app.set_error(error);}}
+                                });
                             }
                             Some("speech_state")=>{let _=state.app.speech_activity(value["speaking"].as_bool().unwrap_or(false));}
                             Some("capture_status")=>{if let Ok(capture)=serde_json::from_value::<PhoneCapture>(value["capture"].clone()){let _=state.app.capture_report(capture);}}
@@ -261,9 +301,8 @@ async fn connection(socket: WebSocket, state: GatewayState) {
             }
         }
     }
-    processor.abort();
-    preview_cancel.cancel();
-    preview_processor.abort();
+    connection_cancel.cancel();
+    decoder.abort();
     let _ = state.app.update(|s| {
         s.phone_connected = false;
         s.speaking = false;
@@ -276,6 +315,7 @@ async fn connection(socket: WebSocket, state: GatewayState) {
     });
     let _ = sink.close().await;
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

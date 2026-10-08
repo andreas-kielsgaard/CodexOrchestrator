@@ -194,6 +194,27 @@ class MainActivity : Activity() {
                 else { settings.listeningTimeoutSeconds = seconds; Toast.makeText(this, "Listening timeout saved", Toast.LENGTH_SHORT).show() }
             }
         }
+        section(content, "input-processing", "Input processing", true) { body ->
+            fun number(label: String, value: Int): EditText {
+                addText(body, label, 13f, PhoneTheme.secondary)
+                return EditText(this).apply { setSingleLine(); inputType = InputType.TYPE_CLASS_NUMBER; setText(value.toString()); contentDescription = label; setTextColor(PhoneTheme.primary); body.addView(this) }
+            }
+            val sentences = number("Sentences per JEV query (1–20)", settings.sentencesPerQuery)
+            val pause = number("Pause before JEV query · seconds (1–60)", settings.pauseSeconds)
+            val context = number("Recent audio and text context · seconds (10–120)", settings.contextSeconds)
+            val followup = number("Listening after delivery · seconds (1–600)", settings.followupSeconds)
+            action(body, "Save input processing") {
+                val fields = listOf(sentences to (1..20), pause to (1..60), context to (10..120), followup to (1..600))
+                var valid = true
+                fields.forEach { (field, range) -> if (field.text.toString().toIntOrNull() !in range) { field.error = "Enter a value in $range"; valid = false } }
+                if (valid) {
+                    settings.sentencesPerQuery = sentences.text.toString().toInt(); settings.pauseSeconds = pause.text.toString().toInt()
+                    settings.contextSeconds = context.text.toString().toInt(); settings.followupSeconds = followup.text.toString().toInt()
+                    startService(Intent(this, ConversationService::class.java).setAction("INPUT_SETTINGS"))
+                    Toast.makeText(this, "Input processing saved", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
         section(content, "assistant", "Assistant shortcuts", true) { body ->
             val role = getSystemService(android.app.role.RoleManager::class.java)
             addText(body, if (role.isRoleHeld(android.app.role.RoleManager.ROLE_ASSISTANT)) "Orchid is your phone assistant." else "Choose Orchid as your phone assistant to use the assistant gesture and connected device buttons.", color = PhoneTheme.secondary)
@@ -283,11 +304,11 @@ class MainActivity : Activity() {
         val level = if (recording) capture.optDouble("level", 0.0) else 0.0
         levelMeter?.progress = (kotlin.math.sqrt(level.coerceIn(0.0, 1.0)) * 100).toInt()
         lines += "Input signal: ${String.format(java.util.Locale.ROOT, "%.1f", level * 100)}% · ${if (recording && capture.optBoolean("speechDetected")) "speech detected" else "no speech detected"}"
-        lines += "Audio segments: ${capture.optLong("segmentsCaptured")} recorded · ${capture.optLong("segmentsSent")} sent"
+        lines += "Audio packets: ${capture.optLong("segmentsCaptured")} recorded · ${capture.optLong("segmentsSent")} sent"
         if (liveError != null) lines += "Laptop status: $liveError"
         liveState?.let { state ->
             val audio = state.optJSONObject("audio") ?: JSONObject()
-            lines += "Laptop: ${audio.optLong("received")} segments received · ${audio.optLong("transcribed")} transcribed · ${state.optInt("pendingAudio")} queued"
+            lines += "Laptop: ${audio.optLong("received")} packets received · ${audio.optLong("transcribed")} transcribed · ${state.optInt("pendingAudio")} queued"
             if (audio.has("lastTranscript") && !audio.isNull("lastTranscript")) {
                 val transcript = audio.optString("lastTranscript")
                 if (transcript.isBlank()) lines += "Last audio: no words recognized · not sent to JEV"
@@ -344,7 +365,7 @@ class MainActivity : Activity() {
             val held = inputBuffer.optJSONArray("blocks")
             if (held != null && held.length() > 0) section(content, "held-$selectedSession", "Accepted input held (${held.length()})", true) { body ->
                 for (index in 0 until held.length()) addText(body, held.getJSONObject(index).optString("text"))
-                addText(body, if (inputBuffer.optBoolean("complete")) "Ready · waiting for speech and queued processing" else "Waiting for the input to be complete", 13f, PhoneTheme.muted)
+                addText(body, if (inputBuffer.optBoolean("complete")) "Ready for reasoning" else "Waiting for the input to be complete", 13f, PhoneTheme.muted)
             }
             if (inputDecisions.length() > 0) section(content, "decisions-$selectedSession", "Recent speech decisions") { body ->
                 for (index in maxOf(0, inputDecisions.length() - 10) until inputDecisions.length()) {

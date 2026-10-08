@@ -16,6 +16,7 @@ pub(crate) const OUTPUT_INSTRUCTIONS: &str =
 pub(crate) struct VoicePrompts {
     pub(crate) relevance: String,
     pub(crate) completion: String,
+    pub(crate) continuation: String,
     pub(crate) summary: String,
     pub(crate) router: String,
     pub(crate) digest: String,
@@ -29,6 +30,10 @@ impl Default for VoicePrompts {
                 .into(),
             completion: include_str!(
                 "../../../resources/voice-sessions/completion-instructions.md"
+            )
+            .into(),
+            continuation: include_str!(
+                "../../../resources/voice-sessions/continuation-instructions.md"
             )
             .into(),
             summary: SUMMARY_INSTRUCTIONS.into(),
@@ -84,6 +89,8 @@ pub(crate) struct VoiceState {
     pub(crate) capture: Option<PhoneCapture>,
     #[serde(skip_deserializing)]
     pub(crate) audio_progress: AudioProgress,
+    #[serde(default)]
+    pub(crate) input_policy: VoiceInputPolicy,
 }
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -128,6 +135,8 @@ pub(crate) struct Conversation {
     pub(crate) input_buffer: InputBuffer,
     #[serde(default)]
     pub(crate) activity: Vec<Activity>,
+    #[serde(default)]
+    pub(crate) last_input_release: Option<InputRelease>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -142,6 +151,8 @@ pub(crate) struct PipelineSessions {
 pub(crate) struct InputBuffer {
     pub(crate) blocks: Vec<SpokenInput>,
     pub(crate) complete: bool,
+    #[serde(default)]
+    pub(crate) continuation_of: Option<String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -212,7 +223,7 @@ pub(crate) struct Utterance {
     pub(crate) topic_id: Option<String>,
     pub(crate) created_at: String,
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SpokenInput {
     pub(crate) id: String,
@@ -224,6 +235,55 @@ pub(crate) struct SpokenInput {
     pub(crate) completion: Option<String>,
     #[serde(default)]
     pub(crate) filter_pending: bool,
+    #[serde(default)]
+    pub(crate) stream_id: Option<String>,
+    #[serde(default)]
+    pub(crate) start_ms: u64,
+    #[serde(default)]
+    pub(crate) end_ms: u64,
+    #[serde(default)]
+    pub(crate) revision: u64,
+    #[serde(default)]
+    pub(crate) evaluated_revision: u64,
+    #[serde(default)]
+    pub(crate) delivered_revision: u64,
+}
+#[derive(Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct InputRelease {
+    pub(crate) id: String,
+    pub(crate) created_at: String,
+    pub(crate) blocks: Vec<SpokenInput>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub(crate) struct VoiceInputPolicy {
+    pub(crate) sentences_per_query: usize,
+    pub(crate) pause_seconds: u64,
+    pub(crate) context_seconds: u64,
+    pub(crate) followup_seconds: u64,
+}
+impl Default for VoiceInputPolicy {
+    fn default() -> Self {
+        Self {
+            sentences_per_query: 2,
+            pause_seconds: 2,
+            context_seconds: 60,
+            followup_seconds: 30,
+        }
+    }
+}
+impl VoiceInputPolicy {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if !(1..=20).contains(&self.sentences_per_query)
+            || !(1..=60).contains(&self.pause_seconds)
+            || !(10..=120).contains(&self.context_seconds)
+            || !(1..=600).contains(&self.followup_seconds)
+        {
+            return Err("Use 1–20 sentences, 1–60 pause seconds, 10–120 context seconds, and 1–600 follow-up seconds".into());
+        }
+        Ok(())
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -1,6 +1,7 @@
 export interface VoicePrompts {
   relevance: string;
   completion: string;
+  continuation: string;
   summary: string;
   router: string;
   digest: string;

@@ -19,7 +19,7 @@ class OrchidConnection(private val settings: ConnectionSettings, private val sta
         socket = client.newWebSocket(Request.Builder().url(settings.endpoint).header("Authorization", "Bearer ${settings.token}").build(), object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 try { val value = JSONObject(text)
-                    if (value.optString("type") == "hello") { if (value.optInt("version") != 1) { close(); status("Protocol version mismatch"); return }; connected = true; status("Listening · connected") }
+                    if (value.optString("type") == "hello") { if (value.optInt("version") != 2) { close(); status("Protocol version mismatch"); return }; connected = true; status("Listening · connected") }
                     receive(value)
                 } catch (error: Exception) { status("Connection message error: ${error.message}") }
             }

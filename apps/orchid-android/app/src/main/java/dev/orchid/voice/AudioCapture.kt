@@ -16,7 +16,7 @@ import kotlin.math.sqrt
 import kotlin.concurrent.thread
 import java.util.UUID
 
-class AudioCapture(context: Context, private val speechStarted: () -> Unit, private val utterance: (String, ByteArray) -> Unit, private val failed: (String) -> Unit, private val speechEnded: () -> Unit = {}, private val progress: (JSONObject) -> Unit = {}, private val preview: (String, ByteArray) -> Unit = { _, _ -> }) {
+class AudioCapture(context: Context, private val speechStarted: () -> Unit, private val packet: (String, Long, Long, ByteArray, Boolean) -> Unit, private val failed: (String) -> Unit, private val speechEnded: () -> Unit = {}, private val progress: (JSONObject) -> Unit = {}) {
     private val settings = ConnectionSettings(context)
     private val phoneMicrophone = settings.microphone == "phone"
     private val routing = MicrophoneRouting(context, failed)
@@ -55,8 +55,15 @@ class AudioCapture(context: Context, private val speechStarted: () -> Unit, priv
             worker = thread(name = "orchid-microphone") {
                 try {
                     VadWebRTC(sampleRate = SampleRate.SAMPLE_RATE_16K, frameSize = FrameSize.FRAME_SIZE_480, mode = Mode.NORMAL, silenceDurationMs = 650, speechDurationMs = 90).use { vad ->
-                        val samples = ShortArray(480); val preroll = ArrayDeque<ByteArray>(); var output = ByteArrayOutputStream(); var peakLevel = 0.0
-                        var segmentId = UUID.randomUUID().toString(); var previewAt = 0L
+                        val samples = ShortArray(480); val output = ByteArrayOutputStream(); var peakLevel = 0.0
+                        val streamId = UUID.randomUUID().toString(); val epochMs = System.currentTimeMillis()
+                        var startSample = 0L; var hasSpeech = false
+                        fun flush() {
+                            if (output.size() == 0) return
+                            val bytes = output.toByteArray()
+                            packet(streamId, epochMs, startSample, bytes, hasSpeech)
+                            startSample += bytes.size / 2; segmentsCaptured++; output.reset(); hasSpeech = false
+                        }
                         while (active) {
                             var offset = 0
                             while (active && offset < samples.size) { val count = audio.read(samples, offset, samples.size - offset); if (count < 0) throw IllegalStateException("Audio read failed: $count"); offset += count }
@@ -65,26 +72,17 @@ class AudioCapture(context: Context, private val speechStarted: () -> Unit, priv
                             peakLevel = maxOf(peakLevel, sqrt(samples.sumOf { it.toDouble() * it.toDouble() } / samples.size) / 32768.0)
                             val bytes = ByteBuffer.allocate(960).order(ByteOrder.LITTLE_ENDIAN).apply { samples.forEach { putShort(it) } }.array()
                             val voice = vad.isSpeech(samples)
-                            if (!speaking) {
-                                preroll.addLast(bytes); while (preroll.size > 12) preroll.removeFirst()
-                                if (voice) { speaking = true; speechStarted(); output = ByteArrayOutputStream(); preroll.forEach { output.write(it) }; preroll.clear(); segmentId = UUID.randomUUID().toString(); previewAt = SystemClock.elapsedRealtime() }
-                            } else {
-                                output.write(bytes)
-                                if (!voice || output.size() >= 160_000) {
-                                    utterance(segmentId, wav(output.toByteArray())); segmentsCaptured++; output.reset()
-                                    segmentId = UUID.randomUUID().toString(); previewAt = SystemClock.elapsedRealtime()
-                                    if (!voice) { speaking = false; speechEnded() }
-                                }
-                            }
+                            output.write(bytes); hasSpeech = hasSpeech || voice
+                            if (voice && !speaking) { speaking = true; speechStarted() }
+                            if (!voice && speaking) { speaking = false; speechEnded() }
+                            if (output.size() >= 32000) flush()
                             val now = SystemClock.elapsedRealtime()
-                            if (speaking && output.size() > 0 && now - previewAt >= 1000) {
-                                previewAt = now; preview(segmentId, wav(output.toByteArray()))
-                            }
                             if (now - lastReport >= 1000) {
                                 lastReport = now
                                 report(peakLevel); peakLevel = 0.0
                             }
                         }
+                        flush()
                     }
                 } catch (error: Exception) { if (active) { captureError = error.message ?: "Audio capture failed"; failed(captureError!!) } }
                 finally { active = false; speaking = false; report() }
@@ -95,7 +93,4 @@ class AudioCapture(context: Context, private val speechStarted: () -> Unit, priv
         try { active = false; try { recorder?.stop() } catch (_: Exception) {}; worker?.join(1500); echo?.release(); noise?.release(); recorder?.release(); recorder = null }
         finally { speaking = false; routing.close(); report() }
     }
-    private fun wav(pcm: ByteArray): ByteArray = ByteBuffer.allocate(44 + pcm.size).order(ByteOrder.LITTLE_ENDIAN).apply {
-        put("RIFF".toByteArray()); putInt(36 + pcm.size); put("WAVEfmt ".toByteArray()); putInt(16); putShort(1); putShort(1); putInt(16000); putInt(32000); putShort(2); putShort(16); put("data".toByteArray()); putInt(pcm.size); put(pcm)
-    }.array()
 }

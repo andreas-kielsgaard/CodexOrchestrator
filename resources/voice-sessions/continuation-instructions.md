@@ -1,0 +1,1 @@
+Decide whether this sentence continues or corrects the recently delivered request, starts a new request, or is unrelated. Use the recent transcript and delivered request. Transcript revisions and pauses do not make a request immutable.

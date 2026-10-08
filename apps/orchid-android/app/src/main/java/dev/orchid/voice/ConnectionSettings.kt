@@ -2,6 +2,7 @@ package dev.orchid.voice
 
 import android.content.Context
 import java.net.URI
+import org.json.JSONObject
 
 class ConnectionSettings(context: Context) {
     private val preferences = context.getSharedPreferences("connection", Context.MODE_PRIVATE)
@@ -35,6 +36,21 @@ class ConnectionSettings(context: Context) {
     var detectedInput: String
         get() = preferences.getString("detected-input", "[]") ?: "[]"
         set(value) { preferences.edit().putString("detected-input", value).apply() }
+    var sentencesPerQuery: Int
+        get() = preferences.getInt("sentences-per-query", 2)
+        set(value) { require(value in 1..20); preferences.edit().putInt("sentences-per-query", value).apply() }
+    var pauseSeconds: Int
+        get() = preferences.getInt("pause-seconds", 2)
+        set(value) { require(value in 1..60); preferences.edit().putInt("pause-seconds", value).apply() }
+    var contextSeconds: Int
+        get() = preferences.getInt("context-seconds", 60)
+        set(value) { require(value in 10..120); preferences.edit().putInt("context-seconds", value).apply() }
+    var followupSeconds: Int
+        get() = preferences.getInt("followup-seconds", 30)
+        set(value) { require(value in 1..600); preferences.edit().putInt("followup-seconds", value).apply() }
+    fun inputSettings() = JSONObject().put("type", "input_settings").put("settings", JSONObject()
+        .put("sentencesPerQuery", sentencesPerQuery).put("pauseSeconds", pauseSeconds)
+        .put("contextSeconds", contextSeconds).put("followupSeconds", followupSeconds))
     fun validate() {
         val uri = URI(endpoint)
         val octets = uri.host?.split('.')?.mapNotNull { it.toIntOrNull() } ?: emptyList()

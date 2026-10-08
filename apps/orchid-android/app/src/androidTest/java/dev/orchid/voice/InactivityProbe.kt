@@ -27,6 +27,17 @@ object InactivityProbe {
         clock.activate(120_000)
         check(clock.remainingSeconds(120_000, 60) == 60L)
 
+        clock.delivered(120_000, 30)
+        check(clock.remainingSeconds(149_000, 60) == 1L)
+        clock.receive("transcript_window", 149_000)
+        check(clock.remainingSeconds(150_000, 60) == 0L)
+        clock.receive("input_continuation", 149_000)
+        check(clock.remainingSeconds(150_000, 60) == 59L)
+        clock.delivered(151_000, 10)
+        check(clock.remainingSeconds(161_000, 60) == 0L)
+        clock.stop(); clock.delivered(162_000, 30); clock.receive("input_continuation", 162_000)
+        check(clock.remainingSeconds(162_000, 60) == null)
+
         val context = instrumentation.targetContext
         val settings = ConnectionSettings(context)
         val previousTimeout = settings.listeningTimeoutSeconds

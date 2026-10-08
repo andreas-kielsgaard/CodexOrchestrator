@@ -10,183 +10,116 @@ use std::{
     time::{Duration, Instant},
 };
 
-fn relevance_question(instructions: &str) -> JevQuestion {
+fn question(instructions: &str, target: &str, criteria: &[(&str, &str)]) -> JevQuestion {
     JevQuestion::Choice {
-        instructions: json!(instructions),
-        criteria: [("direct_request",json!("A request explicitly addressed to Orchid, including conversational follow-ups.")),
-            ("task_context",json!("Additional context or continuation of an accepted Orchid input or ongoing task.")),
-            ("unaddressed",json!("Speech to someone else or without a connection to Orchid or accepted work."))]
-            .into_iter().map(|(k,v)|(k.into(),v)).collect(),
+        instructions: json!({"instructions":instructions,"sentenceId":target}),
+        criteria: criteria
+            .iter()
+            .map(|(key, detail)| (key.to_string(), json!(detail)))
+            .collect(),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn accepted() -> Conversation {
-        let block = SpokenInput {
-            id: "block".into(),
-            text: "Please inspect this".into(),
-            created_at: "2026-10-07T10:00:00Z".into(),
-            relevance: Some("direct_request".into()),
-            completion: Some("complete".into()),
-            filter_pending: false,
-        };
-        Conversation {
-            inputs: vec![block.clone()],
-            input_buffer: InputBuffer {
-                blocks: vec![block],
-                complete: true,
-            },
-            ..Default::default()
-        }
-    }
-    #[test]
-    fn completion_waits_for_recording_transcription_and_filtering() {
-        let mut state = VoiceState {
-            enabled: true,
-            speaking: true,
-            pending_audio: 1,
-            ..Default::default()
-        };
-        let mut conversation = accepted();
-        assert!(!ready(&state, &conversation));
-        state.speaking = false;
-        assert!(
-            !ready(&state, &conversation),
-            "An earlier complete segment must wait for queued audio"
-        );
-        state.pending_audio = 0;
-        conversation.inputs[0].filter_pending = true;
-        assert!(
-            !ready(&state, &conversation),
-            "A subsequent transcript must be classified before releasing"
-        );
-        conversation.inputs[0].filter_pending = false;
-        assert!(ready(&state, &conversation));
-    }
-    #[test]
-    fn silence_is_not_semantic_completion() {
-        let state = VoiceState {
-            enabled: true,
-            ..Default::default()
-        };
-        let mut conversation = accepted();
-        conversation.input_buffer.complete = false;
-        assert!(!ready(&state, &conversation));
-        conversation.input_buffer.complete = true;
-        conversation.input_buffer.blocks.clear();
-        assert!(!ready(&state, &conversation));
-    }
-    #[test]
-    fn evaluator_context_keeps_speech_order_without_queue_or_prior_decision_flags() {
-        let mut c = accepted();
-        c.inputs[0].completion = Some("continue".into());
-        c.input_buffer.blocks[0].completion = Some("continue".into());
-        let latest = SpokenInput {
-            id: "latest".into(),
-            text: "That is all, please handle it".into(),
-            created_at: "2026-10-07T10:01:00Z".into(),
-            relevance: None,
-            completion: None,
-            filter_pending: true,
-        };
-        c.inputs.push(latest.clone());
-        let state = input_context(&c, &latest);
-        assert_eq!(state["recentSpeech"][1]["id"], "latest");
-        assert_eq!(state["latestBlock"]["createdAt"], latest.created_at);
-        for speech in [&state["latestBlock"], &state["acceptedInput"][0]] {
-            assert!(speech.get("filterPending").is_none());
-            assert!(speech.get("completion").is_none());
-        }
-        assert!(state.get("acceptedBuffer").is_none());
-    }
+fn evidence(block: &SpokenInput) -> Value {
+    json!({"id":block.id,"text":block.text,"createdAt":block.created_at,"revision":block.revision})
 }
-fn completion_question(instructions: &str) -> JevQuestion {
-    JevQuestion::Choice {
-        instructions: json!(instructions),
-        criteria: [("complete",json!("The latest speech indicates this input is ready to handle, including a self-contained question expecting an answer.")),
-            ("continue",json!("The user is still explaining, trails off, promises more detail, or the request is not ready to handle."))]
-            .into_iter().map(|(k,v)|(k.into(),v)).collect(),
+fn recent_inputs(c: &Conversation, seconds: u64) -> Vec<SpokenInput> {
+    let cutoff = chrono::Utc::now() - chrono::Duration::seconds(seconds as i64);
+    c.inputs
+        .iter()
+        .filter(|i| {
+            !i.text.trim().is_empty()
+                && chrono::DateTime::parse_from_rfc3339(&i.created_at).is_ok_and(|at| at >= cutoff)
+        })
+        .cloned()
+        .collect()
+}
+fn recent_release(c: &Conversation, seconds: u64) -> Option<&InputRelease> {
+    c.last_input_release.as_ref().filter(|release| {
+        chrono::DateTime::parse_from_rfc3339(&release.created_at)
+            .is_ok_and(|at| at >= chrono::Utc::now() - chrono::Duration::seconds(seconds as i64))
+    })
+}
+fn sticky_relevance(previous: Option<&str>, next: &str) -> String {
+    match (previous, next) {
+        (Some("direct_request"), _) | (_, "direct_request") => "direct_request",
+        (Some("task_context"), _) | (_, "task_context") => "task_context",
+        _ => "unaddressed",
     }
+    .into()
 }
-fn speech_evidence(block: &SpokenInput) -> Value {
-    json!({"id":block.id,"text":block.text,"createdAt":block.created_at})
-}
-fn input_context(conversation: &Conversation, block: &SpokenInput) -> Value {
-    json!({"latestBlock":speech_evidence(block),
-        "acceptedInput":conversation.input_buffer.blocks.iter().map(speech_evidence).collect::<Vec<_>>(),
-        "recentSpeech":conversation.inputs.iter().skip(conversation.inputs.len().saturating_sub(5)).map(speech_evidence).collect::<Vec<_>>(),
-        "recentActivity":conversation.activity.iter().skip(conversation.activity.len().saturating_sub(10)).collect::<Vec<_>>(),
-        "tasks":conversation.delegations,"pendingTopics":conversation.pending_topics})
-}
-pub(super) fn ready(state: &VoiceState, conversation: &Conversation) -> bool {
+pub(super) fn ready(state: &VoiceState, c: &Conversation) -> bool {
     state.enabled
-        && !state.speaking
-        && state.pending_audio == 0
-        && !conversation.inputs.iter().any(|i| i.filter_pending)
-        && conversation.input_buffer.complete
-        && !conversation.input_buffer.blocks.is_empty()
+        && !c.inputs.iter().any(|i| i.filter_pending)
+        && c.input_buffer.complete
+        && !c.input_buffer.blocks.is_empty()
 }
 impl VoiceSessionApplication {
     pub(crate) fn input(self: &Arc<Self>, id: String, text: String) -> Result<Value, String> {
         if text.trim().is_empty() {
             return Ok(json!({"ignored":"empty transcript"}));
         }
-        let state = self.snapshot()?;
-        if !state.enabled {
-            return Err("Voice connection is stopped".into());
-        }
-        let conversation = state.conversation.ok_or("No active voice conversation")?;
-        if conversation.inputs.iter().any(|i| i.id == id) {
-            return Ok(json!({"duplicate":true}));
-        }
-        let block = SpokenInput {
-            id: id.clone(),
-            text: text.clone(),
-            created_at: chrono::Utc::now().to_rfc3339(),
-            relevance: None,
-            completion: None,
-            filter_pending: true,
-        };
-        self.update(|s| {
-            s.error = None;
-            s.conversation
+        self.update(|state| {
+            if !state.enabled {
+                return Err("Voice connection is stopped".into());
+            }
+            let c = state
+                .conversation
                 .as_mut()
-                .ok_or("No conversation")?
-                .inputs
-                .push(block.clone());
+                .ok_or("No active voice conversation")?;
+            if !c.inputs.iter().any(|i| i.id == id) {
+                c.inputs.push(SpokenInput {
+                    id: id.clone(),
+                    text: text.clone(),
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                    revision: 1,
+                    ..Default::default()
+                });
+            }
             Ok(())
         })?;
         let _ = self
             .events
             .send(json!({"type":"transcript","id":id,"text":text}));
+        self.request_filter()?;
+        Ok(json!({"queued":true,"inputId":id}))
+    }
+    pub(super) fn request_filter(self: &Arc<Self>) -> Result<(), String> {
+        self.update(|state| {
+            if !state.enabled {
+                return Ok(());
+            }
+            let c = state.conversation.as_mut().ok_or("No conversation")?;
+            let recent = recent_inputs(c, state.input_policy.context_seconds);
+            for input in &mut c.inputs {
+                input.filter_pending = recent.iter().any(|r| r.id == input.id);
+            }
+            c.input_buffer
+                .blocks
+                .retain(|b| recent.iter().any(|r| r.id == b.id));
+            if !recent.is_empty() {
+                c.input_buffer.complete = false;
+            }
+            Ok(())
+        })?;
         let app = self.clone();
         tauri::async_runtime::spawn_blocking(move || {
             let Ok(_lane) = app.input_dispatch.lock() else {
                 return;
             };
             loop {
-                let Ok(state) = app.snapshot() else {
-                    break;
-                };
-                if !state.enabled {
+                let Ok(state) = app.snapshot() else { break };
+                let Some(c) = state.conversation else { break };
+                if !state.enabled || !c.inputs.iter().any(|i| i.filter_pending) {
                     break;
                 }
-                let Some(c) = state.conversation else {
-                    break;
-                };
-                let Some(block) = c.inputs.iter().find(|i| i.filter_pending).cloned() else {
-                    break;
-                };
-                if let Err(error) = app.filter_input(&c.id, &block) {
+                if let Err(error) =
+                    app.filter_window(&state.settings.prompts, &state.input_policy, &c)
+                {
                     let _ = app.update(|s| {
                         if let Some(current) = &mut s.conversation {
                             if current.id == c.id {
                                 current.input_buffer.complete = false;
-                                if let Some(input) =
-                                    current.inputs.iter_mut().find(|i| i.id == block.id)
-                                {
+                                for input in &mut current.inputs {
                                     input.filter_pending = false;
                                 }
                             }
@@ -194,31 +127,45 @@ impl VoiceSessionApplication {
                         Ok(())
                     });
                     app.set_error(error);
+                    break;
                 }
             }
         });
-        Ok(json!({"queued":true,"inputId":id}))
+        Ok(())
     }
-    fn evaluate_choice(
+    fn evaluate_window(
         &self,
-        conversation: &Conversation,
-        block: &SpokenInput,
-        key: &str,
-        question: JevQuestion,
-    ) -> Result<String, String> {
-        let filter = &conversation
-            .pipeline
-            .as_ref()
-            .ok_or("JEV session missing")?
-            .filter;
+        c: &Conversation,
+        recent: &[SpokenInput],
+        prompts: &VoicePrompts,
+        policy: &VoiceInputPolicy,
+    ) -> Result<BTreeMap<String, String>, String> {
+        let filter = &c.pipeline.as_ref().ok_or("JEV session missing")?.filter;
         let session = AgentSessionId::new(filter.clone()).map_err(|e| e.to_string())?;
         let invocation =
-            AgentInvocationId::new(format!("{}:{key}", block.id)).map_err(|e| e.to_string())?;
+            AgentInvocationId::new(uuid::Uuid::new_v4().to_string()).map_err(|e| e.to_string())?;
+        let mut questions = BTreeMap::new();
+        let released = recent_release(c, policy.followup_seconds);
+        for block in recent {
+            questions.insert(format!("relevance:{}", block.id), question(&prompts.relevance, &block.id, &[
+                ("direct_request","A request explicitly addressed to Orchid, including conversational follow-ups."),
+                ("task_context","Context or continuation of an Orchid request or task."),
+                ("unaddressed","Speech to someone else or without a connection to Orchid.")]));
+            questions.insert(format!("completion:{}",block.id), question(&prompts.completion,&block.id,&[
+                ("complete","The request including this sentence is ready to handle in the current transcript context."),
+                ("continue","The request is still being explained or is not ready to handle.")]));
+            if released.is_some() {
+                questions.insert(format!("continuation:{}",block.id), question(&prompts.continuation,&block.id,&[
+                ("continued","This sentence continues or corrects the recently delivered request."),
+                ("new_request","This sentence belongs to a different request."),
+                ("unrelated","This sentence is unrelated to the recently delivered request.")]));
+            }
+        }
         let evaluation = JevEvaluation {
-            state: input_context(conversation, block),
-            questions: [(key.into(), question)]
-                .into_iter()
-                .collect::<BTreeMap<_, _>>(),
+            state: json!({"recentSpeech":recent.iter().map(evidence).collect::<Vec<_>>(),
+            "acceptedInput":c.input_buffer.blocks.iter().map(evidence).collect::<Vec<_>>(),"lastDeliveredRequest":released,
+            "recentActivity":c.activity.iter().rev().take(10).collect::<Vec<_>>(),"tasks":c.delegations,"pendingTopics":c.pending_topics}),
+            questions,
         };
         self.agents
             .invoke_jev_api_session(session.clone(), invocation.clone(), evaluation)
@@ -237,12 +184,18 @@ impl VoiceSessionApplication {
                         .invocation
                         .runtime_error
                         .map(|e| e.message)
-                        .unwrap_or_else(|| "JEV input evaluation did not complete".into()));
+                        .unwrap_or_else(|| "JEV evaluation did not complete".into()));
                 }
-                return match view.result.and_then(|r| r.answers.get(key).cloned()) {
-                    Some(JevAnswer::Choice { choice, .. }) => Ok(choice),
-                    _ => Err("JEV did not return the requested typed choice".into()),
-                };
+                return view
+                    .result
+                    .ok_or("JEV result missing".to_string())?
+                    .answers
+                    .into_iter()
+                    .map(|(key, answer)| match answer {
+                        JevAnswer::Choice { choice, .. } => Ok((key, choice)),
+                        _ => Err("JEV returned an unexpected answer type".into()),
+                    })
+                    .collect();
             }
             if Instant::now() >= deadline {
                 return Err("JEV input evaluation timed out".into());
@@ -250,123 +203,232 @@ impl VoiceSessionApplication {
             std::thread::sleep(Duration::from_millis(25));
         }
     }
-    fn filter_input(
+    fn filter_window(
         self: &Arc<Self>,
-        conversation_id: &str,
-        block: &SpokenInput,
+        prompts: &VoicePrompts,
+        policy: &VoiceInputPolicy,
+        evaluated: &Conversation,
     ) -> Result<(), String> {
-        let state = self.snapshot()?;
-        let conversation = state.conversation.ok_or("No conversation")?;
-        if !state.enabled || conversation.id != conversation_id {
+        let recent = recent_inputs(evaluated, policy.context_seconds);
+        if recent.is_empty() {
+            self.update(|s| {
+                if let Some(c) = &mut s.conversation {
+                    for input in &mut c.inputs {
+                        input.filter_pending = false;
+                    }
+                }
+                Ok(())
+            })?;
             return Ok(());
         }
-        let relevance = self.evaluate_choice(
-            &conversation,
-            block,
-            "relevance",
-            relevance_question(&state.settings.prompts.relevance),
-        )?;
-        let opened = self.update(|s| {
-            let c = s.conversation.as_mut().ok_or("No conversation")?;
-            if c.id != conversation_id || !s.enabled {
+        let answers = self.evaluate_window(evaluated, &recent, prompts, policy)?;
+        let (opened, relevant, classifications, continued) = self.update(|state| {
+            if !state.enabled {
+                return Err("Voice connection stopped during filtering".into());
+            }
+            let c = state.conversation.as_mut().ok_or("No conversation")?;
+            if c.id != evaluated.id {
                 return Err("Conversation changed during filtering".into());
             }
-            let input = c
-                .inputs
-                .iter_mut()
-                .find(|i| i.id == block.id)
-                .ok_or("Input missing")?;
-            input.relevance = Some(relevance.clone());
-            if relevance == "unaddressed" {
-                input.filter_pending = false;
-                return Ok(false);
+            let was_empty = c.input_buffer.blocks.is_empty();
+            let mut relevant = vec![];
+            let mut classifications = vec![];
+            let mut continued = false;
+            for block in &recent {
+                let input = c
+                    .inputs
+                    .iter_mut()
+                    .find(|i| i.id == block.id)
+                    .ok_or("Sentence missing")?;
+                let relevance = answers
+                    .get(&format!("relevance:{}", block.id))
+                    .ok_or("Relevance answer missing")?;
+                let effective = sticky_relevance(input.relevance.as_deref(), relevance);
+                let accepted = effective != "unaddressed";
+                if accepted
+                    && (input.revision > input.evaluated_revision
+                        || input.relevance.as_deref() == Some("unaddressed")
+                        || input.relevance.is_none())
+                {
+                    relevant.push(input.id.clone());
+                }
+                input.relevance = Some(effective.clone());
+                input.evaluated_revision = block.revision;
+                input.filter_pending = input.revision != block.revision;
+                input.completion = if input.filter_pending {
+                    None
+                } else {
+                    Some(
+                        answers
+                            .get(&format!("completion:{}", block.id))
+                            .ok_or("Completion answer missing")?
+                            .clone(),
+                    )
+                };
+                classifications
+                    .push(json!({"id":input.id,"relevance":effective,"revision":input.revision}));
+                let continuation = answers
+                    .get(&format!("continuation:{}", block.id))
+                    .is_some_and(|v| v == "continued");
+                if accepted
+                    && (input.delivered_revision == 0
+                        || (continuation && input.revision > input.delivered_revision))
+                {
+                    continued |= continuation;
+                    if let Some(existing) =
+                        c.input_buffer.blocks.iter_mut().find(|b| b.id == input.id)
+                    {
+                        *existing = input.clone();
+                    } else {
+                        c.input_buffer.blocks.push(input.clone());
+                    }
+                }
             }
-            let accepted = input.clone();
-            let opened = c.input_buffer.blocks.is_empty();
-            c.input_buffer.blocks.push(accepted);
-            c.input_buffer.complete = false;
-            Ok(opened)
+            if continued {
+                c.input_buffer.continuation_of =
+                    recent_release(evaluated, policy.followup_seconds).map(|r| r.id.clone());
+            }
+            c.input_buffer
+                .blocks
+                .sort_by(|a, b| a.created_at.cmp(&b.created_at));
+            c.input_buffer.complete = c
+                .input_buffer
+                .blocks
+                .last()
+                .is_some_and(|b| b.completion.as_deref() == Some("complete"));
+            Ok((
+                was_empty && !c.input_buffer.blocks.is_empty(),
+                relevant,
+                classifications,
+                continued,
+            ))
         })?;
-        let _ = self.events.send(json!({"type":"input_classification","id":block.id,"relevance":relevance}));
+        for value in classifications {
+            let _=self.events.send(json!({"type":"input_classification","id":value["id"],"relevance":value["relevance"],"revision":value["revision"]}));
+        }
         if opened {
             let _ = self.events.send(json!({"type":"cue","cue":"listening"}));
         }
-        if relevance != "unaddressed" {
-            let _ = self.events.send(json!({"type":"relevant_input","id":block.id,"relevance":relevance}));
-            let conversation = self.snapshot()?.conversation.ok_or("No conversation")?;
-            let completion = self.evaluate_choice(
-                &conversation,
-                block,
-                "completion",
-                completion_question(&state.settings.prompts.completion),
-            )?;
-            self.update(|s| {
-                let c = s.conversation.as_mut().ok_or("No conversation")?;
-                if c.id != conversation_id || !s.enabled {
-                    return Err("Conversation changed during filtering".into());
-                }
-                if let Some(input) = c.inputs.iter_mut().find(|i| i.id == block.id) {
-                    input.completion = Some(completion.clone());
-                    input.filter_pending = false;
-                    if let Some(accepted) =
-                        c.input_buffer.blocks.iter_mut().find(|b| b.id == block.id)
-                    {
-                        *accepted = input.clone();
-                    }
-                }
-                c.input_buffer.complete = completion == "complete";
-                Ok(())
-            })?;
+        for id in relevant {
+            let _ = self.events.send(json!({"type":"relevant_input","id":id}));
+        }
+        if continued {
+            let _ = self.events.send(json!({"type":"input_continuation"}));
         }
         self.release_input()
     }
     pub(crate) fn speech_activity(self: &Arc<Self>, speaking: bool) -> Result<(), String> {
-        self.update(|s| {
-            s.speaking = speaking;
-            Ok(())
-        })?;
-        if !speaking {
-            self.release_input()?;
-        }
+        self.state
+            .lock()
+            .map_err(|_| "Voice state unavailable")?
+            .speaking = speaking;
         Ok(())
     }
     pub(crate) fn audio_pending(&self, delta: isize) -> Result<(), String> {
-        self.update(|s| {
-            s.pending_audio = s.pending_audio.saturating_add_signed(delta);
-            Ok(())
-        })
+        let mut state = self.state.lock().map_err(|_| "Voice state unavailable")?;
+        state.pending_audio = state.pending_audio.saturating_add_signed(delta);
+        Ok(())
     }
     pub(crate) fn release_input(self: &Arc<Self>) -> Result<(), String> {
-        let captured = self.update(|s| {
-            let Some(c) = &s.conversation else {
+        let captured = self.update(|state| {
+            let Some(c) = &state.conversation else {
                 return Ok(None);
             };
-            if !ready(s, c) {
+            if !ready(state, c) {
                 return Ok(None);
             }
-            let c = s.conversation.as_mut().unwrap();
+            let policy = state.input_policy.clone();
+            let c = state.conversation.as_mut().unwrap();
             let buffer = std::mem::take(&mut c.input_buffer);
-            Ok(Some((c.clone(), buffer)))
+            let previous = recent_release(c, policy.followup_seconds).cloned();
+            for block in &buffer.blocks {
+                if let Some(input) = c.inputs.iter_mut().find(|i| i.id == block.id) {
+                    input.delivered_revision = input.revision;
+                }
+            }
+            let release = InputRelease {
+                id: uuid::Uuid::new_v4().to_string(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                blocks: buffer.blocks.clone(),
+            };
+            c.last_input_release = Some(release.clone());
+            Ok(Some((
+                c.clone(),
+                release,
+                previous,
+                policy,
+                buffer.continuation_of,
+            )))
         })?;
-        let Some((conversation, buffer)) = captured else {
+        let Some((c, release, previous, policy, continuation_of)) = captured else {
             return Ok(());
         };
-        let stages = conversation
-            .pipeline
-            .as_ref()
-            .ok_or("No reasoning stages")?;
-        self.record_activity(
-            "user",
-            "accepted_input",
-            json!({"blocks":buffer.blocks}),
-            &[
-                stages.summary.clone(),
-                conversation.main_session_id.clone(),
-                stages.digest.clone(),
-            ],
-        )?;
+        let stages = c.pipeline.as_ref().ok_or("No reasoning stages")?;
+        self.record_activity("user","accepted_input",json!({"requestId":release.id,"blocks":release.blocks,"previousRequest":previous,"continuationOf":continuation_of}),
+            &[stages.summary.clone(),c.main_session_id.clone(),stages.digest.clone()])?;
         let _ = self.events.send(json!({"type":"cue","cue":"processing"}));
+        let _=self.events.send(json!({"type":"input_released","requestId":release.id,"followupSeconds":policy.followup_seconds}));
         self.schedule_observations();
         Ok(())
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn relevance_is_sticky_and_can_upgrade() {
+        assert_eq!(
+            sticky_relevance(Some("direct_request"), "unaddressed"),
+            "direct_request"
+        );
+        assert_eq!(
+            sticky_relevance(Some("task_context"), "unaddressed"),
+            "task_context"
+        );
+        assert_eq!(
+            sticky_relevance(Some("task_context"), "direct_request"),
+            "direct_request"
+        );
+    }
+    #[test]
+    fn completion_releases_during_capture_but_not_against_unevaluated_revisions() {
+        let state = VoiceState {
+            enabled: true,
+            speaking: true,
+            pending_audio: 1,
+            ..Default::default()
+        };
+        let block = SpokenInput {
+            id: "sentence".into(),
+            text: "Orchid, what time is it?".into(),
+            ..Default::default()
+        };
+        let mut c = Conversation {
+            input_buffer: InputBuffer {
+                blocks: vec![block.clone()],
+                complete: true,
+                ..Default::default()
+            },
+            inputs: vec![block],
+            ..Default::default()
+        };
+        assert!(ready(&state, &c));
+        c.inputs[0].filter_pending = true;
+        assert!(!ready(&state, &c));
+    }
+    #[test]
+    fn query_window_uses_time_not_a_fixed_number_of_blocks() {
+        let mut c = Conversation::default();
+        for index in 0..12 {
+            c.inputs.push(SpokenInput {
+                id: index.to_string(),
+                text: "Sentence.".into(),
+                created_at: (chrono::Utc::now() - chrono::Duration::seconds(index * 5))
+                    .to_rfc3339(),
+                ..Default::default()
+            });
+        }
+        assert_eq!(recent_inputs(&c, 60).len(), 12);
+        assert_eq!(recent_inputs(&c, 20).len(), 4);
     }
 }

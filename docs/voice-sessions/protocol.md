@@ -1,4 +1,4 @@
-# Phone protocol v1
+# Phone protocol v2
 
 Connect to `ws://<laptop Tailscale IPv4>:4818/phone` with `Authorization: Bearer <token>`. The server binds to that exact Tailscale address. Loopback is permitted for desktop tests; wildcard, LAN, and public bindings are rejected. Tailscale supplies encrypted device transport. One phone connection is accepted at a time.
 
@@ -6,15 +6,17 @@ All WebSocket data messages are JSON text. Native WebSocket ping/pong maintains 
 
 | Direction | Type | Fields |
 | --- | --- | --- |
-| Laptop to phone | `hello` | `version: 1`, `conversationId`, `mainSessionId`, recent `inputClassifications: [{id,relevance}]` |
-| Phone to laptop | `audio_preview` | segment `id`, growing base64 WAV snapshot during speech; display only |
-| Phone to laptop | `audio` | unique `id`, `audio` containing base64 WAV: mono signed 16-bit PCM, little endian, 16 kHz |
+| Laptop to phone | `hello` | `version: 2`, `conversationId`, `mainSessionId`, recent `inputClassifications: [{id,relevance}]` |
+| Phone to laptop | `input_settings` | `settings: {sentencesPerQuery,pauseSeconds,contextSeconds,followupSeconds}` |
+| Phone to laptop | `audio_stream` | `streamId`, `epochMs`, absolute `startSample`, `hasSpeech`, base64 `pcm`: consecutive mono signed 16-bit PCM packets, little endian, 16 kHz |
 | Phone to laptop | `text` | unique `id`, `text` |
-| Phone to laptop | `speech_state` | `speaking: true` at speech start, `false` after its final audio segment |
-| Laptop to phone | `transcript` | `id`, completed `text` |
-| Laptop to phone | `transcript_preview` | segment `id`, draft `text`; replace draft text until finalized |
-| Laptop to phone | `relevant_input` | `id`, `relevance: direct_request` or `task_context`; emitted after each accepted JEV relevance decision |
+| Phone to laptop | `speech_state` | `speaking: true` at speech start, `false` when voice activity ends |
+| Laptop to phone | `transcript` | manual text `id`, `text` |
+| Laptop to phone | `transcript_window` | `streamId`, `windowStartMs`, revisable sentence `blocks: [{id,text,startMs,endMs,revision,relevance,...}]` |
+| Laptop to phone | `relevant_input` | `id`; newly accepted or revised relevant input renews listening |
 | Laptop to phone | `input_classification` | `id`, `relevance: direct_request`, `task_context`, or `unaddressed`; updates the color of an already displayed transcript |
+| Laptop to phone | `input_released` | `requestId`, `followupSeconds`; start the follow-up listening window |
+| Laptop to phone | `input_continuation` | the recent request continues; resume accumulation |
 | Laptop to phone | `cue` | `cue: listening` when accepted input opens; `processing` when released |
 | Laptop to phone | `speak` | `utterance: {id,kind,text,topicId,createdAt}` |
 | Phone to laptop | `playback` or `interrupt` | `playback: {utteranceId,playedMs,state}` |
@@ -31,11 +33,11 @@ Phone capture uses Android's `VOICE_RECOGNITION` source without an additional no
 
 Phone Settings offers Lower other audio (default), Pause other audio, and Keep other audio unchanged. The player holds transient audio focus only across queued speech, and releases it on completion, interruption, failure, or shutdown. Android controls ducking attenuation and other apps' response; an exact adjustable percentage is unavailable through the ordinary audio-focus API. See [Android audio focus](https://developer.android.com/media/optimize/audio-focus).
 
-The phone segments continuous speech approximately every five seconds and retains a short pre-roll for voice activity detection. Segment boundaries do not end speaking. Speech start interrupts current playback and clears queued speech locally. Segments reach a serial transcription queue; playback receipts remain responsive while transcription runs. Speech captured while disconnected is discarded, and reconnect does not replay output.
+The phone sends consecutive audio packets, including silence, approximately once per second. Voice detection controls speaking indicators and playback interruption, not which samples reach transcription. The laptop retains a continuous rolling audio buffer (60 seconds by default). A single local transcriber revisits that whole buffer as audio arrives; superseded decoding requests can be skipped without dropping their samples. Sentence text remains revisable after classification and delivery. A stream gap requires reactivation rather than silently joining unrelated audio.
 
-While speaking, the phone also sends growing segment snapshots approximately once per second. A separate local transcriber processes the latest queued snapshot, dropping superseded drafts. Draft text appears before final transcription and is corrected by the completed block. Drafts never enter JEV, reasoning, or inactivity renewal. Classification updates recolor the same block after finalization; late drafts cannot replace finalized text.
+Phone Settings > Input processing controls sentences per JEV query (default 2), voice pause before a query (2 seconds), recent audio/text context (60 seconds), and listening after delivery (30 seconds). Each query evaluates every sentence in the recent window for relevance and completion, with a separate continuation question when a recent request was delivered. Relevance is sticky: a previously accepted sentence remains accepted. A pause triggers evaluation but does not itself establish semantic completion.
 
-Every transcript passes separate typed JEV relevance and completion evaluations. Accepted blocks accumulate without reaching reasoning sessions until JEV judges the input ready and speaking, transcription, and filtering are idle. Silence alone does not release input. The two brief cues use media volume and are skipped at media mute.
+JEV completion releases accepted input immediately, including during active capture. The delivery event starts the follow-up listening window. A continuation or new relevant input resumes accumulation and the next completed request can steer ongoing reasoning through the existing observation flow. Delivery carries the previous request and an explicit continuation relationship when JEV identified one. Delivered sentence revisions prevent repeated delivery of unchanged input. The two brief cues use media volume and are skipped at media mute.
 
 Conversation state, handoff relationships, transcripts, published text, pending topics, and playback context persist on the laptop. Raw audio is held in memory during transcription and is not retained by the feature.
 
