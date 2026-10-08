@@ -41,6 +41,8 @@ object InactivityProbe {
         val context = instrumentation.targetContext
         val settings = ConnectionSettings(context)
         val previousTimeout = settings.listeningTimeoutSeconds
+        val previousSentences = settings.sentencesPerQuery
+        val previousPause = settings.pauseSeconds
         val audio = context.getSystemService(AudioManager::class.java)
         fun recording() = JSONObject(settings.captureStatus).optBoolean("recording") && audio.activeRecordingConfigurations.any { it.clientAudioSessionId != 0 }
         fun stopped() = !JSONObject(settings.captureStatus).optBoolean("recording") && audio.activeRecordingConfigurations.none { it.clientAudioSessionId != 0 }
@@ -57,6 +59,7 @@ object InactivityProbe {
         try {
             context.stopService(Intent(context, ConversationService::class.java))
             settings.listeningTimeoutSeconds = 5
+            settings.sentencesPerQuery = 20; settings.pauseSeconds = 60
             val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             instrumentation.runOnMainSync { check(button(activity.window.decorView, "Start listening")?.performClick() == true) }
             await("App activation did not record") { recording() }
@@ -76,7 +79,7 @@ object InactivityProbe {
             context.stopService(Intent(context, ConversationService::class.java))
             await("Probe cleanup did not stop capture") { stopped() }
             // Instrumentation.finish terminates the process; flush restoration before returning.
-            check(context.getSharedPreferences("connection", Context.MODE_PRIVATE).edit().putInt("listening-timeout-seconds", previousTimeout).commit())
+            check(context.getSharedPreferences("connection", Context.MODE_PRIVATE).edit().putInt("listening-timeout-seconds", previousTimeout).putInt("sentences-per-query", previousSentences).putInt("pause-seconds", previousPause).commit())
         }
     }
 }

@@ -47,6 +47,9 @@ fn sticky_relevance(previous: Option<&str>, next: &str) -> String {
     }
     .into()
 }
+fn may_accumulate(input: &SpokenInput, continuation: bool) -> bool {
+    input.delivered_revision == 0 || (continuation && input.revision > input.delivered_revision)
+}
 pub(super) fn ready(state: &VoiceState, c: &Conversation) -> bool {
     state.enabled
         && !c.inputs.iter().any(|i| i.filter_pending)
@@ -245,8 +248,13 @@ impl VoiceSessionApplication {
                     .ok_or("Relevance answer missing")?;
                 let effective = sticky_relevance(input.relevance.as_deref(), relevance);
                 let accepted = effective != "unaddressed";
-                if accepted
-                    && (input.revision > input.evaluated_revision
+                let revised = input.revision > input.evaluated_revision;
+                let continuation = answers
+                    .get(&format!("continuation:{}", block.id))
+                    .is_some_and(|v| v == "continued");
+                let eligible = accepted && may_accumulate(input, continuation);
+                if eligible
+                    && (revised
                         || input.relevance.as_deref() == Some("unaddressed")
                         || input.relevance.is_none())
                 {
@@ -267,14 +275,8 @@ impl VoiceSessionApplication {
                 };
                 classifications
                     .push(json!({"id":input.id,"relevance":effective,"revision":input.revision}));
-                let continuation = answers
-                    .get(&format!("continuation:{}", block.id))
-                    .is_some_and(|v| v == "continued");
-                if accepted
-                    && (input.delivered_revision == 0
-                        || (continuation && input.revision > input.delivered_revision))
-                {
-                    continued |= continuation;
+                if eligible {
+                    continued |= continuation && revised;
                     if let Some(existing) =
                         c.input_buffer.blocks.iter_mut().find(|b| b.id == input.id)
                     {
@@ -375,6 +377,20 @@ impl VoiceSessionApplication {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn delivered_revision_requires_a_confirmed_continuation() {
+        let mut input = SpokenInput {
+            revision: 2,
+            delivered_revision: 1,
+            ..Default::default()
+        };
+        assert!(!may_accumulate(&input, false));
+        assert!(may_accumulate(&input, true));
+        input.delivered_revision = 2;
+        assert!(!may_accumulate(&input, true));
+        input.delivered_revision = 0;
+        assert!(may_accumulate(&input, false));
+    }
     #[test]
     fn relevance_is_sticky_and_can_upgrade() {
         assert_eq!(
