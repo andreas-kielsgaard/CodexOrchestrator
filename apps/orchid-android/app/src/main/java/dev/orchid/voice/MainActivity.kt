@@ -10,7 +10,10 @@ import android.os.Handler
 import android.os.Looper
 import android.text.InputType
 import android.view.View
+import android.view.Gravity
 import android.widget.*
+import androidx.drawerlayout.widget.DrawerLayout
+import androidx.core.view.GravityCompat
 import okhttp3.Call
 import org.json.JSONObject
 
@@ -18,6 +21,9 @@ class MainActivity : Activity() {
     private lateinit var settings: ConnectionSettings
     private lateinit var client: PhoneHistoryClient
     private lateinit var root: LinearLayout
+    private lateinit var drawer: DrawerLayout
+    private lateinit var navigation: LinearLayout
+    private lateinit var title: TextView
     private lateinit var content: LinearLayout
     private lateinit var scroll: ScrollView
     private lateinit var status: TextView
@@ -33,6 +39,7 @@ class MainActivity : Activity() {
     private var composer: EditText? = null
     private var draft = ""
     private var tab = 0
+    private var transcript: ListeningTranscriptView? = null
     private var selectedSession: String? = null
     private var selectedTitle = "Session"
     private var pending: Call? = null
@@ -47,15 +54,18 @@ class MainActivity : Activity() {
     private val collapsed = mutableSetOf<String>()
     private var rendered = ""
     private val handler = Handler(Looper.getMainLooper())
+    private val transcriptRefresh = object : Runnable {
+        override fun run() { transcript?.refresh(); handler.postDelayed(this, 250) }
+    }
     private val refresh = object : Runnable {
         override fun run() {
             val capture = runCatching { JSONObject(settings.captureStatus) }.getOrDefault(JSONObject())
             val fresh = runCatching { java.time.Instant.parse(capture.optString("updatedAt")).toEpochMilli() > System.currentTimeMillis() - 5000 }.getOrDefault(false)
-            status.text = if (capture.optBoolean("recording") && fresh) settings.status else settings.listeningStopReason.takeIf { it.isNotBlank() } ?: capture.optString("error").takeUnless { it == "null" || it.isBlank() } ?: "Stopped"
+            status.text = if (tab == 0) settings.status.takeUnless { it.startsWith("Stopped") } ?: "Stopped" else if (capture.optBoolean("recording") && fresh) settings.status else settings.listeningStopReason.takeIf { it.isNotBlank() } ?: capture.optString("error").takeUnless { it == "null" || it.isBlank() } ?: "Stopped"
             exchange?.text = settings.lastExchange.ifBlank { "Your conversation will appear here." }
             volume?.text = if (getSystemService(AudioManager::class.java).getStreamVolume(AudioManager.STREAM_MUSIC) == 0)
                 "Media volume is muted" else "Speech follows your media volume"
-            if (tab == 0) { renderLive(); loadLive() }
+            if (tab == 3) { renderLive(); loadLive() }
             if (tab == 1 && pending == null) loadHistory()
             handler.postDelayed(this, 3000)
         }
@@ -78,17 +88,25 @@ class MainActivity : Activity() {
         window.navigationBarColor = PhoneTheme.canvas
         root = PhoneTheme.column(this).apply { setBackgroundColor(PhoneTheme.canvas); fitsSystemWindows = true }
         val header = PhoneTheme.column(this).apply { setPadding(dp(20), dp(16), dp(20), dp(8)) }
-        header.addView(PhoneTheme.text(this, "Orchid Voice", 24f, bold = true))
+        val heading = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        heading.addView(PhoneTheme.button(this, "☰") { drawer.openDrawer(GravityCompat.START) }.apply { contentDescription = "Open navigation" }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginEnd = dp(12) })
+        title = PhoneTheme.text(this, "Orchid", 24f, bold = true)
+        heading.addView(title, LinearLayout.LayoutParams(0, -2, 1f)); header.addView(heading)
         status = PhoneTheme.text(this, settings.status, 13f, PhoneTheme.accent); header.addView(status)
         root.addView(header)
         scroll = ScrollView(this).apply { isFillViewport = true }
         content = PhoneTheme.column(this).apply { setPadding(dp(20), dp(8), dp(20), dp(20)) }
         scroll.addView(content); root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        val navigation = LinearLayout(this).apply { setPadding(dp(12), dp(8), dp(12), dp(12)); setBackgroundColor(PhoneTheme.surface) }
-        listOf("Voice", "Sessions", "Settings").forEachIndexed { index, title ->
-            navigation.addView(PhoneTheme.button(this, title) { switchTab(index) }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(3); marginEnd = dp(3) })
+        navigation = PhoneTheme.column(this).apply { setPadding(dp(16), dp(32), dp(16), dp(16)); setBackgroundColor(PhoneTheme.surface); fitsSystemWindows = true }
+        listOf("Listen", "Sessions", "Settings", "Status").forEachIndexed { index, label ->
+            navigation.addView(PhoneTheme.button(this, label) { switchTab(index); drawer.closeDrawer(GravityCompat.START) }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
         }
-        root.addView(navigation); setContentView(root); showTab()
+        drawer = DrawerLayout(this).apply {
+            addView(root, DrawerLayout.LayoutParams(-1, -1))
+            addView(navigation, DrawerLayout.LayoutParams(dp(280), -1, GravityCompat.START))
+            setDrawerTitle(GravityCompat.START, "Orchid navigation")
+        }
+        setContentView(drawer); showTab()
     }
     private fun dp(value: Int) = PhoneTheme.dp(this, value)
     private fun addText(parent: LinearLayout, text: String, size: Float = 15f, color: Int = PhoneTheme.primary, bold: Boolean = false) {
@@ -102,7 +120,7 @@ class MainActivity : Activity() {
         val body = PhoneTheme.column(this)
         var open = key in expanded || (initiallyOpen && key !in collapsed)
         val toggle = PhoneTheme.button(this, "${if (open) "▾" else "▸"} $title") {}
-        toggle.setTextColor(PhoneTheme.primary); toggle.gravity = android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL
+        toggle.setTextColor(PhoneTheme.primary); toggle.gravity = GravityCompat.START or android.view.Gravity.CENTER_VERTICAL
         toggle.setOnClickListener {
             open = !open; body.visibility = if (open) View.VISIBLE else View.GONE
             toggle.text = "${if (open) "▾" else "▸"} $title"
@@ -116,14 +134,21 @@ class MainActivity : Activity() {
         if (tab == 1) loadHistory()
     }
     private fun showTab() {
-        content.removeAllViews(); exchange = null; volume = null; composer = null; live = null; liveDetails = null; levelMeter = null; rendered = ""
-        val navigation = root.getChildAt(2) as LinearLayout
+        content.removeAllViews(); exchange = null; volume = null; composer = null; live = null; liveDetails = null; levelMeter = null; transcript = null; rendered = ""
+        title.text = listOf("Orchid", "Sessions", "Settings", "Status")[tab]
         for (index in 0 until navigation.childCount) {
             val button = navigation.getChildAt(index) as Button
             button.background = PhoneTheme.background(this, if (index == tab) PhoneTheme.selected else PhoneTheme.surface)
             button.isSelected = index == tab
         }
-        when (tab) { 0 -> conversation(); 1 -> renderHistory(); 2 -> setup() }
+        when (tab) { 0 -> listening(); 1 -> renderHistory(); 2 -> setup(); 3 -> conversation() }
+    }
+    private fun listening() {
+        val actions = LinearLayout(this)
+        actions.addView(PhoneTheme.button(this, "Start listening") { begin() }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginEnd = dp(6) })
+        actions.addView(PhoneTheme.button(this, "Stop listening") { startService(Intent(this, ConversationService::class.java).setAction("STOP")) }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(6) })
+        content.addView(actions)
+        transcript = ListeningTranscriptView(this, settings).also { content.addView(it, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(16) }) }
     }
     private fun conversation() {
         addText(content, "Conversation", 20f, bold = true)
@@ -223,6 +248,18 @@ class MainActivity : Activity() {
                 else startActivity(Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
             }
             addText(body, "Garmin and headset buttons depend on the device's assistant support. Your microphone setting still applies. A custom wake phrase is not enabled.", color = PhoneTheme.secondary)
+        }
+        section(content, "google-handoff", "Hey Google handoff", true) { body ->
+            body.addView(Switch(this).apply {
+                text = "Automatic Google handoff"; setTextColor(PhoneTheme.primary); minHeight = dp(48)
+                isChecked = settings.googleHandoff
+                setOnCheckedChangeListener { _, checked -> settings.googleHandoff = checked }
+            })
+            addText(body, "Experimental: when Google's assistant overlay opens, dismiss it and start Orchid listening. Choose Google as the default assistant, enable Hey Google, and enable Orchid Google handoff in Accessibility.", color = PhoneTheme.secondary)
+            action(body, "Enable handoff access") {
+                startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+            addText(body, "Hey Google: Gemini → profile → Settings → Talk to Gemini hands-free → Hey Google and Voice Match. Phone and locked-screen handoff still need verification.", color = PhoneTheme.secondary)
         }
         section(content, "microphone", "Microphone", true) { body ->
             val choices = RadioGroup(this)
@@ -414,13 +451,15 @@ class MainActivity : Activity() {
         try { settings.validate() } catch (error: Exception) { Toast.makeText(this, error.message, Toast.LENGTH_LONG).show(); switchTab(2); return }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) { requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1); return }
         if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) { requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 2); return }
+        switchTab(0); drawer.closeDrawer(GravityCompat.START)
+        settings.status = "Connecting…"; status.text = settings.status
         startForegroundService(Intent(this, ConversationService::class.java).setAction("START"))
     }
     override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) { super.onRequestPermissionsResult(code, permissions, results); if (results.isNotEmpty() && results[0] == PackageManager.PERMISSION_GRANTED) begin() }
     override fun onActivityResult(code: Int, result: Int, data: Intent?) { super.onActivityResult(code, result, data); if (code == 3 && tab == 2) showTab() }
-    override fun onResume() { super.onResume(); handler.post(refresh) }
-    override fun onPause() { handler.removeCallbacks(refresh); pending?.cancel(); pending = null; liveCall?.cancel(); liveCall = null; generation++; super.onPause() }
+    override fun onResume() { super.onResume(); handler.post(refresh); handler.post(transcriptRefresh) }
+    override fun onPause() { handler.removeCallbacks(refresh); handler.removeCallbacks(transcriptRefresh); pending?.cancel(); pending = null; liveCall?.cancel(); liveCall = null; generation++; super.onPause() }
     override fun onDestroy() { client.close(); super.onDestroy() }
     override fun onSaveInstanceState(state: Bundle) { super.onSaveInstanceState(state); state.putInt("tab", tab); state.putString("session", selectedSession); state.putString("title", selectedTitle); state.putString("draft", composer?.text?.toString() ?: draft); state.putStringArrayList("expanded", ArrayList(expanded)); state.putStringArrayList("collapsed", ArrayList(collapsed)) }
-    @Deprecated("Activity back navigation") override fun onBackPressed() { if (tab == 1 && selectedSession != null) { selectedSession = null; switchTab(1) } else super.onBackPressed() }
+    @Deprecated("Activity back navigation") override fun onBackPressed() { if (drawer.isDrawerOpen(GravityCompat.START)) drawer.closeDrawer(GravityCompat.START) else if (tab == 1 && selectedSession != null) { selectedSession = null; switchTab(1) } else if (tab != 0) switchTab(0) else super.onBackPressed() }
 }

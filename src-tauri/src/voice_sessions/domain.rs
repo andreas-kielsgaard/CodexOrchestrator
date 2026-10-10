@@ -73,6 +73,8 @@ impl Default for VoiceSettings {
 pub(crate) struct VoiceState {
     pub(crate) settings: VoiceSettings,
     pub(crate) conversation: Option<Conversation>,
+    #[serde(default)]
+    pub(crate) connection_requested: bool,
     #[serde(skip_deserializing)]
     pub(crate) enabled: bool,
     #[serde(skip_deserializing)]

@@ -42,11 +42,14 @@ class ConversationService : Service() {
             "TEXT" -> { val text = intent.getStringExtra("text") ?: ""; if (connection?.send(JSONObject().put("type", "text").put("id", UUID.randomUUID().toString()).put("text", text)) != true) settings.status = "Start the connection before sending" }
             "START" -> try {
                 settings.listeningStopReason = ""
-                inactivity.activate(SystemClock.elapsedRealtime())
-                if (connection == null) begin() else if (!listening) {
-                    startForeground(1, notification("Starting microphone…"), foregroundTypes())
-                    listening = true; startCapture()
-                    status(if (connection?.connected == true) "Listening · connected" else "Listening · connecting")
+                if (connection == null) begin() else {
+                    if (!listening) startForeground(1, notification("Connecting…"), foregroundTypes())
+                    listening = true
+                    if (connection?.connected == true) {
+                        inactivity.activate(SystemClock.elapsedRealtime())
+                        if (capture == null) startCapture()
+                        status("Listening · connected")
+                    } else { inactivity.stop(); connection?.start(); status("Connecting…") }
                 }
                 handler.removeCallbacks(checkInactivity); handler.postDelayed(checkInactivity, 1000)
             } catch (error: Exception) { settings.status = error.message ?: "Unable to start"; stopSelf() }
@@ -65,7 +68,10 @@ class ConversationService : Service() {
         wake = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Orchid:conversation").apply { acquire(8 * 60 * 60 * 1000L) }
         player = SpeechPlayer(this, { connection?.send(it) }, { status(it) }, { if (connection?.connected == true) status("Listening · connected") })
         cues = CuePlayer(this)
-        connection = OrchidConnection(settings, { status(it) }, { value ->
+        connection = OrchidConnection(settings, { message ->
+            if (connection?.connected != true) { capture?.close(); capture = null; inactivity.stop() }
+            status(if (message == "Listening · connected" && !listening) settings.listeningStopReason.ifBlank { "Connected · microphone off" } else message)
+        }, { value ->
             handler.post {
                 inactivity.receive(value.optString("type"), SystemClock.elapsedRealtime())
                 if (value.optString("type") == "input_released") inactivity.delivered(SystemClock.elapsedRealtime(), value.optInt("followupSeconds", settings.followupSeconds))
@@ -73,6 +79,10 @@ class ConversationService : Service() {
             when (value.optString("type")) {
                 "hello" -> {
                     connection?.send(settings.inputSettings())
+                    if (listening) {
+                        inactivity.activate(SystemClock.elapsedRealtime())
+                        startCapture()
+                    }
                     handler.post {
                         val inputs = value.optJSONArray("inputClassifications")
                         if (inputs != null) for (index in 0 until inputs.length()) {
@@ -98,7 +108,6 @@ class ConversationService : Service() {
                 "ended" -> handler.post { stopSelf() }
             }
         }).also { it.start() }
-        startCapture()
     }
     private fun startCapture() {
         capture?.close()

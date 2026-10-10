@@ -24,6 +24,9 @@ class ConnectionSettings(context: Context) {
     var microphone: String
         get() = preferences.getString("microphone", "phone") ?: "phone"
         set(value) { require(value in listOf("phone", "headset")); preferences.edit().putString("microphone", value).apply() }
+    var googleHandoff: Boolean
+        get() = preferences.getBoolean("google-handoff", false)
+        set(value) { preferences.edit().putBoolean("google-handoff", value).apply() }
     var captureStatus: String
         get() = preferences.getString("capture-status", "{}") ?: "{}"
         set(value) { preferences.edit().putString("capture-status", value).apply() }

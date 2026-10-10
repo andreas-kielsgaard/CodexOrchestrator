@@ -7,6 +7,7 @@ android {
     defaultConfig { testInstrumentationRunner = "dev.orchid.voice.ConnectionProbeInstrumentation" }
 }
 dependencies {
+    implementation("androidx.drawerlayout:drawerlayout:1.2.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.github.gkonovalov.android-vad:webrtc:2.0.10")
 }

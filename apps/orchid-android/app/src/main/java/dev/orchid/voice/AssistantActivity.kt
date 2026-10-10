@@ -9,29 +9,18 @@ import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.widget.TextView
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.Toast
-import android.view.ViewTreeObserver
 
 /** Assistant activation controls and recent unfiltered transcripts. */
 class AssistantActivity : Activity() {
     private lateinit var settings: ConnectionSettings
-    private lateinit var detectedInput: TextView
-    private lateinit var inputScroll: ScrollView
-    private var renderedInput = ""
+    private lateinit var inputScroll: ListeningTranscriptView
     private var activationPending = true
     private val handler = Handler(Looper.getMainLooper())
     private val refresh = object : Runnable {
         override fun run() {
-            val input = settings.detectedInput
-            if (renderedInput != input) {
-                val following = !inputScroll.canScrollVertically(1)
-                if (following) followAfterLayout()
-                detectedInput.text = DetectedInput(settings).display()
-                renderedInput = input
-            }
+            inputScroll.refresh()
             handler.postDelayed(this, 250)
         }
     }
@@ -58,19 +47,8 @@ class AssistantActivity : Activity() {
         }
         action("Open Orchid") { openApp() }
         action("Dismiss") { finish() }
-        detectedInput = PhoneTheme.text(this, "", 16f).apply {
-            text = DetectedInput(settings).display()
-            setTextIsSelectable(true)
-            contentDescription = "Latest detected input before filtering"
-            setPadding(PhoneTheme.dp(this@AssistantActivity, 12), PhoneTheme.dp(this@AssistantActivity, 12), PhoneTheme.dp(this@AssistantActivity, 12), PhoneTheme.dp(this@AssistantActivity, 12))
-        }
-        inputScroll = ScrollView(this).apply {
-            isFillViewport = true
-            background = PhoneTheme.background(this@AssistantActivity, PhoneTheme.surface)
-            addView(detectedInput)
-        }
+        inputScroll = ListeningTranscriptView(this, settings)
         root.addView(inputScroll, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = PhoneTheme.dp(this@AssistantActivity, 16) })
-        followAfterLayout()
         frame.addView(root, LinearLayout.LayoutParams(-1, -1))
         setContentView(frame)
     }
@@ -84,14 +62,6 @@ class AssistantActivity : Activity() {
         if (activationPending) { activationPending = false; begin() }
     }
     override fun onPause() { handler.removeCallbacks(refresh); super.onPause() }
-    private fun followAfterLayout() {
-        inputScroll.viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
-            override fun onGlobalLayout() {
-                inputScroll.viewTreeObserver.removeOnGlobalLayoutListener(this)
-                inputScroll.fullScroll(android.view.View.FOCUS_DOWN)
-            }
-        })
-    }
     private fun begin() {
         try { settings.validate() } catch (_: Exception) {
             Toast.makeText(this, "Open Orchid and save your laptop connection first.", Toast.LENGTH_LONG).show()

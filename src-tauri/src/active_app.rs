@@ -149,6 +149,7 @@ pub(crate) fn run() {
             )?;
             let voice = voice_sessions::compose(database.clone(), application.clone(), capability_profiles.clone(), repository_catalog.clone(), managed_mcp_upstreams.clone())?;
             *voice_notification.lock().map_err(|_| "Voice notifications unavailable")? = Some(Arc::downgrade(&voice));
+            voice.restore_connection();
             app.manage(crate::voice_sessions::transport::VoiceSessionTauriState(voice));
             // Resolve runtime executable identity first, then update it off the UI thread. Sends
             // wait at the durable preparation boundary while this work is active. Review builds
@@ -563,7 +564,7 @@ pub(crate) fn run() {
     app.run(|app_handle, event| {
         if let tauri::RunEvent::ExitRequested { api, .. } = event {
             if let Some(voice)=app_handle.try_state::<crate::voice_sessions::transport::VoiceSessionTauriState>() {
-                let _=voice.0.stop();
+                let _=voice.0.shutdown();
             }
             if let Some(state) =
                 app_handle.try_state::<crate::agent_sessions::transport::AgentSessionTauriState>()

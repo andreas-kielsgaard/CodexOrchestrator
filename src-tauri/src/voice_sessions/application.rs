@@ -143,6 +143,7 @@ impl VoiceSessionApplication {
             .map_err(|_| "Voice gateway unavailable")? = Some(owner);
         self.update(|state| {
             state.enabled = true;
+            state.connection_requested = true;
             state.error = None;
             Ok(())
         })?;
@@ -150,6 +151,19 @@ impl VoiceSessionApplication {
         self.view()
     }
     pub(crate) fn stop(&self) -> Result<(), String> {
+        self.close_gateway(true)
+    }
+    pub(crate) fn shutdown(&self) -> Result<(), String> {
+        self.close_gateway(false)
+    }
+    pub(crate) fn restore_connection(self: &Arc<Self>) {
+        if self.snapshot().is_ok_and(|state| state.connection_requested) {
+            if let Err(error) = self.start(false) {
+                self.set_error(format!("Unable to restore phone connection: {error}"));
+            }
+        }
+    }
+    fn close_gateway(&self, explicit: bool) -> Result<(), String> {
         let _lane = self
             .lifecycle
             .lock()
@@ -162,6 +176,7 @@ impl VoiceSessionApplication {
         self.speech.close();
         self.update(|state| {
             state.enabled = false;
+            if explicit { state.connection_requested = false; }
             state.phone_connected = false;
             state.speaking = false;
             state.pending_audio = 0;

@@ -29,5 +29,9 @@
             <meta-data android:name="android.speech" android:resource="@xml/recognition" />
         </service>
         <service android:name=".ConversationService" android:exported="false" android:foregroundServiceType="microphone|mediaPlayback" />
+        <service android:name=".GoogleAssistantHandoff" android:label="Orchid Google handoff" android:exported="true" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/google_handoff" />
+        </service>
     </application>
 </manifest>

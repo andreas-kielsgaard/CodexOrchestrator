@@ -15,7 +15,7 @@ Android builds require Java 17 or later and Android SDK 36. The wrapper pins Gra
 
 For an authenticated connection and installed offline-voice check without microphone access, build with `powershell -File scripts/android/build.ps1 -ConnectionProbe`, install the generated Android test APK, and run `adb -s <verified-transport> shell am instrument -w dev.orchid.voice.test/dev.orchid.voice.ConnectionProbeInstrumentation`. The desktop gateway must already be enabled. This check uses the app's saved setup and does not verify recording or playback.
 
-Add `-e reconnect true` to test the actual Android connection client's recovery. After the connected status appears, interrupt the desktop process, restart it, and resume its gateway. The probe waits up to 40 seconds for each loss/recovery stage and closes its connection afterward; it does not open the microphone.
+Add `-e reconnect true` to test the actual Android connection client's recovery. After the connected status appears, interrupt the desktop process, restart it. An enabled gateway resumes automatically; explicitly stopping the connection keeps it stopped on later launches. The probe waits up to 40 seconds for each loss/recovery stage and closes its connection afterward; it does not open the microphone.
 
 ## Use
 
@@ -25,9 +25,11 @@ The summarizer first acknowledges receipt briefly. The router delegates research
 
 The agent announces available material before giving a full report. Invite the explanation. Speaking during playback stops current and queued phone speech; the next reasoning input includes the interruption position and relevant material. Playback positions are approximate elapsed milliseconds, not word alignment.
 
-The phone has **Voice**, **Sessions**, and **Settings** tabs. Sessions separates the main interaction, reasoning stages, and delegated workers, including further delegations. Open a session to see its input, replies, status, and expandable activity; load earlier turns for older history. History refreshes while visible and does not start the microphone. Desktop Voice Sessions also shows the accepted buffer and recent JEV decisions. Voice Sessions must be enabled on the laptop.
+The phone opens on **Listen**, with Start/Stop controls and unfiltered, revisable transcript text. Start listening returns here from **Status**. Swipe inward from the left edge or tap the menu button to open the drawer containing **Listen**, **Sessions**, **Settings**, and **Status**. Sessions separates the main interaction, reasoning stages, and delegated workers, including further delegations. Open a session to see its input, replies, status, and expandable activity; load earlier turns for older history. History refreshes while visible and does not start the microphone. Desktop Voice Sessions also shows the accepted buffer and recent JEV decisions. Enable Voice Sessions once on the laptop; the gateway restores that choice after restart. The phone microphone starts only after an authenticated connection and explicit phone activation.
 
-**Voice → Live status** has a Phone / External microphone switch that applies immediately. The actual recording route and signal appear below it. The phone and desktop show audio packets reaching transcription, JEV decisions, why accepted input is held, and reasoning states/errors. Open **Input and reasoning details** on the phone for more detail.
+**Status → Live status** has a Phone / External microphone switch that applies immediately. The actual recording route and signal appear below it. The phone and desktop show audio packets reaching transcription, JEV decisions, why accepted input is held, and reasoning states/errors. Open **Input and reasoning details** on the phone for more detail.
+
+**Settings → Hey Google handoff** contains an experimental automatic bridge. With Google as the default assistant, Hey Google enabled, Orchid's handoff switch on, and **Orchid Google handoff** enabled in Android Accessibility, it dismisses recognized Google assistant overlays and opens Orchid listening. Ordinary Google app windows are excluded. Google overlay recognition and locked-screen activation require device verification; this bridge is off by default.
 
 Listening stops after one minute without JEV-confirmed relevant input. Change the duration under **Settings → Listening timeout**. Voice shows the countdown and stop reason. Start listening or activate the assistant to resume. Replies can still arrive with capture stopped. A received audio segment that produces no words is displayed separately and never reaches JEV.
 

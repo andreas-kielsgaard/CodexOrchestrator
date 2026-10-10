@@ -19,7 +19,14 @@ impl VoiceSessionRepository {
                     .map_err(|e| e.to_string())
             })
             .map_err(|e| e.into_string())?;
-        json.map(|value| serde_json::from_str(&value).map_err(|e| e.to_string()))
+        json.map(|value| {
+            let saved: serde_json::Value = serde_json::from_str(&value).map_err(|e| e.to_string())?;
+            let mut state: VoiceState = serde_json::from_value(saved.clone()).map_err(|e| e.to_string())?;
+            if saved.get("connectionRequested").is_none() {
+                state.connection_requested = saved["enabled"].as_bool().unwrap_or(false);
+            }
+            Ok(state)
+        })
             .unwrap_or_else(|| Ok(VoiceState::default()))
     }
     pub(crate) fn save(&self, state: &VoiceState) -> Result<(), String> {
@@ -35,7 +42,7 @@ impl VoiceSessionRepository {
 mod tests {
     use super::*;
     #[test]
-    fn restart_retains_conversation_material_but_requires_explicit_reconnection() {
+    fn restart_retains_connection_intent_and_conversation_but_not_live_flags() {
         let database = Arc::new(
             ActiveDatabase::from_connection(
                 rusqlite::Connection::open_in_memory().unwrap(),
@@ -46,6 +53,7 @@ mod tests {
         let repository = VoiceSessionRepository(database);
         let mut state = VoiceState::default();
         state.enabled = true;
+        state.connection_requested = true;
         state.phone_connected = true;
         state.settings.profile_id = "profile".into();
         state.settings.prompts.output = "Custom concise output instructions".into();
@@ -72,6 +80,7 @@ mod tests {
         repository.save(&state).unwrap();
         let restarted = repository.load().unwrap();
         assert!(!restarted.enabled);
+        assert!(restarted.connection_requested);
         assert!(!restarted.phone_connected);
         assert_eq!(
             restarted.settings.prompts.output,
@@ -82,6 +91,26 @@ mod tests {
         assert_eq!(conversation.pending_topics[0].material, "Retained facts");
         assert_eq!(conversation.playback.unwrap().played_ms, 1600);
         assert_eq!(conversation.observed_sessions, ["outside-workflow"]);
+    }
+    #[test]
+    fn legacy_enabled_gateway_migrates_to_connection_intent_and_explicit_stop_persists() {
+        let database = Arc::new(ActiveDatabase::from_connection(
+            rusqlite::Connection::open_in_memory().unwrap(),
+            |connection| connection.execute_batch(SCHEMA).map_err(|e| e.to_string()),
+        ).unwrap());
+        let repository = VoiceSessionRepository(database.clone());
+        let mut legacy = serde_json::to_value(VoiceState::default()).unwrap();
+        legacy.as_object_mut().unwrap().remove("connectionRequested");
+        legacy["enabled"] = serde_json::json!(true);
+        database.write("legacy voice fixture", |transaction| {
+            transaction.execute("INSERT INTO voice_session_state VALUES(1,?1)", [legacy.to_string()]).map_err(|e| e.to_string())?;
+            Ok::<_, String>(())
+        }).unwrap();
+        let mut state = repository.load().unwrap();
+        assert!(state.connection_requested && !state.enabled);
+        state.connection_requested = false;
+        repository.save(&state).unwrap();
+        assert!(!repository.load().unwrap().connection_requested);
     }
     #[test]
     fn restart_retains_pipeline_and_accepted_buffer_without_live_capture_flags() {

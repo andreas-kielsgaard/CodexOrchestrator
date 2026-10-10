@@ -1,0 +1,3 @@
+<resources>
+    <string name="google_handoff_description">Detect the Google assistant overlay and open Orchid listening. Enable automatic Google handoff in Orchid Settings. Google must be the default assistant with Hey Google enabled.</string>
+</resources>
