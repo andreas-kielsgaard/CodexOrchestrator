@@ -29,16 +29,12 @@ pub struct JevRuntime {
 
 impl JevRuntime {
     pub fn system() -> Self {
-        Self::new(
-            ENDPOINT.into(),
-            Arc::new(|| {
-                std::env::var("TYPESAFE_API_KEY")
-                    .ok()
-                    .filter(|key| !key.trim().is_empty())
-                    .ok_or_else(|| "Set TYPESAFE_API_KEY in Orchid's environment to run Jev".into())
-            }),
-            Duration::from_secs(30),
-        )
+        Self::system_with_credential(Arc::new(|| {
+            std::env::var("TYPESAFE_API_KEY")
+                .ok()
+                .filter(|key| !key.trim().is_empty())
+                .ok_or_else(|| "Set TYPESAFE_API_KEY in Orchid's environment to run Jev".into())
+        }))
     }
 
     pub fn new(endpoint: String, credential: CredentialReader, timeout: Duration) -> Self {
@@ -48,6 +44,10 @@ impl JevRuntime {
             credential,
             timeout,
         }
+    }
+
+    pub fn system_with_credential(credential: CredentialReader) -> Self {
+        Self::new(ENDPOINT.into(), credential, Duration::from_secs(30))
     }
 }
 

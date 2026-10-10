@@ -116,6 +116,7 @@ import { FileReviewScreen } from '../features/fileReview';
 
 import type { NativeProfileClient } from '../infrastructure/agentProviders/codex/profiles/nativeProfileClient';
 import type { ClaudeSetupClient } from '../infrastructure/agentProviders/claude/claudeSetupClient';
+import type { JevCredentialClient } from '../infrastructure/agentProviders/jev/jevCredentialClient';
 
 import type { NativeProfileApplicationConsumer } from '../infrastructure/agentProviders/codex/profiles/nativeProfileConsumer';
 
@@ -256,6 +257,7 @@ export interface AppProps {
 
   readonly nativeProfileClient?: NativeProfileClient;
   readonly claudeSetupClient?: ClaudeSetupClient;
+  readonly jevCredentialClient?: JevCredentialClient;
 
   readonly agentCliUpdateClient?: AgentCliUpdateClient;
 
@@ -381,6 +383,7 @@ export function App({
   nativeProfileClient,
 
   claudeSetupClient,
+  jevCredentialClient,
 
   agentCliUpdateClient,
 
@@ -1824,6 +1827,7 @@ export function App({
         <TechnicalSettingsScreen
           nativeClient={nativeProfileClient}
           claudeClient={claudeSetupClient}
+          jevClient={jevCredentialClient}
           cliUpdateClient={agentCliUpdateClient}
 
           readOtpCatalogue={otpCatalogueReader}

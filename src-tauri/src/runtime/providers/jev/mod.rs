@@ -1,4 +1,6 @@
 pub(crate) mod configuration;
+mod credentials;
+pub(crate) mod transport;
 pub(crate) use orchid_engine::providers::jev::{contracts, JevRuntime, DEFAULT_MODEL, PROVIDER};
 
 pub(crate) fn register(
@@ -8,7 +10,9 @@ pub(crate) fn register(
         PROVIDER,
         super::registrations::ProviderRegistration::new(
             std::sync::Arc::new(configuration::JevConfigurationSource),
-            std::sync::Arc::new(JevRuntime::system()),
+            std::sync::Arc::new(JevRuntime::system_with_credential(std::sync::Arc::new(
+                credentials::resolve,
+            ))),
             None,
         ),
     )

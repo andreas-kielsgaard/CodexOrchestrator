@@ -2,7 +2,7 @@
 
 Jev uses the existing Agent Session and invocation lifecycle. Backend callers create a session, submit a typed evaluation, and read its persisted result. Each invocation makes an independent HTTP request; previous invocations are not added to its state.
 
-Set `TYPESAFE_API_KEY` in Orchid's environment before launching the application. The key is read at invocation time and is not stored in session records or returned by backend commands. The endpoint is `https://api.typesafe.ai/v1/systemone`; the default model is `jev-latest`. A model ID can be selected when creating a session.
+In **Technical Settings → JEV**, save the TypeSafe API key in Windows Credential Manager. It is scoped to the current Windows user under `dev.codex-orchestrator.app/jev/api-key`, independent of executable path, branch, and database. If no saved key exists, Orchid uses the launcher's `TYPESAFE_API_KEY`. The key is read at invocation time and is not stored in session records or returned by backend commands. The endpoint is `https://api.typesafe.ai/v1/systemone`; the default model is `jev-latest`. A model ID can be selected when creating a session.
 
 ## Backend commands
 
@@ -42,7 +42,7 @@ Rust product consumers call `AgentSessionApplication::{create_jev_api_session, i
 
 ## Application CLI
 
-`node review-tools/app-inspector/jev-query.mjs request.json result.json` submits an evaluation through the running executable's native commands and waits for its persisted terminal result. The request contains `exe`, `pid`, `debugUrl`, `targetUrl`, and `evaluation` (the state/questions object above). Optional `model` and `title` apply to a new session; `sessionId` reuses a Jev session, and `invocationId` permits explicit replay verification. A failed invocation exits with status 1 and retains its result record. The key stays in the executable's environment.
+`node review-tools/app-inspector/jev-query.mjs request.json result.json` submits an evaluation through the running executable's native commands and waits for its persisted terminal result. The request contains `exe`, `pid`, `debugUrl`, `targetUrl`, and `evaluation` (the state/questions object above). Optional `model` and `title` apply to a new session; `sessionId` reuses a Jev session, and `invocationId` permits explicit replay verification. A failed invocation exits with status 1 and retains its result record. The key stays in Windows Credential Manager or the executable's environment.
 
 Use an explicitly identified instance launched with a loopback WebView2 debug port; see the [application inspector](../review-tools/app-inspector/README.md). The CLI verifies endpoint ownership and invokes the product's actual session commands. It does not call TypeSafe directly.
 
@@ -52,4 +52,6 @@ Cancellation uses `cancel_agent_invocation`, and application shutdown cancels ac
 
 The request accepts typed Noul, Choice, and Score questions, including multiple questions per evaluation. The result retains the model, answers, and usage returned by the API. Schema validation rejects incomplete or mismatched answers before publication. See the [TypeSafe API reference](https://docs.typesafe.ai/api) for question and answer shapes.
 
-This integration supplies backend API sessions. UI setup, tools/skills, conversational context delivery, native resume, remote hosts, and OTP functionality are not exposed by this slice.
+This integration supplies backend API sessions. Tools/skills, conversational context delivery, native resume, remote hosts, and OTP functionality are not exposed by this slice.
+
+The provider adapter owns Credential Manager access in `src-tauri/src/runtime/providers/jev/credentials.rs` and injects its reader into the portable JEV runtime. Settings use `load_jev_credential_status`, `save_jev_api_key`, and `remove_jev_api_key`; status exposes only `saved` and `environmentAvailable` booleans. Saving or removing a key takes effect at the next invocation without restarting.

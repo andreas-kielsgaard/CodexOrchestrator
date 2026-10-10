@@ -4,6 +4,7 @@ import type { NativeProfileClient } from '../../infrastructure/agentProviders/co
 import type { OtpCatalogueReader, OtpInstallationClient } from '../../application/otp';
 import type { ExecutionTargetClient } from '../../application/executionTargets/contracts';
 import type { ClaudeSetupClient } from '../../infrastructure/agentProviders/claude/claudeSetupClient';
+import type { JevCredentialClient } from '../../infrastructure/agentProviders/jev/jevCredentialClient';
 import type { TechnicalSettingsSection } from '../../application/productNavigation';
 import type { AgentCliUpdateClient } from '../../application/agentCliUpdates';
 import { availableProviderSettings } from '../agentProviders/registrations';
@@ -14,6 +15,7 @@ import './technicalSettings.css';
 export function TechnicalSettingsScreen({
   nativeClient,
   claudeClient,
+  jevClient,
   executionClient,
   deviceClient,
   readOtpCatalogue,
@@ -26,6 +28,7 @@ export function TechnicalSettingsScreen({
 }: {
   readonly nativeClient: NativeProfileClient;
   readonly claudeClient?: ClaudeSetupClient;
+  readonly jevClient?: JevCredentialClient;
   readonly executionClient?: ExecutionConfigurationClient;
   readonly deviceClient?: ExecutionTargetClient;
   readonly readOtpCatalogue?: OtpCatalogueReader;
@@ -43,6 +46,7 @@ export function TechnicalSettingsScreen({
   const providerSettings = availableProviderSettings({
     nativeClient,
     claudeClient,
+    jevClient,
     selectedCodexProfileId,
     onSelectedCodexProfileChange,
   });
@@ -100,7 +104,9 @@ export function TechnicalSettingsScreen({
           <DeviceSetupOverview
             executionClient={executionClient}
             deviceClient={deviceClient}
-            providers={providerSettings.map((registration) => registration.provider)}
+            providers={providerSettings
+              .filter((registration) => registration.provider !== 'jev')
+              .map((registration) => registration.provider)}
             onConfigureProvider={(provider) => {
               const registration = providerSettings.find((entry) => entry.provider === provider);
               if (registration) setSection(registration.section);

@@ -3,11 +3,13 @@ import type { TechnicalSettingsSection } from '../../application/productNavigati
 import type { ClaudeSetupClient } from '../../infrastructure/agentProviders/claude/claudeSetupClient';
 import type { NativeProfileClient } from '../../infrastructure/agentProviders/codex/profiles/nativeProfileClient';
 import { ClaudeSetupSettings } from './claude/ClaudeSetupSettings';
+import { JevCredentialSettings } from './jev/JevCredentialSettings';
+import type { JevCredentialClient } from '../../infrastructure/agentProviders/jev/jevCredentialClient';
 import { CodexPersonalityField } from './codex/CodexPersonalityField';
 import { NativeProfileSettings } from './codex/profiles/NativeProfileSettings';
 import type { ProviderRouteSettingsProps } from './ProviderRouteSettings';
 
-type ProviderSettingsSection = Extract<TechnicalSettingsSection, 'native' | 'claude'>;
+type ProviderSettingsSection = Extract<TechnicalSettingsSection, 'native' | 'claude' | 'jev'>;
 
 interface ProviderUiRegistration {
   readonly provider: string;
@@ -29,6 +31,7 @@ const PROVIDERS: readonly ProviderUiRegistration[] = [
     settingsSection: 'claude',
     settingsLabel: 'Claude setups',
   },
+  { provider: 'jev', settingsSection: 'jev', settingsLabel: 'JEV' },
 ];
 
 export function providerUiRegistration(provider: string): ProviderUiRegistration | undefined {
@@ -45,10 +48,21 @@ export interface AvailableProviderSettings {
 export function availableProviderSettings(input: {
   readonly nativeClient: NativeProfileClient;
   readonly claudeClient?: ClaudeSetupClient;
+  readonly jevClient?: JevCredentialClient;
   readonly selectedCodexProfileId?: string | null;
   readonly onSelectedCodexProfileChange?: (profileId: string | null) => void;
 }): readonly AvailableProviderSettings[] {
   return PROVIDERS.flatMap((registration) => {
+    if (registration.provider === 'jev' && input.jevClient) {
+      return [
+        {
+          provider: registration.provider,
+          section: registration.settingsSection,
+          label: registration.settingsLabel,
+          content: <JevCredentialSettings client={input.jevClient} />,
+        },
+      ];
+    }
     if (registration.provider === 'codex') {
       return [
         {

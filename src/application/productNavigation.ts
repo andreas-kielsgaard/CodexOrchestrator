@@ -56,9 +56,11 @@ export const TECHNICAL_SETTINGS_SECTIONS: readonly string[] = [
   'inference',
   'native',
   'claude',
+  'jev',
   'otp',
 ];
-export type TechnicalSettingsSection = 'devices' | 'inference' | 'native' | 'claude' | 'otp';
+export type TechnicalSettingsSection =
+  'devices' | 'inference' | 'native' | 'claude' | 'jev' | 'otp';
 
 /** A File Review destination names its authoritative input; it never stores a display label or source. */
 export type FileReviewNavigationTarget =
