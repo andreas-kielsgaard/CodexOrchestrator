@@ -76,7 +76,10 @@ impl VoiceSessionApplication {
                 "turnCount":history.invocations.len()}))
             })
             .collect::<Result<Vec<_>, String>>()?;
-        Ok(json!({"conversationId":conversation.id,"sessions":sessions}))
+        Ok(
+            json!({"conversationId":conversation.id,"sessions":sessions,"tasks":conversation.tasks,
+            "assignments":conversation.delegations,"activity":activity_view(&conversation)}),
+        )
     }
 
     pub(crate) fn phone_history(&self, id: &str, before: Option<&str>) -> Result<Value, String> {
@@ -117,9 +120,26 @@ impl VoiceSessionApplication {
         Ok(
             json!({"sessionId":id,"title":history.session.title,"turns":turns,
             "exchanges":exchanges,"inputBuffer":conversation.input_buffer,"inputDecisions":conversation.inputs,
+            "activity":activity_view(&conversation),
             "nextBefore":if start > 0 {Some(history.invocations[start].invocation.id.as_str())} else {None}}),
         )
     }
+}
+
+fn activity_view(c: &Conversation) -> Vec<Value> {
+    c.activity
+        .iter()
+        .rev()
+        .take(20)
+        .map(|a| {
+            let text = ["summary", "text", "reason", "task", "finalReply"]
+                .iter()
+                .find_map(|key| a.data[*key].as_str())
+                .unwrap_or("");
+            json!({"id":a.id,"source":a.source,"kind":a.kind,"createdAt":a.created_at,
+            "text":text.chars().take(600).collect::<String>()})
+        })
+        .collect()
 }
 
 #[cfg(test)]

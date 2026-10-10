@@ -92,6 +92,8 @@ pub(crate) struct VoiceState {
     #[serde(skip_deserializing)]
     pub(crate) audio_progress: AudioProgress,
     #[serde(default)]
+    pub(crate) filter_error: Option<String>,
+    #[serde(default)]
     pub(crate) input_policy: VoiceInputPolicy,
 }
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -139,6 +141,8 @@ pub(crate) struct Conversation {
     pub(crate) activity: Vec<Activity>,
     #[serde(default)]
     pub(crate) last_input_release: Option<InputRelease>,
+    #[serde(default)]
+    pub(crate) tasks: Vec<VoiceTask>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -191,6 +195,20 @@ impl Conversation {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Delegation {
+    #[serde(default)]
+    pub(crate) id: String,
+    #[serde(default)]
+    pub(crate) task_id: String,
+    #[serde(default)]
+    pub(crate) revision: u64,
+    #[serde(default)]
+    pub(crate) parent_assignment_id: Option<String>,
+    #[serde(default)]
+    pub(crate) delivery: Option<crate::agent_sessions::application::ProductDeliveryReceipt>,
+    #[serde(default)]
+    pub(crate) outcome: Option<serde_json::Value>,
+    #[serde(default)]
+    pub(crate) runtime_status: Option<crate::agent_sessions::domain::AgentInvocationStatus>,
     pub(crate) session_id: String,
     pub(crate) from_session_id: String,
     pub(crate) return_session_id: String,
@@ -205,7 +223,10 @@ pub(crate) struct Observation {
     pub(crate) session_id: String,
     pub(crate) invocation_id: String,
     pub(crate) return_session_id: String,
-    pub(crate) detail: String,
+    #[serde(deserialize_with = "observation_detail")]
+    pub(crate) detail: serde_json::Value,
+    #[serde(default)]
+    pub(crate) delivery: Option<crate::agent_sessions::application::ProductDeliveryReceipt>,
     #[serde(default)]
     pub(crate) created_at: String,
 }
@@ -249,6 +270,27 @@ pub(crate) struct SpokenInput {
     pub(crate) evaluated_revision: u64,
     #[serde(default)]
     pub(crate) delivered_revision: u64,
+    #[serde(default)]
+    pub(crate) evaluation_failed: bool,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct VoiceTask {
+    pub(crate) id: String,
+    pub(crate) title: String,
+    pub(crate) revision: u64,
+    pub(crate) request: String,
+    pub(crate) updated_at: String,
+}
+
+fn observation_detail<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<serde_json::Value, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(match value {
+        serde_json::Value::String(ref text) => serde_json::from_str(text).unwrap_or(value),
+        _ => value,
+    })
 }
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]

@@ -50,6 +50,7 @@ pub(crate) fn tool_map() -> BTreeMap<String, BTreeSet<String>> {
             "voice_session",
             [
                 "delegate_work",
+                "report_outcome",
                 "publish",
                 "observe_sessions",
                 "read_context",

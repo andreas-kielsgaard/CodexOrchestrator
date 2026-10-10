@@ -50,6 +50,7 @@ class MainActivity : Activity() {
     private var exchanges = org.json.JSONArray()
     private var inputDecisions = org.json.JSONArray()
     private var inputBuffer = JSONObject()
+    private var voiceActivity = org.json.JSONArray()
     private val turns = linkedMapOf<String, JSONObject>()
     private val expanded = mutableSetOf<String>()
     private val collapsed = mutableSetOf<String>()
@@ -315,6 +316,7 @@ class MainActivity : Activity() {
             pending = null
             if (error != null) { if (::historyStatus.isInitialized) { historyStatus.text = error; historyStatus.setTextColor(PhoneTheme.danger) }; return@get }
             if (value == null) return@get
+            voiceActivity = value.optJSONArray("activity") ?: org.json.JSONArray()
             if (selectedSession == null) sessions = value else {
                 selectedTitle = value.optString("title", selectedTitle)
                 exchanges = value.optJSONArray("exchanges") ?: org.json.JSONArray()
@@ -324,7 +326,7 @@ class MainActivity : Activity() {
                 val entries = value.optJSONArray("turns")
                 if (entries != null) for (index in 0 until entries.length()) { val turn = entries.getJSONObject(index); turns[turn.getString("id")] = turn }
             }
-            val signature = if (selectedSession == null) sessions.toString() else turns.values.joinToString() + nextBefore + exchanges + inputDecisions + inputBuffer
+            val signature = if (selectedSession == null) sessions.toString() else turns.values.joinToString() + nextBefore + exchanges + inputDecisions + inputBuffer + voiceActivity
             if (signature != rendered) { val y = scroll.scrollY; renderHistory(); rendered = signature; scroll.post { scroll.scrollTo(0, y) } }
             historyStatus.text = "Updated · read only"; historyStatus.setTextColor(PhoneTheme.muted)
         }
@@ -393,6 +395,27 @@ class MainActivity : Activity() {
         if (selectedSession == null) {
             addText(content, "Sessions", 20f, bold = true)
             addText(content, "Follow the conversation and the agents working behind it.", color = PhoneTheme.secondary)
+            val tasks = sessions?.optJSONArray("tasks")
+            val assignments = sessions?.optJSONArray("assignments")
+            if (tasks != null && tasks.length() > 0) section(content, "voice-tasks", "Tasks", true) { body ->
+                for (index in 0 until tasks.length()) {
+                    val task = tasks.getJSONObject(index)
+                    var latest: JSONObject? = null
+                    if (assignments != null) for (i in 0 until assignments.length()) {
+                        val assignment = assignments.getJSONObject(i)
+                        if (assignment.optString("taskId") == task.optString("id")) latest = assignment
+                    }
+                    val current = latest
+                    section(body, "task-${task.optString("id")}", "${task.optString("title")} · request ${task.optInt("revision")}") { details ->
+                        val status = current?.optString("runtimeStatus")?.takeUnless { it == "null" || it.isBlank() } ?: "pending"
+                        val delivery = current?.optJSONObject("delivery")
+                        val amendment = delivery?.optString("inputId")?.takeUnless { it == "null" || it.isBlank() }
+                        addText(details, status + if (amendment != null) " · amendment ${delivery.optString("state")}" else "", 13f, PhoneTheme.accent)
+                        addText(details, task.optString("request"))
+                        current?.optJSONObject("outcome")?.let { addText(details, "Reported outcome: ${it.optString("summary")}") }
+                    }
+                }
+            }
             val entries = sessions?.optJSONArray("sessions")
             for ((role, title) in listOf("conversation" to "Main interaction", "reasoning" to "Reasoning sessions", "worker" to "Working sessions")) {
                 section(content, "group-$role", title, true) { body ->
@@ -437,11 +460,12 @@ class MainActivity : Activity() {
             }
             if (nextBefore != null) action(content, "Load earlier turns") { loadHistory(nextBefore) }
             if (turns.isEmpty()) addText(content, "No turns yet. This view updates as the session runs.", color = PhoneTheme.muted)
-            for (turn in turns.values.sortedBy { it.optString("createdAt") }) {
+            for (turn in turns.values.sortedByDescending { it.optString("createdAt") }) {
                 val id = turn.getString("id")
                 val card = PhoneTheme.card(this)
                 addText(card, "${turn.optString("status")} · ${turn.optString("createdAt").replace('T', ' ').take(19)}", 13f, PhoneTheme.accent)
-                section(card, "$id-request", if (turn.optString("provenance") == "user" || turn.optString("inputKind") == "speech") "Your input" else "Input / context", true) { addText(it, turn.optString("request")) }
+                val userInput = turn.optString("provenance") == "user" || turn.optString("inputKind") == "speech"
+                section(card, "$id-request", if (userInput) "Your input" else "Input / context", userInput) { addText(it, turn.optString("request")) }
                 val reply = turn.optString("reply").takeUnless { it == "null" || it.isBlank() }
                 if (reply != null) section(card, "$id-reply", "Agent response", true) { addText(it, reply) }
                 val error = turn.optString("error").takeUnless { it == "null" || it.isBlank() }
@@ -457,6 +481,13 @@ class MainActivity : Activity() {
                     }
                 }
                 content.addView(card)
+            }
+        }
+        if (voiceActivity.length() > 0) section(content, "voice-activity", "Recent voice activity") { body ->
+            for (index in 0 until voiceActivity.length()) {
+                val entry = voiceActivity.getJSONObject(index)
+                addText(body, "${entry.optString("createdAt").substringAfter('T').take(8)} · ${entry.optString("kind").replace('_', ' ')}", 12f, PhoneTheme.accent)
+                entry.optString("text").takeIf { it.isNotBlank() }?.let { addText(body, it, 14f, PhoneTheme.secondary) }
             }
         }
         historyStatus = PhoneTheme.text(this, "Loading from laptop…", 13f, PhoneTheme.muted); content.addView(historyStatus)

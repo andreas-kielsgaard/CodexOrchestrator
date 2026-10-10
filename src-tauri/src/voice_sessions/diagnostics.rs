@@ -22,6 +22,12 @@ fn input_status(state: &VoiceState) -> (&'static str, &'static str) {
                 "Deciding relevance and whether the input is complete.",
             );
         }
+        if state.filter_error.is_some() {
+            return (
+                "JEV evaluation needs another attempt",
+                "The unresolved input is retained for the next evaluation.",
+            );
+        }
         if !c.input_buffer.blocks.is_empty() {
             if !c.input_buffer.complete {
                 return ("Waiting for you to finish", "Input was accepted, but JEV thinks more is coming. Indicate when you are ready, for example: That is all, please handle it.");
@@ -111,7 +117,9 @@ impl VoiceSessionApplication {
                     .iter()
                     .filter(|o| o.return_session_id == id)
                     .count();
-                stages.push(json!({"role":role,"sessionId":id,"status":latest.map(|h|h.invocation.status),"queued":queued,
+                let assignment = c.delegations.iter().rev().find(|d| d.session_id == id);
+                let task = assignment.and_then(|d| c.tasks.iter().find(|t| t.id == d.task_id));
+                stages.push(json!({"role":role,"sessionId":id,"title":task.map(|t| &t.title).unwrap_or(&history.session.title),"status":latest.map(|h|h.invocation.status),"queued":queued,
                     "error":latest.and_then(|h|h.invocation.runtime_error.as_ref()).map(|e|&e.message)}));
             }
         }
@@ -119,7 +127,7 @@ impl VoiceSessionApplication {
         Ok(
             json!({"updatedAt":chrono::Utc::now().to_rfc3339(),"phoneConnected":state.phone_connected,
             "capture":state.capture,"audio":state.audio_progress,"pendingAudio":state.pending_audio,
-            "input":{"title":title,"detail":detail,"last":last},"stages":stages,"error":state.error}),
+            "input":{"title":title,"detail":detail,"last":last},"stages":stages,"filterError":state.filter_error,"error":state.error}),
         )
     }
 }

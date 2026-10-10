@@ -1,4 +1,54 @@
 use super::*;
+#[test]
+fn product_amendment_uses_steering_and_terminal_marks_undelivered_input_expired() {
+    let fixture = Fixture::with_runtime(RuntimeBehavior::StayRunning, false);
+    let instance = fixture.instance(None);
+    fixture
+        .execution
+        .dispatch_user_request(&instance.recipe.recipe_id, &instance.id, "Plan".into())
+        .unwrap();
+    let launch = fixture.launches().remove(0);
+    let receipt = fixture
+        .sessions
+        .deliver_or_steer_product(
+            launch.session_id.clone(),
+            "amendment".into(),
+            crate::agent_sessions::ports::InvocationContent::query("Use the amended request"),
+        )
+        .unwrap();
+    assert_eq!(receipt.invocation_id, launch.invocation_id.as_str());
+    assert!(receipt.input_id.is_some());
+    assert_eq!(
+        fixture
+            .sessions
+            .load_session(&launch.session_id)
+            .unwrap()
+            .invocations
+            .len(),
+        1
+    );
+    fixture
+        .sessions
+        .steering_boundary(&launch.invocation_id, true);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        let interactions = fixture
+            .sessions
+            .session_interactions(&launch.session_id)
+            .unwrap();
+        if interactions
+            .iter()
+            .any(|i| Some(&i.id) == receipt.input_id.as_ref() && i.state == "expired")
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Pending correction was not marked expired"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
 use crate::harness_engine::{
     domain::SidecarBindingRegistration,
     proxy::{run_proxy_listener, ProxyBindings},

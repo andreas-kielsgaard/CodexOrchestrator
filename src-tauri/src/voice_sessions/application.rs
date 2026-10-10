@@ -3,7 +3,7 @@ use super::{
 };
 use crate::agent_sessions::{
     application::AgentSessionApplication,
-    domain::{AgentInvocationInputProvenance, AgentSessionId},
+    domain::AgentSessionId,
     ports::{InvocationContent, InvocationContextPart},
 };
 use serde_json::{json, Value};
@@ -157,7 +157,10 @@ impl VoiceSessionApplication {
         self.close_gateway(false)
     }
     pub(crate) fn restore_connection(self: &Arc<Self>) {
-        if self.snapshot().is_ok_and(|state| state.connection_requested) {
+        if self
+            .snapshot()
+            .is_ok_and(|state| state.connection_requested)
+        {
             if let Err(error) = self.start(false) {
                 self.set_error(format!("Unable to restore phone connection: {error}"));
             }
@@ -176,7 +179,9 @@ impl VoiceSessionApplication {
         self.speech.close();
         self.update(|state| {
             state.enabled = false;
-            if explicit { state.connection_requested = false; }
+            if explicit {
+                state.connection_requested = false;
+            }
             state.phone_connected = false;
             state.speaking = false;
             state.pending_audio = 0;
@@ -194,16 +199,17 @@ impl VoiceSessionApplication {
         Ok(conversation)
     }
     pub(crate) fn context(&self, conversation: &Conversation) -> Value {
-        json!({"conversationId":conversation.id,"mainSessionId":conversation.main_session_id,"pipeline":conversation.pipeline,"delegations":conversation.delegations,"pendingTopics":conversation.pending_topics,"playback":conversation.playback,
+        json!({"conversationId":conversation.id,"mainSessionId":conversation.main_session_id,"pipeline":conversation.pipeline,
+            "tasks":conversation.tasks,"assignments":conversation.delegations.iter().rev().take(20).map(|d|json!({"id":d.id,"taskId":d.task_id,"revision":d.revision,"sessionId":d.session_id,"invocationId":d.invocation_id,"delivery":d.delivery,"status":d.runtime_status,"outcome":d.outcome})).collect::<Vec<_>>(),
+            "pendingTopics":conversation.pending_topics.iter().map(|t|json!({"id":t.id,"title":t.title})).collect::<Vec<_>>(),"playback":conversation.playback,
             "utterance":conversation.playback.as_ref().and_then(|p| conversation.utterances.iter().find(|u|u.id==p.utterance_id))})
     }
-    pub(crate) fn deliver(
+    pub(crate) fn delivery_content(
         &self,
         target: &AgentSessionId,
         text: String,
-        provenance: AgentInvocationInputProvenance,
         conversation: &Conversation,
-    ) -> Result<Value, String> {
+    ) -> Result<InvocationContent, String> {
         let state = self.snapshot()?;
         let mut content = InvocationContent::query(text);
         content
@@ -238,13 +244,7 @@ impl VoiceSessionApplication {
                 source: "voice_session_state".into(),
                 content: self.context(conversation).to_string(),
             });
-        let receipt = self
-            .agents
-            .deliver_product_content(target.clone(), provenance, content)
-            .map_err(|e| e.to_string())?;
-        Ok(
-            json!({"sessionId":receipt.acknowledgement.session_id,"invocationId":receipt.acknowledgement.invocation_id,"launchAccepted":receipt.launch_accepted}),
-        )
+        Ok(content)
     }
     pub(crate) fn publish(
         self: &Arc<Self>,

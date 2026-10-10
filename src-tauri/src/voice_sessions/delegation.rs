@@ -1,96 +1,91 @@
-use super::{application::VoiceSessionApplication, domain::Delegation};
-use crate::{
-    agent_sessions::domain::{AgentInvocationInputProvenance, AgentSessionId},
-    orchid_control::{optional, required},
+use super::{
+    application::VoiceSessionApplication,
+    domain::Observation,
+    tasks::{assign, AssignmentInput},
 };
+use crate::agent_sessions::domain::AgentSessionId;
 use serde_json::{json, Value};
 use std::sync::Arc;
+
 impl VoiceSessionApplication {
-    pub(crate) fn delegate(self: &Arc<Self>, caller: &str, arguments: Value) -> Result<Value, String> {
+    pub(crate) fn delegate(
+        self: &Arc<Self>,
+        caller: &str,
+        invocation: &str,
+        arguments: Value,
+    ) -> Result<Value, String> {
         let conversation = self.require_member(caller)?;
         if !matches!(conversation.role(caller), Some("router" | "worker")) {
             return Err("The router and delegated workers own work handoffs".into());
         }
-        let task = required(&arguments, "task")?.to_string();
+        let input: AssignmentInput =
+            serde_json::from_value(arguments).map_err(|e| e.to_string())?;
+        if input.task.trim().is_empty() {
+            return Err("task is required".into());
+        }
+        if let Some(id) = &input.task_id {
+            if !conversation.tasks.iter().any(|t| &t.id == id) {
+                return Err("Unknown taskId".into());
+            }
+        }
         let state = self.snapshot()?;
-        let recipient = if let Some(id) = optional(&arguments, "sessionId") {
-            AgentSessionId::new(id).map_err(|e| e.to_string())?
+        let recipient = if let Some(id) = &input.session_id {
+            AgentSessionId::new(id.clone()).map_err(|e| e.to_string())?
         } else {
             self.agents
                 .create_product_session(
-                    optional(&arguments, "title").unwrap_or_else(|| "Voice delegated work".into()),
-                    optional(&arguments, "workingDirectory").or(state.settings.working_directory),
-                    &optional(&arguments, "profileId").unwrap_or(state.settings.profile_id),
+                    input
+                        .title
+                        .clone()
+                        .unwrap_or_else(|| "Voice delegated work".into()),
+                    input
+                        .working_directory
+                        .clone()
+                        .or(state.settings.working_directory),
+                    &input
+                        .profile_id
+                        .clone()
+                        .unwrap_or(state.settings.profile_id),
                     crate::orchid_control::tool_map(),
                 )?
                 .id
         };
-        if recipient.to_string() == caller {
+        if recipient.as_str() == caller {
             return Err("Delegate to an independent session".into());
         }
-        // Record membership before dispatch: a fast recipient may finish during launch.
         if conversation
             .role(recipient.as_str())
-            .is_some_and(|role| role != "worker")
+            .is_some_and(|r| r != "worker")
         {
             return Err("Delegate work to a worker, not an internal voice stage".into());
         }
-        self.update(|state| {
-            state
-                .conversation
-                .as_mut()
-                .ok_or("No conversation")?
-                .delegations
-                .push(Delegation {
-                    session_id: recipient.to_string(),
-                    from_session_id: caller.into(),
-                    return_session_id: caller.into(),
-                    task: task.clone(),
-                    invocation_id: None,
-                    created_at: chrono::Utc::now().to_rfc3339(),
-                });
-            Ok(())
+        self.agents
+            .load_session(&recipient)
+            .map_err(|e| e.to_string())?;
+        let assignment = self.update(|state| {
+            let c = state.conversation.as_mut().ok_or("No conversation")?;
+            let assignment = assign(c, caller, Some(invocation), recipient.as_str(), &input)?;
+            c.observations.push(Observation {
+                session_id: caller.into(), invocation_id: assignment.id.clone(),
+                return_session_id: recipient.to_string(), created_at: assignment.created_at.clone(), delivery: None,
+                detail: json!({"kind":"assignment_input","assignmentId":assignment.id,"taskId":assignment.task_id,
+                    "revision":assignment.revision,"instructions":assignment.task,
+                    "guidance":"Complete this delegated assignment independently. Report with voice_session.report_outcome using its assignmentId and revision; retain detailed material in this session or referenced files. Do not publish speech. Further work may be delegated; finish your turn when waiting for its results."}),
+            });
+            Ok(assignment)
         })?;
-        let content=format!("Delegated work from session {caller}. Complete this task independently and report facts, results, and unresolved issues in your final response. Do not publish speech directly. You may hand off further work with voice_session.delegate_work. If waiting for delegated work, finish the current turn with a progress response; result observations resume this session.\n\n{task}");
-        let receipt = self.deliver(
-            &recipient,
-            content,
-            AgentInvocationInputProvenance::Application,
-            &conversation,
-        );
-        if receipt.is_err() {
-            self.update(|state| {
-                if let Some(conversation) = state.conversation.as_mut() {
-                    if let Some(index) = conversation.delegations.iter().rposition(|d| {
-                        d.session_id == recipient.to_string()
-                            && d.from_session_id == caller
-                            && d.invocation_id.is_none()
-                    }) {
-                        conversation.delegations.remove(index);
-                    }
-                }
-                Ok(())
-            })?;
-            return receipt;
-        }
-        self.update(|state| {
-            if let Some(delegation) = state.conversation.as_mut().and_then(|c| {
-                c.delegations
-                    .iter_mut()
-                    .rev()
-                    .find(|d| d.session_id == recipient.to_string() && d.invocation_id.is_none())
-            }) {
-                delegation.invocation_id = receipt
-                    .as_ref()
-                    .ok()
-                    .and_then(|v| v["invocationId"].as_str())
-                    .map(str::to_owned);
-            }
-            Ok(())
-        })?;
-        self.record_activity(caller, "task_handoff", json!({"sessionId":recipient,"task":task,"delivery":receipt.as_ref().ok()}), &self.digest_targets())?;
+        self.record_activity(
+            caller,
+            "task_handoff",
+            json!({"assignmentId":assignment.id,"taskId":assignment.task_id,
+            "revision":assignment.revision,"sessionId":recipient,"task":assignment.task}),
+            &self.digest_targets(),
+        )?;
         self.schedule_observations();
-        receipt.map(|delivery| json!({"accepted":true,"delivery":delivery,"task":task}))
+        Ok(
+            json!({"accepted":true,"assignmentId":assignment.id,"taskId":assignment.task_id,
+            "revision":assignment.revision,"sessionId":recipient,"deliveryState":"pending"}),
+        )
     }
     pub(crate) fn observe(&self, caller: &str, arguments: Value) -> Result<Value, String> {
         self.require_member(caller)?;

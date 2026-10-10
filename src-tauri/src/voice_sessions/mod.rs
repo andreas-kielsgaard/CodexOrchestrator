@@ -1,4 +1,5 @@
 pub(crate) mod application;
+mod continuous_audio;
 mod delegation;
 mod diagnostics;
 mod domain;
@@ -7,10 +8,10 @@ mod observations;
 mod phone_history;
 mod pipeline;
 mod prefilter;
+mod query_schedule;
 pub(crate) mod repository;
 mod speech;
-mod continuous_audio;
+mod tasks;
 mod transcript;
-mod query_schedule;
 pub(crate) mod transport;
 pub(crate) use application::VoiceSessionApplication;

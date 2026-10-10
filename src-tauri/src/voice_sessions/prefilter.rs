@@ -28,7 +28,9 @@ fn recent_inputs(c: &Conversation, seconds: u64) -> Vec<SpokenInput> {
         .iter()
         .filter(|i| {
             !i.text.trim().is_empty()
-                && chrono::DateTime::parse_from_rfc3339(&i.created_at).is_ok_and(|at| at >= cutoff)
+                && (i.evaluation_failed
+                    || chrono::DateTime::parse_from_rfc3339(&i.created_at)
+                        .is_ok_and(|at| at >= cutoff))
         })
         .cloned()
         .collect()
@@ -110,6 +112,7 @@ impl VoiceSessionApplication {
             let Ok(_lane) = app.input_dispatch.lock() else {
                 return;
             };
+            let mut retries = 0;
             loop {
                 let Ok(state) = app.snapshot() else { break };
                 let Some(c) = state.conversation else { break };
@@ -124,15 +127,27 @@ impl VoiceSessionApplication {
                             if current.id == c.id {
                                 current.input_buffer.complete = false;
                                 for input in &mut current.inputs {
-                                    input.filter_pending = false;
+                                    if recent_inputs(&c, state.input_policy.context_seconds)
+                                        .iter()
+                                        .any(|i| i.id == input.id && i.revision == input.revision)
+                                    {
+                                        input.evaluation_failed = true;
+                                        input.filter_pending =
+                                            retries == 0 && !error.contains("timed out");
+                                    }
                                 }
+                                s.filter_error = Some(error.clone());
                             }
                         }
                         Ok(())
                     });
-                    app.set_error(error);
+                    if retries == 0 && !error.contains("timed out") {
+                        retries += 1;
+                        continue;
+                    }
                     break;
                 }
+                retries = 0;
             }
         });
         Ok(())
@@ -168,7 +183,7 @@ impl VoiceSessionApplication {
         let evaluation = JevEvaluation {
             state: json!({"recentSpeech":recent.iter().map(evidence).collect::<Vec<_>>(),
             "acceptedInput":c.input_buffer.blocks.iter().map(evidence).collect::<Vec<_>>(),"lastDeliveredRequest":released,
-            "recentActivity":c.activity.iter().rev().take(10).collect::<Vec<_>>(),"tasks":c.delegations,"pendingTopics":c.pending_topics}),
+            "recentActivity":c.activity.iter().rev().take(10).collect::<Vec<_>>(),"tasks":c.tasks,"pendingTopics":c.pending_topics}),
             questions,
         };
         self.agents
@@ -234,6 +249,7 @@ impl VoiceSessionApplication {
             if c.id != evaluated.id {
                 return Err("Conversation changed during filtering".into());
             }
+            state.filter_error = None;
             let was_empty = c.input_buffer.blocks.is_empty();
             let mut relevant = vec![];
             let mut classifications = vec![];
@@ -244,6 +260,11 @@ impl VoiceSessionApplication {
                     .iter_mut()
                     .find(|i| i.id == block.id)
                     .ok_or("Sentence missing")?;
+                if input.revision != block.revision {
+                    input.filter_pending = true;
+                    continue;
+                }
+                input.evaluation_failed = false;
                 let relevance = answers
                     .get(&format!("relevance:{}", block.id))
                     .ok_or("Relevance answer missing")?;
@@ -378,6 +399,26 @@ impl VoiceSessionApplication {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn failed_evaluation_retains_the_opening_after_the_rolling_window_expires() {
+        let mut c = Conversation::default();
+        c.inputs.push(SpokenInput {
+            id: "opening".into(),
+            text: "Orchid, investigate".into(),
+            created_at: (chrono::Utc::now() - chrono::Duration::seconds(82)).to_rfc3339(),
+            evaluation_failed: true,
+            ..Default::default()
+        });
+        c.inputs.push(SpokenInput {
+            id: "continuation".into(),
+            text: "the routing, that's all".into(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            ..Default::default()
+        });
+        assert_eq!(recent_inputs(&c, 60).len(), 2);
+        c.inputs[0].evaluation_failed = false;
+        assert_eq!(recent_inputs(&c, 60).len(), 1);
+    }
     #[test]
     fn rolling_queries_keep_the_beginning_of_an_unfinished_request() {
         let first = SpokenInput {

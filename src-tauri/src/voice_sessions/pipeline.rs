@@ -1,10 +1,28 @@
 use super::{domain::*, VoiceSessionApplication};
 use crate::agent_sessions::{
-    application::{jev::CreateJevApiSessionInput, SteerAgentSessionCommand},
-    domain::{AgentInvocationInputProvenance, AgentSessionId},
+    application::{jev::CreateJevApiSessionInput, ProductDeliveryReceipt},
+    domain::AgentSessionId,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ContextInput {
+    activity_ids: Option<Vec<String>>,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProgressInput {
+    text: String,
+}
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OutputInput {
+    reason: String,
+    activity_ids: Option<Vec<String>>,
+    topic_id: Option<String>,
+}
 
 pub(super) fn may_publish(role: Option<&str>, kind: &str) -> bool {
     role == Some("output") || (role == Some("summary") && kind == "acknowledgement")
@@ -91,41 +109,12 @@ impl VoiceSessionApplication {
         id: &str,
         text: String,
         conversation: &Conversation,
-    ) -> Result<Value, String> {
+    ) -> Result<ProductDeliveryReceipt, String> {
         let session = AgentSessionId::new(target.to_string()).map_err(|e| e.to_string())?;
-        let history = self
-            .agents
-            .load_session(&session)
-            .map_err(|e| e.to_string())?;
-        if let Some(active) = history
-            .invocations
-            .iter()
-            .rev()
-            .find(|h| !h.invocation.status.is_terminal())
-        {
-            let settings = self.snapshot()?.settings;
-            if let Ok(receipt) = self.agents.steer_session(SteerAgentSessionCommand {
-                session_id: session.clone(),
-                invocation_id: active.invocation.id.clone(),
-                input_id: id.into(),
-                text: format!(
-                    "{}\n\n{}\n\n{text}\n\nApplication context: {}",
-                    self.role_instructions(conversation, target, &settings.prompts)
-                        .unwrap_or("Continue your delegated work."),
-                    settings.prompts.tools,
-                    self.context(conversation)
-                ),
-                attachments: vec![],
-            }) {
-                return Ok(json!({"steering":receipt}));
-            }
-        }
-        self.deliver(
-            &session,
-            text,
-            AgentInvocationInputProvenance::Application,
-            conversation,
-        )
+        let content = self.delivery_content(&session, text, conversation)?;
+        self.agents
+            .deliver_or_steer_product(session, id.into(), content)
+            .map_err(|e| e.to_string())
     }
     pub(super) fn record_activity(
         &self,
@@ -149,7 +138,8 @@ impl VoiceSessionApplication {
                     session_id: source.into(),
                     invocation_id: activity.id.clone(),
                     return_session_id: target.clone(),
-                    detail: serde_json::to_string(&activity).map_err(|e| e.to_string())?,
+                    detail: serde_json::to_value(&activity).map_err(|e| e.to_string())?,
+                    delivery: None,
                     created_at: activity.created_at.clone(),
                 });
             }
@@ -167,11 +157,12 @@ impl VoiceSessionApplication {
     }
     pub(crate) fn read_context(&self, caller: &str, args: Value) -> Result<Value, String> {
         let conversation = self.require_member(caller)?;
-        let ids = args["activityIds"].as_array();
+        let input: ContextInput = serde_json::from_value(args).map_err(|e| e.to_string())?;
+        let ids = input.activity_ids.as_ref();
         let activity: Vec<_> = conversation
             .activity
             .iter()
-            .filter(|a| ids.is_none_or(|ids| ids.iter().any(|id| id.as_str() == Some(&a.id))))
+            .filter(|a| ids.is_none_or(|ids| ids.contains(&a.id)))
             .rev()
             .take(if ids.is_some() { usize::MAX } else { 40 })
             .cloned()
@@ -179,7 +170,8 @@ impl VoiceSessionApplication {
         Ok(
             json!({"context":self.context(&conversation), "activity":activity,
             "acceptedInputs":conversation.inputs.iter().filter(|i| i.relevance.as_deref().is_some_and(|r| r != "unaddressed")).rev().take(20).collect::<Vec<_>>(),
-            "inputBuffer":conversation.input_buffer}),
+            "inputBuffer":conversation.input_buffer,"pendingTopics":conversation.pending_topics,
+            "assignments":conversation.delegations}),
         )
     }
     pub(crate) fn report_progress(
@@ -188,7 +180,11 @@ impl VoiceSessionApplication {
         args: Value,
     ) -> Result<Value, String> {
         self.require_member(caller)?;
-        let text = crate::orchid_control::required(&args, "text")?;
+        let input: ProgressInput = serde_json::from_value(args).map_err(|e| e.to_string())?;
+        let text = input.text.trim();
+        if text.is_empty() {
+            return Err("text is required".into());
+        }
         let activity = self.record_activity(
             caller,
             "progress",
@@ -207,7 +203,11 @@ impl VoiceSessionApplication {
         if conversation.role(caller) != Some("digest") {
             return Err("Only the digest requests output".into());
         }
-        let reason = crate::orchid_control::required(&args, "reason")?;
+        let input: OutputInput = serde_json::from_value(args).map_err(|e| e.to_string())?;
+        let reason = input.reason.trim();
+        if reason.is_empty() {
+            return Err("reason is required".into());
+        }
         let output = conversation
             .pipeline
             .as_ref()
@@ -217,7 +217,7 @@ impl VoiceSessionApplication {
         let activity = self.record_activity(
             caller,
             "output_request",
-            json!({"reason":reason,"activityIds":args["activityIds"],"topicId":args["topicId"]}),
+            json!({"reason":reason,"activityIds":input.activity_ids,"topicId":input.topic_id}),
             &[output],
         )?;
         self.schedule_observations();

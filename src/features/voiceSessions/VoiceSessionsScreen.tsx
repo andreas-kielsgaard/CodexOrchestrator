@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
-import type { VoicePrompts, VoiceSessionClient, VoiceSettings, VoiceView } from '../../application/voiceSessions';
+import type {
+  VoicePrompts,
+  VoiceSessionClient,
+  VoiceSettings,
+  VoiceView,
+} from '../../application/voiceSessions';
 import './voiceSessions.css';
 
 export function VoiceSessionsScreen({
@@ -56,7 +61,9 @@ export function VoiceSessionsScreen({
     );
   const state = view.state;
   const conversation = state.conversation;
-  const captureFresh = !!view.diagnostics?.capture && Date.now() - Date.parse(view.diagnostics.capture.updatedAt) < 5000;
+  const captureFresh =
+    !!view.diagnostics?.capture &&
+    Date.now() - Date.parse(view.diagnostics.capture.updatedAt) < 5000;
   const edit = (change: Partial<VoiceSettings>) => setSettings({ ...settings, ...change });
   return (
     <main className="voice-screen">
@@ -89,32 +96,98 @@ export function VoiceSessionsScreen({
           {view.diagnostics && (
             <section className="voice-diagnostics" aria-label="Live voice status">
               <h3>Live status</h3>
-              <p><strong>{view.diagnostics.input.title}</strong><br />{view.diagnostics.input.detail}</p>
+              <p>
+                <strong>{view.diagnostics.input.title}</strong>
+                <br />
+                {view.diagnostics.input.detail}
+              </p>
+              {view.diagnostics.filterError && (
+                <p className="voice-error">
+                  JEV: {view.diagnostics.filterError} · input retained for reevaluation
+                </p>
+              )}
               <dl>
                 <dt>Microphone</dt>
-                <dd>{!state.phoneConnected ? 'Phone disconnected' : !view.diagnostics.capture ? 'Connected · waiting for capture status from the phone' :
-                  <>{view.diagnostics.capture.routedMicrophone} · {!captureFresh ? 'capture update missing' : view.diagnostics.capture.recording ? 'recording' : 'stopped'}
-                    {view.diagnostics.capture.silenced && ' · blocked by Android'}
-                    {view.diagnostics.capture.requestedMicrophone === 'headset' && !view.diagnostics.capture.external && ' · external requested, phone fallback'}
-                    <br />Input signal {(view.diagnostics.capture.level * 100).toFixed(1)}% · {view.diagnostics.capture.segmentsSent} packets sent
-                    {view.diagnostics.capture.error && <p className="voice-error">{view.diagnostics.capture.error}</p>}
-                  </>}</dd>
+                <dd>
+                  {!state.phoneConnected ? (
+                    'Phone disconnected'
+                  ) : !view.diagnostics.capture ? (
+                    'Connected · waiting for capture status from the phone'
+                  ) : (
+                    <>
+                      {view.diagnostics.capture.routedMicrophone} ·{' '}
+                      {!captureFresh
+                        ? 'capture update missing'
+                        : view.diagnostics.capture.recording
+                          ? 'recording'
+                          : 'stopped'}
+                      {view.diagnostics.capture.silenced && ' · blocked by Android'}
+                      {view.diagnostics.capture.requestedMicrophone === 'headset' &&
+                        !view.diagnostics.capture.external &&
+                        ' · external requested, phone fallback'}
+                      <br />
+                      Input signal {(view.diagnostics.capture.level * 100).toFixed(1)}% ·{' '}
+                      {view.diagnostics.capture.segmentsSent} packets sent
+                      {view.diagnostics.capture.error && (
+                        <p className="voice-error">{view.diagnostics.capture.error}</p>
+                      )}
+                    </>
+                  )}
+                </dd>
                 <dt>Transcription</dt>
-                <dd>{view.diagnostics.audio.received} audio packets received · {view.diagnostics.audio.transcribed} context windows decoded · {view.diagnostics.pendingAudio} queued
-                  {view.diagnostics.audio.lastReceivedAt && <><br />Last audio {new Date(view.diagnostics.audio.lastReceivedAt).toLocaleTimeString()}</>}
-                  {view.diagnostics.audio.lastTranscript != null && <><br />Last transcript: {view.diagnostics.audio.lastTranscript || '(no speech recognized)'}</>}
-                  {view.diagnostics.audio.error && <p className="voice-error">{view.diagnostics.audio.error}</p>}
+                <dd>
+                  {view.diagnostics.audio.received} audio packets received ·{' '}
+                  {view.diagnostics.audio.transcribed} context windows decoded ·{' '}
+                  {view.diagnostics.pendingAudio} queued
+                  {view.diagnostics.audio.lastReceivedAt && (
+                    <>
+                      <br />
+                      Last audio{' '}
+                      {new Date(view.diagnostics.audio.lastReceivedAt).toLocaleTimeString()}
+                    </>
+                  )}
+                  {view.diagnostics.audio.lastTranscript != null && (
+                    <>
+                      <br />
+                      Last transcript:{' '}
+                      {view.diagnostics.audio.lastTranscript || '(no speech recognized)'}
+                    </>
+                  )}
+                  {view.diagnostics.audio.error && (
+                    <p className="voice-error">{view.diagnostics.audio.error}</p>
+                  )}
                 </dd>
                 <dt>JEV decision</dt>
-                <dd>{view.diagnostics.input.last ? <>{view.diagnostics.input.last.filterPending ? 'Evaluating' : view.diagnostics.input.last.relevance} · {view.diagnostics.input.last.completion ?? 'completion not checked'}<br />{view.diagnostics.input.last.text}</> : 'No input evaluated yet'}</dd>
+                <dd>
+                  {view.diagnostics.input.last ? (
+                    <>
+                      {view.diagnostics.input.last.filterPending
+                        ? 'Evaluating'
+                        : view.diagnostics.input.last.relevance}{' '}
+                      · {view.diagnostics.input.last.completion ?? 'completion not checked'}
+                      <br />
+                      {view.diagnostics.input.last.text}
+                    </>
+                  ) : (
+                    'No input evaluated yet'
+                  )}
+                </dd>
               </dl>
               <div className="voice-stage-status">
-                {view.diagnostics.stages.map((stage) => <div key={stage.sessionId}>
-                  <button className="voice-link" onClick={() => onOpenSession(stage.sessionId)}>{stage.role} · {stage.status ?? 'not started'}{stage.queued > 0 ? ` · ${stage.queued} queued` : ''}</button>
-                  {stage.error && <p className="voice-error">{stage.error}</p>}
-                </div>)}
+                {view.diagnostics.stages.map((stage) => (
+                  <div key={stage.sessionId}>
+                    <button className="voice-link" onClick={() => onOpenSession(stage.sessionId)}>
+                      {stage.role === 'worker' ? (stage.title ?? 'Worker') : stage.role} ·{' '}
+                      {stage.status ?? 'not started'}
+                      {stage.queued > 0 ? ` · ${stage.queued} input pending` : ''}
+                    </button>
+                    {stage.error && <p className="voice-error">{stage.error}</p>}
+                  </div>
+                ))}
               </div>
-              <small className="voice-muted">Updated {new Date(view.diagnostics.updatedAt).toLocaleTimeString()}</small>
+              <small className="voice-muted">
+                Updated {new Date(view.diagnostics.updatedAt).toLocaleTimeString()}
+              </small>
             </section>
           )}
           <div className="voice-actions">
@@ -185,14 +258,24 @@ export function VoiceSessionsScreen({
                   {!!conversation.inputBuffer?.blocks.length && (
                     <details open>
                       <summary>Accepted input held</summary>
-                      {conversation.inputBuffer.blocks.map((input) => <p key={input.id}>{input.text}</p>)}
-                      <p className="voice-muted">{conversation.inputBuffer.complete ? 'Ready · waiting for speech and queued processing' : 'Waiting for the input to be complete'}</p>
+                      {conversation.inputBuffer.blocks.map((input) => (
+                        <p key={input.id}>{input.text}</p>
+                      ))}
+                      <p className="voice-muted">
+                        {conversation.inputBuffer.complete
+                          ? 'Ready · waiting for speech and queued processing'
+                          : 'Waiting for the input to be complete'}
+                      </p>
                     </details>
                   )}
                   <details>
                     <summary>Input decisions</summary>
                     {conversation.inputs.slice(-10).map((input) => (
-                      <p key={input.id}>{input.text} · {input.filterPending ? 'Evaluating' : input.relevance ?? 'Earlier input'} {input.completion ? '· ' + input.completion : ''}</p>
+                      <p key={input.id}>
+                        {input.text} ·{' '}
+                        {input.filterPending ? 'Evaluating' : (input.relevance ?? 'Earlier input')}{' '}
+                        {input.completion ? '· ' + input.completion : ''}
+                      </p>
                     ))}
                   </details>
                 </section>
@@ -213,7 +296,79 @@ export function VoiceSessionsScreen({
                   The agent will announce useful material when it is ready.
                 </p>
               )}
-              <h3>Delegated work</h3>
+              {!!conversation.tasks?.length && (
+                <section aria-label="Voice tasks">
+                  <h3>Tasks</h3>
+                  {conversation.tasks.map((task) => {
+                    const assignments = conversation.delegations.filter(
+                      (a) => a.taskId === task.id,
+                    );
+                    const latest = assignments.at(-1);
+                    const reported = [...assignments].reverse().find((a) => a.outcome);
+                    return (
+                      <article key={task.id}>
+                        <strong>{task.title}</strong>
+                        <p className="voice-muted">
+                          Request {task.revision} · {latest?.runtimeStatus ?? 'pending'}
+                          {latest?.delivery?.inputId && ` · amendment ${latest.delivery.state}`}
+                        </p>
+                        <p>{task.request}</p>
+                        {latest && (
+                          <button
+                            className="voice-link"
+                            onClick={() => onOpenSession(latest.sessionId)}
+                          >
+                            Open worker
+                          </button>
+                        )}
+                        {reported?.outcome && (
+                          <details>
+                            <summary>
+                              {reported.outcome.revision < task.revision
+                                ? 'Earlier outcome'
+                                : 'Reported outcome'}{' '}
+                              · request {reported.outcome.revision}
+                            </summary>
+                            <p>{reported.outcome.summary}</p>
+                          </details>
+                        )}
+                      </article>
+                    );
+                  })}
+                </section>
+              )}
+              {!!conversation.activity?.length && (
+                <details>
+                  <summary>Recent voice activity</summary>
+                  {conversation.activity
+                    .slice(-15)
+                    .reverse()
+                    .map((activity) => {
+                      const data = activity.data;
+                      const text = [
+                        data.text,
+                        data.reason,
+                        data.summary,
+                        data.task,
+                        data.finalReply,
+                      ].find((v) => typeof v === 'string');
+                      return (
+                        <article key={activity.id}>
+                          <small>
+                            {new Date(activity.createdAt).toLocaleTimeString()} ·{' '}
+                            {activity.kind.replaceAll('_', ' ')}
+                          </small>
+                          {typeof text === 'string' && <p>{text.slice(0, 600)}</p>}
+                          <details>
+                            <summary>Source record</summary>
+                            <pre>{JSON.stringify(activity, null, 2)}</pre>
+                          </details>
+                        </article>
+                      );
+                    })}
+                </details>
+              )}
+              <h3>Assignments</h3>
               {conversation.delegations.length ? (
                 conversation.delegations.map((work, i) => (
                   <article key={`${work.sessionId}-${i}`}>
@@ -310,7 +465,10 @@ export function VoiceSessionsScreen({
             <summary>Voice prompts</summary>
             <label>
               Stage
-              <select value={promptStage} onChange={(event) => setPromptStage(event.target.value as keyof VoicePrompts)}>
+              <select
+                value={promptStage}
+                onChange={(event) => setPromptStage(event.target.value as keyof VoicePrompts)}
+              >
                 <option value="relevance">JEV relevance</option>
                 <option value="completion">JEV input completion</option>
                 <option value="continuation">JEV continuation</option>
@@ -327,13 +485,25 @@ export function VoiceSessionsScreen({
                 disabled={state.enabled}
                 rows={16}
                 value={settings.prompts[promptStage]}
-                onChange={(event) => edit({ prompts: { ...settings.prompts, [promptStage]: event.target.value } })}
+                onChange={(event) =>
+                  edit({ prompts: { ...settings.prompts, [promptStage]: event.target.value } })
+                }
               />
             </label>
-            <button disabled={busy || state.enabled} onClick={() => edit({ prompts: { ...settings.prompts, [promptStage]: view.defaultPrompts[promptStage] } })}>
+            <button
+              disabled={busy || state.enabled}
+              onClick={() =>
+                edit({
+                  prompts: { ...settings.prompts, [promptStage]: view.defaultPrompts[promptStage] },
+                })
+              }
+            >
               Reset this prompt
             </button>
-            <p className="voice-muted">Stop the connection to edit. Save setup applies prompts to subsequent evaluations and agent turns.</p>
+            <p className="voice-muted">
+              Stop the connection to edit. Save setup applies prompts to subsequent evaluations and
+              agent turns.
+            </p>
           </details>
           <details>
             <summary>Routing preferences</summary>

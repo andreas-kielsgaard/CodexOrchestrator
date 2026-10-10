@@ -187,7 +187,18 @@ impl AgentSessionApplication {
         let app = self.clone();
         tauri::async_runtime::spawn_blocking(move || {
             for command in commands {
-                if !terminal {
+                if terminal {
+                    let _ = app.record_interaction(
+                        &command.invocation_id,
+                        RuntimeControlRecord::SteeringResult {
+                            id: command.input_id,
+                            state: "expired".into(),
+                            message: Some(
+                                "The turn finished before this input was delivered".into(),
+                            ),
+                        },
+                    );
+                } else {
                     if let Err(error) = app.deliver_steering(command.clone()) {
                         let _ = app.record_interaction(
                             &command.invocation_id,
