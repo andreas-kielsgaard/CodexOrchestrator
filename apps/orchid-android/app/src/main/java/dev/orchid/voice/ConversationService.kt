@@ -69,7 +69,7 @@ class ConversationService : Service() {
         player = SpeechPlayer(this, { connection?.send(it) }, { status(it) }, { if (connection?.connected == true) status("Listening · connected") })
         cues = CuePlayer(this)
         connection = OrchidConnection(settings, { message ->
-            if (connection?.connected != true) { capture?.close(); capture = null; inactivity.stop() }
+            if (connection?.connected != true) { capture?.close(); capture = null }
             status(if (message == "Listening · connected" && !listening) settings.listeningStopReason.ifBlank { "Connected · microphone off" } else message)
         }, { value ->
             handler.post {
@@ -80,8 +80,9 @@ class ConversationService : Service() {
                 "hello" -> {
                     connection?.send(settings.inputSettings())
                     if (listening) {
-                        inactivity.activate(SystemClock.elapsedRealtime())
-                        startCapture()
+                        val now = SystemClock.elapsedRealtime()
+                        if (inactivity.remainingSeconds(now, settings.listeningTimeoutSeconds) == null) inactivity.activate(now)
+                        if (inactivity.remainingSeconds(now, settings.listeningTimeoutSeconds) == 0L) checkInactivity.run() else startCapture()
                     }
                     handler.post {
                         val inputs = value.optJSONArray("inputClassifications")
