@@ -15,7 +15,7 @@ class GoogleAssistantHandoff : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!ConnectionSettings(this).googleHandoff || SystemClock.elapsedRealtime() - lastHandoff < 3000) return
         val assistant = windows.any { window ->
-            if (window.type != AccessibilityWindowInfo.TYPE_SYSTEM || !window.isFocused) return@any false
+            if (window.type !in listOf(AccessibilityWindowInfo.TYPE_SYSTEM, AccessibilityWindowInfo.TYPE_APPLICATION) || !window.isFocused) return@any false
             val root = window.root ?: return@any false
             root.packageName?.toString() == GOOGLE && MARKERS.any { root.findAccessibilityNodeInfosByViewId("$GOOGLE:id/$it").isNotEmpty() }
         }
@@ -31,6 +31,6 @@ class GoogleAssistantHandoff : AccessibilityService() {
     override fun onDestroy() { handler.removeCallbacksAndMessages(null); super.onDestroy() }
     companion object {
         private const val GOOGLE = "com.google.android.googlequicksearchbox"
-        private val MARKERS = listOf("assistant_zero_state_container", "assistant_robin_zero_state_content_sheet")
+        private val MARKERS = listOf("assistant_zero_state_container", "assistant_robin_zero_state_content_sheet", "assistant_robin_floaty_root_container")
     }
 }

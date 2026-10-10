@@ -25,6 +25,7 @@ class MainActivity : Activity() {
     private lateinit var navigation: LinearLayout
     private lateinit var title: TextView
     private lateinit var content: LinearLayout
+    private lateinit var page: FrameLayout
     private lateinit var scroll: ScrollView
     private lateinit var status: TextView
     private lateinit var historyStatus: TextView
@@ -55,7 +56,11 @@ class MainActivity : Activity() {
     private var rendered = ""
     private val handler = Handler(Looper.getMainLooper())
     private val transcriptRefresh = object : Runnable {
-        override fun run() { transcript?.refresh(); handler.postDelayed(this, 250) }
+        override fun run() {
+            transcript?.refresh()
+            if (tab == 0) status.text = settings.status.takeUnless { it.startsWith("Stopped") } ?: "Stopped"
+            handler.postDelayed(this, 250)
+        }
     }
     private val refresh = object : Runnable {
         override fun run() {
@@ -96,7 +101,9 @@ class MainActivity : Activity() {
         root.addView(header)
         scroll = ScrollView(this).apply { isFillViewport = true }
         content = PhoneTheme.column(this).apply { setPadding(dp(20), dp(8), dp(20), dp(20)) }
-        scroll.addView(content); root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        scroll.addView(content)
+        page = FrameLayout(this)
+        root.addView(page, LinearLayout.LayoutParams(-1, 0, 1f))
         navigation = PhoneTheme.column(this).apply { setPadding(dp(16), dp(32), dp(16), dp(16)); setBackgroundColor(PhoneTheme.surface); fitsSystemWindows = true }
         listOf("Listen", "Sessions", "Settings", "Status").forEachIndexed { index, label ->
             navigation.addView(PhoneTheme.button(this, label) { switchTab(index); drawer.closeDrawer(GravityCompat.START) }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
@@ -135,6 +142,14 @@ class MainActivity : Activity() {
     }
     private fun showTab() {
         content.removeAllViews(); exchange = null; volume = null; composer = null; live = null; liveDetails = null; levelMeter = null; transcript = null; rendered = ""
+        (content.parent as? android.view.ViewGroup)?.removeView(content)
+        page.removeAllViews()
+        if (tab == 0) page.addView(content, FrameLayout.LayoutParams(-1, -1))
+        else {
+            scroll.addView(content)
+            page.addView(scroll, FrameLayout.LayoutParams(-1, -1))
+            scroll.scrollTo(0, 0)
+        }
         title.text = listOf("Orchid", "Sessions", "Settings", "Status")[tab]
         for (index in 0 until navigation.childCount) {
             val button = navigation.getChildAt(index) as Button

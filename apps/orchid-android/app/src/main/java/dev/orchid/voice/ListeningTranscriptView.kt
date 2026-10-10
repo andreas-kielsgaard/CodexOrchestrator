@@ -1,7 +1,6 @@
 package dev.orchid.voice
 
 import android.content.Context
-import android.view.View
 import android.view.ViewTreeObserver
 import android.widget.ScrollView
 
@@ -22,13 +21,13 @@ class ListeningTranscriptView(context: Context, private val settings: Connection
     fun refresh() {
         val input = settings.detectedInput
         if (rendered == input) return
-        val following = !canScrollVertically(1)
+        val following = rendered == null || !canScrollVertically(1)
         text.text = DetectedInput(settings).display()
         rendered = input
         if (following) viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
             override fun onGlobalLayout() {
                 viewTreeObserver.removeOnGlobalLayoutListener(this)
-                fullScroll(View.FOCUS_DOWN)
+                scrollTo(0, (text.bottom - height + paddingBottom).coerceAtLeast(0))
             }
         })
     }
