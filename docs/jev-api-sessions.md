@@ -55,3 +55,11 @@ The request accepts typed Noul, Choice, and Score questions, including multiple 
 This integration supplies backend API sessions. Tools/skills, conversational context delivery, native resume, remote hosts, and OTP functionality are not exposed by this slice.
 
 The provider adapter owns Credential Manager access in `src-tauri/src/runtime/providers/jev/credentials.rs` and injects its reader into the portable JEV runtime. Settings use `load_jev_credential_status`, `save_jev_api_key`, and `remove_jev_api_key`; status exposes only `saved` and `environmentAvailable` booleans. Saving or removing a key takes effect at the next invocation without restarting.
+
+## Credential validation (2026-10-10)
+
+Source commit `b3a22eb4`: 28 focused frontend tests and 10 focused Rust tests passed, including native Credential Manager save, replacement, and removal on a unique test target. Focused ESLint and the frontend/release builds passed.
+
+The rebuilt root executable was launched against the existing application database. The previously used credential was securely provisioned through the save command. A real JEV request completed before and after restarting Orchid without `TYPESAFE_API_KEY`; the restarted application reported `saved: true, environmentAvailable: false`. Both requests returned model `jev-1.13.0`. The live Technical Settings → JEV screen displayed the saved status and an empty password input. Save/remove form behavior was exercised by frontend tests; the real credential was retained for normal use.
+
+Release executable SHA256: `30e84922c0699ee931b5a3958c4747f24b26b2b6c7699dbf1264189853d2a2b7`. Local evidence: `.dev/jev-credentials/{before-restart,after-restart,saved}.json` and `saved.png`.
