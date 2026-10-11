@@ -18,7 +18,7 @@ import java.util.UUID
 
 class AudioCapture(context: Context, private val speechStarted: () -> Unit, private val packet: (String, Long, Long, ByteArray, Boolean) -> Unit, private val failed: (String) -> Unit, private val speechEnded: () -> Unit = {}, private val progress: (JSONObject) -> Unit = {}) {
     private val settings = ConnectionSettings(context)
-    private val phoneMicrophone = settings.microphone == "phone"
+    private val inventory = AudioDevices(context)
     private val routing = MicrophoneRouting(context, failed)
     @Volatile private var active = false
     @Volatile var speaking = false; private set
@@ -35,6 +35,7 @@ class AudioCapture(context: Context, private val speechStarted: () -> Unit, priv
         val external = device != null && device.type != AudioDeviceInfo.TYPE_BUILTIN_MIC
         progress(JSONObject().put("recording", active).put("speechDetected", speaking)
             .put("requestedMicrophone", settings.microphone).put("routedMicrophone", device?.let { "${if (external) "External" else "Phone"}: ${it.productName}" } ?: "Waiting for microphone route")
+            .put("microphoneUnavailable", inventory.input(settings.microphone) == null)
             .put("external", external).put("silenced", recorder?.activeRecordingConfiguration?.isClientSilenced ?: false)
             .put("level", level).put("framesRead", framesRead).put("segmentsCaptured", segmentsCaptured)
             .put("error", captureError ?: JSONObject.NULL).put("updatedAt", java.time.Instant.now().toString()))
@@ -44,13 +45,13 @@ class AudioCapture(context: Context, private val speechStarted: () -> Unit, priv
         try {
             routing.start()
             val size = AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-            val source = if (phoneMicrophone) MediaRecorder.AudioSource.VOICE_RECOGNITION else MediaRecorder.AudioSource.VOICE_COMMUNICATION
+            val source = if (routing.usesBluetooth) MediaRecorder.AudioSource.VOICE_COMMUNICATION else MediaRecorder.AudioSource.VOICE_RECOGNITION
             val audio = AudioRecord(source, 16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(size, 9600))
             require(audio.state == AudioRecord.STATE_INITIALIZED) { "Microphone unavailable" }
             recorder = audio
-            routing.preferredInput?.let { require(audio.setPreferredDevice(it)) { "Unable to select phone microphone" } }
+            routing.attach(audio)
             if (AcousticEchoCanceler.isAvailable()) echo = AcousticEchoCanceler.create(audio.audioSessionId)?.apply { enabled = true }
-            if (!phoneMicrophone && NoiseSuppressor.isAvailable()) noise = NoiseSuppressor.create(audio.audioSessionId)?.apply { enabled = true }
+            if (routing.usesBluetooth && NoiseSuppressor.isAvailable()) noise = NoiseSuppressor.create(audio.audioSessionId)?.apply { enabled = true }
             active = true; audio.startRecording(); report()
             worker = thread(name = "orchid-microphone") {
                 try {
@@ -90,7 +91,7 @@ class AudioCapture(context: Context, private val speechStarted: () -> Unit, priv
         } catch (error: Exception) { captureError = error.message ?: "Microphone unavailable"; close(); throw error }
     }
     fun close() {
-        try { active = false; try { recorder?.stop() } catch (_: Exception) {}; worker?.join(1500); echo?.release(); noise?.release(); recorder?.release(); recorder = null }
+        try { active = false; routing.close(); try { recorder?.stop() } catch (_: Exception) {}; worker?.join(1500); echo?.release(); noise?.release(); recorder?.release(); recorder = null }
         finally { speaking = false; routing.close(); report() }
     }
 }

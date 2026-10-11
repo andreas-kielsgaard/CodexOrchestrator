@@ -23,7 +23,13 @@ class ConnectionSettings(context: Context) {
         set(value) { require(value in listOf("lower", "pause", "off")); preferences.edit().putString("background-audio", value).apply() }
     var microphone: String
         get() = preferences.getString("microphone", "phone") ?: "phone"
-        set(value) { require(value in listOf("phone", "headset")); preferences.edit().putString("microphone", value).apply() }
+        set(value) { require(value.isNotBlank()); preferences.edit().putString("microphone", value).apply() }
+    var audioOutput: String
+        get() = preferences.getString("audio-output", "automatic") ?: "automatic"
+        set(value) { require(value.isNotBlank()); preferences.edit().putString("audio-output", value).apply() }
+    var playbackStatus: String
+        get() = preferences.getString("playback-status", "{}") ?: "{}"
+        set(value) { preferences.edit().putString("playback-status", value).apply() }
     var googleHandoff: Boolean
         get() = preferences.getBoolean("google-handoff", false)
         set(value) { preferences.edit().putBoolean("google-handoff", value).apply() }

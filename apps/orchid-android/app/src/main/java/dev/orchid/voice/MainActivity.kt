@@ -178,15 +178,7 @@ class MainActivity : Activity() {
         content.addView(controls)
         val diagnostics = PhoneTheme.card(this)
         addText(diagnostics, "Live status", 18f, bold = true)
-        val microphones = RadioGroup(this).apply { orientation = RadioGroup.HORIZONTAL }
-        listOf("phone" to "Phone", "headset" to "External microphone").forEach { (value, label) ->
-            microphones.addView(RadioButton(this).apply {
-                id = View.generateViewId(); text = label; setTextColor(PhoneTheme.primary); minHeight = dp(48)
-                isChecked = settings.microphone == value
-                setOnCheckedChangeListener { _, checked -> if (checked && settings.microphone != value) changeMicrophone(value) }
-            })
-        }
-        diagnostics.addView(microphones)
+        diagnostics.addView(audioDeviceControls())
         levelMeter = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
         diagnostics.addView(levelMeter, LinearLayout.LayoutParams(-1, dp(12)))
         live = PhoneTheme.text(this, "Checking microphone and laptop…", 14f).apply { setTextIsSelectable(true) }
@@ -277,17 +269,9 @@ class MainActivity : Activity() {
             }
             addText(body, "Hey Google: Gemini → profile → Settings → Talk to Gemini hands-free → Hey Google and Voice Match. Phone and locked-screen handoff still need verification.", color = PhoneTheme.secondary)
         }
-        section(content, "microphone", "Microphone", true) { body ->
-            val choices = RadioGroup(this)
-            listOf("phone" to "Phone microphone · preserve playback quality", "headset" to "Headset microphone · Bluetooth call quality").forEach { (value, label) ->
-                choices.addView(RadioButton(this).apply {
-                    id = View.generateViewId(); text = label; setTextColor(PhoneTheme.primary); minHeight = dp(48)
-                    isChecked = settings.microphone == value
-                    setOnCheckedChangeListener { _, checked -> if (checked && settings.microphone != value) changeMicrophone(value) }
-                })
-            }
-            body.addView(choices)
-            addText(body, "Applies immediately while listening. Classic Bluetooth headsets switch to lower-quality call audio when their microphone is active. The Voice tab shows the actual route.", color = PhoneTheme.secondary)
+        section(content, "audio-devices", "Audio devices", true) { body ->
+            body.addView(audioDeviceControls())
+            addText(body, "Selections apply immediately. Phone and USB microphones preserve Bluetooth media playback quality. Status shows the actual routes.", color = PhoneTheme.secondary)
         }
         section(content, "background-audio", "Other audio during speech", true) { body ->
             val choices = RadioGroup(this)
@@ -337,6 +321,11 @@ class MainActivity : Activity() {
         if (capture.optBoolean("recording")) startService(Intent(this, ConversationService::class.java).setAction("MICROPHONE").putExtra("microphone", value))
         renderLive()
     }
+    private fun audioDeviceControls() = AudioDeviceControls(this, settings, { changeMicrophone(it) }, { value ->
+        settings.audioOutput = value
+        startService(Intent(this, ConversationService::class.java).setAction("AUDIO_OUTPUT"))
+        renderLive()
+    })
     private fun loadLive() {
         if (liveCall != null || settings.endpoint.isBlank()) return
         liveCall = client.get("/status") { value, error ->
@@ -353,7 +342,13 @@ class MainActivity : Activity() {
         lines += if (!recording) "Microphone: stopped · tap Start listening" else "Microphone: ${capture.optString("routedMicrophone", "Checking route")}${if (capture.optBoolean("silenced")) " · blocked by Android" else " · recording"}"
         if (recording && capture.has("idleRemainingSeconds")) lines += "Listening timeout in ${capture.optLong("idleRemainingSeconds")} seconds without relevant input"
         if (!recording && settings.listeningStopReason.isNotBlank()) lines += "${settings.listeningStopReason}. Resume here or through your assistant shortcut."
-        if (recording && settings.microphone == "headset" && !capture.optBoolean("external")) lines += "External microphone requested; Android is using the phone. Check the headset's call audio connection."
+        if (recording && capture.optBoolean("microphoneUnavailable")) lines += "Selected microphone disconnected · using the phone microphone"
+        val playback = runCatching { JSONObject(settings.playbackStatus) }.getOrDefault(JSONObject())
+        lines += "Audio output: ${AudioDevices.label(settings.audioOutput)}"
+        if (playback.optString("state") == "playing") lines += "Playing through: ${if (playback.optBoolean("routeActive")) playback.optString("routedOutput") else "Checking route"}"
+        else if (!playback.isNull("routedDeviceKey")) lines += "Last playback through: ${playback.optString("routedOutput")}"
+        if (settings.audioOutput != "automatic" && AudioDevices(this).output(settings.audioOutput) == null) lines += "Selected output disconnected · using Android media output"
+        playback.optString("error").takeUnless { it == "null" || it.isBlank() }?.let { lines += "Playback error: $it" }
         capture.optString("error").takeUnless { it == "null" || it.isBlank() }?.let { lines += "Capture error: $it" }
         val level = if (recording) capture.optDouble("level", 0.0) else 0.0
         levelMeter?.progress = (kotlin.math.sqrt(level.coerceIn(0.0, 1.0)) * 100).toInt()

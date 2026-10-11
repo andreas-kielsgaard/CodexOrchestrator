@@ -54,6 +54,7 @@ class ConversationService : Service() {
                 handler.removeCallbacks(checkInactivity); handler.postDelayed(checkInactivity, 1000)
             } catch (error: Exception) { settings.status = error.message ?: "Unable to start"; stopSelf() }
             "INPUT_SETTINGS" -> { connection?.send(settings.inputSettings()); if (connection == null) stopSelf() }
+            "AUDIO_OUTPUT" -> { player?.refreshRouting(); if (connection == null) stopSelf() }
             "MICROPHONE" -> {
                 settings.microphone = intent.getStringExtra("microphone") ?: settings.microphone
                 if (listening) try { startCapture() } catch (error: Exception) { status(error.message ?: "Microphone unavailable") }

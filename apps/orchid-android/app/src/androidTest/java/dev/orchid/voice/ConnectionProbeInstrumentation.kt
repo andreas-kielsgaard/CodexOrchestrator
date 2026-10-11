@@ -21,7 +21,9 @@ class ConnectionProbeInstrumentation : Instrumentation() {
     private var probe = "connection"
     private var endpointOverride: String? = null
     private var microphone = "headset"
-    override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); reconnect = arguments?.getString("reconnect") == "true"; probe = arguments?.getString("probe") ?: "connection"; endpointOverride = arguments?.getString("endpoint"); microphone = arguments?.getString("microphone") ?: "headset"; start() }
+    private var output = "automatic"
+    private var interrupt = false
+    override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); reconnect = arguments?.getString("reconnect") == "true"; probe = arguments?.getString("probe") ?: "connection"; endpointOverride = arguments?.getString("endpoint"); microphone = arguments?.getString("microphone") ?: "headset"; output = arguments?.getString("output") ?: "automatic"; interrupt = arguments?.getString("interrupt") == "true"; start() }
     override fun onStart() {
         val result = Bundle()
         val client = OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).build()
@@ -29,7 +31,7 @@ class ConnectionProbeInstrumentation : Instrumentation() {
             if (probe == "transcripts") { DetectedInputProbe.run(targetContext, result); finish(Activity.RESULT_OK, result); return }
             if (probe == "inactivity") { InactivityProbe.run(this, result); finish(Activity.RESULT_OK, result); return }
             if (probe == "assistant") { AssistantProbe.run(this, result); finish(Activity.RESULT_OK, result); return }
-            if (probe == "headset") { HeadsetProbe.run(targetContext, result, microphone); finish(Activity.RESULT_OK, result); return }
+            if (probe == "headset") { HeadsetProbe.run(targetContext, result, microphone, output, interrupt); finish(Activity.RESULT_OK, result); return }
             if (probe == "audio") { probeMutedSpeech(result); finish(Activity.RESULT_OK, result); return }
             val settings = ConnectionSettings(targetContext)
             settings.validate()

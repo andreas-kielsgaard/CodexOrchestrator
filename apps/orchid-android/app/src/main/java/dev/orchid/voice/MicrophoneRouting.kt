@@ -4,19 +4,20 @@ import android.content.Context
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.media.AudioRecord
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 
-/** Owns headset communication routing only while Orchid captures audio. */
+/** Pins capture independently; communication mode is used only for a Bluetooth microphone. */
 class MicrophoneRouting(context: Context, private val failed: (String) -> Unit) {
     private val audio = context.getSystemService(AudioManager::class.java)
-    private val phoneMicrophone = ConnectionSettings(context).microphone == "phone"
+    private val settings = ConnectionSettings(context)
+    private val inventory = AudioDevices(context)
+    private var recorder: AudioRecord? = null
     val preferredInput: AudioDeviceInfo?
-        get() = audio.getDevices(AudioManager.GET_DEVICES_INPUTS).firstOrNull {
-            if (phoneMicrophone) it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC
-            else it.type in listOf(AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_USB_DEVICE)
-        }
+        get() = inventory.input(settings.microphone) ?: inventory.input("phone")
+    val usesBluetooth get() = AudioDevices.bluetoothMic(preferredInput)
     private val handler = Handler(Looper.getMainLooper())
     private var active = false
     private var selected: Int? = null
@@ -31,20 +32,23 @@ class MicrophoneRouting(context: Context, private val failed: (String) -> Unit) 
         audio.registerAudioDeviceCallback(devices, handler)
         update()
     }
+    @Synchronized fun attach(value: AudioRecord) { recorder = value; update() }
 
     @Synchronized private fun update() {
-        if (!active || phoneMicrophone) return
-        if (preferredInput != null) { release(); return }
-        if (Build.VERSION.SDK_INT >= 31) {
+        if (!active) return
+        val input = preferredInput
+        if (!AudioDevices.bluetoothMic(input)) release()
+        else if (Build.VERSION.SDK_INT >= 31) {
             val available = audio.availableCommunicationDevices.filter {
                 it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == AudioDeviceInfo.TYPE_BLE_HEADSET
             }
-            val headset = available.firstOrNull { it.id == audio.communicationDevice?.id } ?: available.firstOrNull()
-            if (headset?.id == selected) return
-            if (headset == null) { release(); return }
-            if (!ownsMode) { audio.mode = AudioManager.MODE_IN_COMMUNICATION; ownsMode = true }
-            if (audio.setCommunicationDevice(headset)) selected = headset.id
-            else { release(); failed("Unable to select headset microphone") }
+            val headset = available.firstOrNull { it.address == input?.address && it.type == input.type }
+            if (headset == null) release()
+            else if (headset.id != selected) {
+                if (!ownsMode) { audio.mode = AudioManager.MODE_IN_COMMUNICATION; ownsMode = true }
+                if (audio.setCommunicationDevice(headset)) selected = headset.id
+                else { release(); failed("Unable to select headset microphone") }
+            }
         } else {
             val connected = audio.getDevices(AudioManager.GET_DEVICES_INPUTS).any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
             if (connected && !ownsMode) {
@@ -55,6 +59,7 @@ class MicrophoneRouting(context: Context, private val failed: (String) -> Unit) 
                 audio.isBluetoothScoOn = true
             } else if (!connected) release()
         }
+        if (recorder?.setPreferredDevice(input) == false) failed("Unable to select microphone")
     }
 
     private fun release() {
@@ -75,6 +80,7 @@ class MicrophoneRouting(context: Context, private val failed: (String) -> Unit) 
         if (!active) return
         active = false
         audio.unregisterAudioDeviceCallback(devices)
+        recorder = null
         release()
     }
 }
