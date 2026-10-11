@@ -33,25 +33,15 @@ class AudioDeviceControls(context: Context, private val settings: ConnectionSett
     private fun selector(label: String, input: Boolean, selected: String, changed: (String) -> Unit) {
         addView(PhoneTheme.text(context, label, 13f, PhoneTheme.secondary))
         val choices = inventory.choices(input, selected)
-        var displayed = selected
-        addView(Spinner(context).apply {
-            contentDescription = label
-            adapter = object : ArrayAdapter<String>(context, android.R.layout.simple_spinner_item, choices.map { it.label }) {
-                override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup): View =
-                    super.getView(position, convertView, parent).apply { (this as TextView).setTextColor(PhoneTheme.primary) }
-            }.apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
-            minimumHeight = PhoneTheme.dp(context, 48)
-            setSelection(choices.indexOfFirst { it.key == selected }.coerceAtLeast(0))
-            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                override fun onNothingSelected(parent: AdapterView<*>?) {}
-                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+        val selectedIndex = choices.indexOfFirst { it.key == selected }.coerceAtLeast(0)
+        addView(PhoneTheme.button(context, choices[selectedIndex].label + " ▾") {
+            android.app.AlertDialog.Builder(context).setTitle(label)
+                .setSingleChoiceItems(choices.map { it.label }.toTypedArray(), selectedIndex) { dialog, position ->
+                    dialog.dismiss()
                     val key = choices[position].key
-                    if (key == displayed) return
-                    displayed = key
                     if (key != (if (input) settings.microphone else settings.audioOutput)) changed(key)
-                }
-            }
-        }, LayoutParams(-1, -2))
+                }.setNegativeButton("Cancel", null).show()
+        }.apply { contentDescription = label }, LayoutParams(-1, -2))
     }
     override fun onAttachedToWindow() { super.onAttachedToWindow(); audio.registerAudioDeviceCallback(devices, Handler(Looper.getMainLooper())); render() }
     override fun onDetachedFromWindow() { audio.unregisterAudioDeviceCallback(devices); super.onDetachedFromWindow() }
