@@ -202,7 +202,7 @@ impl VoiceSessionApplication {
     pub(crate) fn context(&self, conversation: &Conversation) -> Value {
         json!({"conversationId":conversation.id,"mainSessionId":conversation.main_session_id,"pipeline":conversation.pipeline,
             "tasks":conversation.tasks,"assignments":conversation.delegations.iter().rev().take(20).map(|d|json!({"id":d.id,"taskId":d.task_id,"revision":d.revision,"sessionId":d.session_id,"invocationId":d.invocation_id,"delivery":d.delivery,"status":d.runtime_status,"outcome":d.outcome})).collect::<Vec<_>>(),
-            "pendingTopics":conversation.pending_topics.iter().map(|t|json!({"id":t.id,"title":t.title})).collect::<Vec<_>>(),"playback":conversation.playback,
+            "pendingTopics":conversation.pending_topics.iter().map(|t|json!({"id":t.id,"title":t.title})).collect::<Vec<_>>(),"recentOutput":conversation.utterances.iter().rev().take(5).collect::<Vec<_>>(),"playback":conversation.playback,
             "utterance":conversation.playback.as_ref().and_then(|p| conversation.utterances.iter().find(|u|u.id==p.utterance_id))})
     }
     pub(crate) fn delivery_content(
