@@ -117,6 +117,8 @@ fn product_delivery_queues_while_busy_and_keeps_pinned_policy_and_context() {
         })
         .unwrap();
     assert_eq!(request.content.context, vec![context]);
+    assert_eq!(request.launch_extension.as_ref().and_then(|e|e.reasoning_mode.as_deref()),
+        policy.session_profile().pinned_defaults().reasoning_mode.as_deref());
     assert_eq!(
         harness
             .repository

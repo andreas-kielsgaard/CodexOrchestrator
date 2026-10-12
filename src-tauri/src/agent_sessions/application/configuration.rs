@@ -42,6 +42,9 @@ pub(super) fn pinned_exposure_extension(
     let pinned = profile.session_profile();
     extension.native_mcp_enabled = pinned.native_mcp_enabled();
     extension.provider_options = pinned.provider_options().cloned();
+    if extension.reasoning_mode.is_none() {
+        extension.reasoning_mode = pinned.pinned_defaults().reasoning_mode.clone();
+    }
     let skills = crate::execution_configuration::validate_session_skill_inputs(
         pinned.session_skill_inputs(),
     )?;
