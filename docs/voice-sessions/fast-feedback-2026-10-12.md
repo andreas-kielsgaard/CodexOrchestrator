@@ -51,3 +51,5 @@ The original no-stove amendment reused the lunch task at revision 2. An unrelate
 Evidence: ignored .dev/voice-fast-*.json and build/test logs in this checkout. Source commits: 31382104, dbef1947, e924dfab, a5c97ff8. Final executable hash and completion playback will be appended after publication.
 
 Final publication: desktop SHA256 07C77C0465201AE98F5DD089673D75A409C6CF69CB299BC7A0E59ECF4B601AF9; Android APK SHA256 407DF3D3CD70D1CD30243EA3FCEFE83479332FF9EA34CF6E7E853CA2019F8735. The release build was produced from main a5c97ff8 and launched as PID 31000 with inspector port 9282. An additional 23 preparation/queue tests passed, including explicit reasoning selections and target handling.
+
+Completion announcement: output session 073a20f4-7de4-4671-bd98-14bbe99d0441 published utterance 9f235d58-7e99-4c5b-81ab-ab229dd319ae through voice_session.publish. The connected phone reported completed playback, 11,761 ms. The microphone had reached its normal inactivity timeout and stayed off while the connection remained available for playback. Final live desktop controls showed Luna/low/Fast enabled for response and GPT-6.1 Sol/medium/Fast disabled for routing.
