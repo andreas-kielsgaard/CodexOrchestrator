@@ -25,7 +25,7 @@ object ConnectionTakeoverProbe {
                     "pong" -> pongs.incrementAndGet()
                 }
             }
-            override fun onClosing(socket: WebSocket, code: Int, reason: String) { socket.close(code, reason); closed?.countDown() }
+            override fun onClosing(socket: WebSocket, code: Int, reason: String) { socket.close(if (code == 1005) 1000 else code, reason); closed?.countDown() }
             override fun onClosed(socket: WebSocket, code: Int, reason: String) { closed?.countDown() }
             override fun onFailure(socket: WebSocket, error: Throwable, response: Response?) { failure = "${error.message}; HTTP ${response?.code}"; hello.countDown() }
         }

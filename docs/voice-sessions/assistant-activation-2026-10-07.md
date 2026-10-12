@@ -15,6 +15,8 @@ Implemented on `feature/android-assistant-activation` for the Samsung S21 (`SM-G
 
 Local evidence: `.dev/phone-history/assistant-system-service.txt`, `assistant-key-event-service.txt`, `assistant-system-activation.png`, and `assistant-probe.txt`.
 
+Phone instrumentation stops the target app and can leave the Google handoff service crashed, unbound, or disabled by Android. After these checks, restore the previously enabled handoff in Settings → Accessibility → Installed apps → Orchid Google handoff, verify it is bound, and verify system assistant activation reaches Orchid. Google remains the default for the Hey Google handoff.
+
 ## Limits
 
 The Garmin model is unspecified. Garmin documents Phone Assistant as communication with the phone assistant via Bluetooth, but third-party Orchid compatibility has not been established by a physical watch-button test. The H95 button also needs physical verification, including whether the accessory starts a Bluetooth call-audio route. This implementation keeps the saved microphone setting; it does not automatically select the watch microphone.

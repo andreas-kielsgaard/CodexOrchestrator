@@ -6,7 +6,8 @@ import okhttp3.*
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-class OrchidConnection(private val settings: ConnectionSettings, private val status: (String) -> Unit, private val receive: (JSONObject) -> Unit) {
+class OrchidConnection(settings: ConnectionSettings, private val status: (String) -> Unit, private val receive: (JSONObject) -> Unit,
+    private val request: () -> Request = { Request.Builder().url(settings.endpoint).header("Authorization", "Bearer ${settings.token}").build() }) {
     private val client = OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS).pingInterval(10, TimeUnit.SECONDS).build()
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var active = false
@@ -20,7 +21,7 @@ class OrchidConnection(private val settings: ConnectionSettings, private val sta
     private fun connect() {
         if (!active) return
         status("Connecting…")
-        val attempt = client.newWebSocket(Request.Builder().url(settings.endpoint).header("Authorization", "Bearer ${settings.token}").build(), object : WebSocketListener() {
+        val attempt = client.newWebSocket(request(), object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 handler.post {
                     if (!active || socket !== webSocket) return@post
@@ -40,7 +41,7 @@ class OrchidConnection(private val settings: ConnectionSettings, private val sta
                 }
                 lost(webSocket, message, rejected)
             }
-            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, reason); lost(webSocket, "Connection closed") }
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(if (code == 1005) 1000 else code, reason); lost(webSocket, "Connection closed") }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { lost(webSocket, "Connection closed") }
         })
         socket = attempt
