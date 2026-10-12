@@ -28,6 +28,8 @@ class ConnectionProbeInstrumentation : Instrumentation() {
         val result = Bundle()
         val client = OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).build()
         try {
+            if (probe == "retries") { ConnectionRetryProbe.run(this, result); finish(Activity.RESULT_OK, result); return }
+            if (probe == "takeover") { ConnectionTakeoverProbe.run(this, result); finish(Activity.RESULT_OK, result); return }
             if (probe == "devices") { AudioDevicesProbe.run(this, result); finish(Activity.RESULT_OK, result); return }
             if (probe == "transcripts") { DetectedInputProbe.run(targetContext, result); finish(Activity.RESULT_OK, result); return }
             if (probe == "inactivity") { InactivityProbe.run(this, result); finish(Activity.RESULT_OK, result); return }

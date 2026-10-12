@@ -11,8 +11,12 @@ class OrchidConnection(private val settings: ConnectionSettings, private val sta
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var active = false
     private var socket: WebSocket? = null
+    private var retries = 0
     @Volatile var connected = false; private set
-    fun start() { handler.post { active = true; if (socket == null) { handler.removeCallbacksAndMessages(null); connect() } } }
+    fun start() { handler.post {
+        if (!active) { retries = 0; active = true }
+        if (socket == null) { handler.removeCallbacksAndMessages(null); connect() }
+    } }
     private fun connect() {
         if (!active) return
         status("Connecting…")
@@ -21,27 +25,42 @@ class OrchidConnection(private val settings: ConnectionSettings, private val sta
                 handler.post {
                     if (!active || socket !== webSocket) return@post
                     try { val value = JSONObject(text)
-                        if (value.optString("type") == "hello") { if (value.optInt("version") != 2) { close(); status("Protocol version mismatch"); return@post }; connected = true; status("Listening · connected") }
+                        if (value.optString("type") == "hello") { if (value.optInt("version") != 2) { close(); status("Protocol version mismatch"); return@post }; connected = true; retries = 0; status("Listening · connected") }
                         receive(value)
                     } catch (error: Exception) { status("Connection message error: ${error.message}") }
                 }
             }
             override fun onFailure(webSocket: WebSocket, error: Throwable, response: Response?) {
-                lost(webSocket, if (response?.code in listOf(401, 403)) "Connection rejected · check the access token" else "Disconnected · retrying")
+                val rejected = response?.code in listOf(401, 403)
+                val message = when {
+                    rejected -> "Connection rejected · check the access token"
+                    response?.code == 409 -> "Laptop reports an existing phone connection"
+                    response != null -> "Laptop rejected connection (${response.code})"
+                    else -> "Laptop unavailable · ${error.message ?: "connection failed"}"
+                }
+                lost(webSocket, message, rejected)
             }
-            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, reason); lost(webSocket, "Disconnected · retrying") }
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { lost(webSocket, "Disconnected · retrying") }
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, reason); lost(webSocket, "Connection closed") }
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { lost(webSocket, "Connection closed") }
         })
         socket = attempt
-        handler.postDelayed({ if (active && socket === attempt && !connected) { attempt.cancel(); lost(attempt, "Laptop not responding · retrying") } }, 10000)
+        handler.postDelayed({ if (active && socket === attempt && !connected) lost(attempt, "Laptop did not respond within 10 seconds") }, 10000)
     }
-    private fun lost(webSocket: WebSocket, message: String) {
+    private fun lost(webSocket: WebSocket, message: String, rejected: Boolean = false) {
         handler.post {
             if (socket !== webSocket) return@post
             connected = false; socket = null
+            webSocket.cancel()
             handler.removeCallbacksAndMessages(null)
-            status(if (active) message else "Stopped")
-            if (active) handler.postDelayed({ connect() }, 1000)
+            if (!active) { status("Stopped"); return@post }
+            if (rejected || retries == 3) {
+                active = false
+                status(if (rejected) message else "$message · stopped after 3 retries · tap Start listening")
+            } else {
+                retries++
+                status("$message · retry $retries of 3")
+                handler.postDelayed({ connect() }, 1000)
+            }
         }
     }
     fun send(value: JSONObject): Boolean = connected && socket?.send(value.toString()) == true

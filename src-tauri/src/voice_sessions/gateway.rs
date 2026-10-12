@@ -16,6 +16,8 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::{net::SocketAddr, sync::Arc, thread};
 use tokio_util::sync::CancellationToken;
+mod phone_connections;
+use phone_connections::PhoneConnections;
 
 pub(crate) struct GatewayOwner {
     cancellation: CancellationToken,
@@ -34,6 +36,7 @@ struct GatewayState {
     app: Arc<VoiceSessionApplication>,
     token: String,
     cancel: CancellationToken,
+    phones: Arc<PhoneConnections>,
 }
 pub(crate) fn validate_address(value: &str) -> Result<SocketAddr, String> {
     let address: SocketAddr = value
@@ -65,6 +68,7 @@ pub(crate) fn start(
         app,
         token: settings.token.clone(),
         cancel: cancel.clone(),
+        phones: Arc::new(PhoneConnections::default()),
     };
     let thread = thread::Builder::new()
         .name("voice-phone".into())
@@ -100,16 +104,6 @@ async fn upgrade(
 ) -> Response {
     if !authorized(&headers, &state.token) {
         return StatusCode::UNAUTHORIZED.into_response();
-    }
-    let accepted = state.app.update(|snapshot| {
-        if snapshot.phone_connected {
-            return Err("Phone already connected".into());
-        }
-        snapshot.phone_connected = true;
-        Ok(())
-    });
-    if accepted.is_err() {
-        return StatusCode::CONFLICT.into_response();
     }
     ws.max_message_size(5_500_000)
         .on_upgrade(move |socket| connection(socket, state))
@@ -161,6 +155,10 @@ async fn connection(socket: WebSocket, state: GatewayState) {
         query_schedule::QuerySchedule,
     };
     use std::time::{Duration, Instant};
+    let connection_cancel = state.cancel.child_token();
+    let Ok(connection_id) = state.phones.open(connection_cancel.clone(), || {
+        state.app.update(|s| { s.phone_connected = true; Ok(()) })
+    }) else { return; };
     let (mut sink, mut source) = socket.split();
     let mut events = state.app.events.subscribe();
     let conversation = state.app.snapshot().ok().and_then(|s| s.conversation);
@@ -181,9 +179,8 @@ async fn connection(socket: WebSocket, state: GatewayState) {
         })
         .unwrap_or_default();
     if sink.send(Message::Text(json!({"type":"hello","version":2,"conversationId":conversation.as_ref().map(|c|&c.id),"mainSessionId":conversation.map(|c|c.main_session_id),"inputClassifications":classifications}).to_string().into())).await.is_err() {
-        let _=state.app.update(|s|{s.phone_connected=false;Ok(())}); return;
+        let _=state.phones.close(connection_id, || state.app.update(|s|{s.phone_connected=false;Ok(())})); return;
     }
-    let connection_cancel = state.cancel.child_token();
     let (windows, mut latest) = tokio::sync::watch::channel::<Option<AudioWindow>>(None);
     let app = state.app.clone();
     let cancelled = connection_cancel.clone();
@@ -236,7 +233,7 @@ async fn connection(socket: WebSocket, state: GatewayState) {
     let mut tick = tokio::time::interval(Duration::from_millis(250));
     loop {
         tokio::select! {
-            _=state.cancel.cancelled()=>break,
+            _=connection_cancel.cancelled()=>break,
             _=tick.tick()=>{
                 if let Ok(snapshot)=state.app.snapshot() {
                     if let Some(c)=snapshot.conversation {
@@ -303,7 +300,7 @@ async fn connection(socket: WebSocket, state: GatewayState) {
     }
     connection_cancel.cancel();
     decoder.abort();
-    let _ = state.app.update(|s| {
+    let _ = state.phones.close(connection_id, || state.app.update(|s| {
         s.phone_connected = false;
         s.speaking = false;
         s.pending_audio = 0;
@@ -312,7 +309,7 @@ async fn connection(socket: WebSocket, state: GatewayState) {
             c.input_buffer.complete = false;
         }
         Ok(())
-    });
+    }));
     let _ = sink.close().await;
 }
 

@@ -1,6 +1,8 @@
 # Phone protocol v2
 
-Connect to `ws://<laptop Tailscale IPv4>:4818/phone` with `Authorization: Bearer <token>`. The server binds to that exact Tailscale address. Loopback is permitted for desktop tests; wildcard, LAN, and public bindings are rejected. Tailscale supplies encrypted device transport. One phone connection is accepted at a time.
+Connect to `ws://<laptop Tailscale IPv4>:4818/phone` with `Authorization: Bearer <token>`. The server binds to that exact Tailscale address. Loopback is permitted for desktop tests; wildcard, LAN, and public bindings are rejected. Tailscale supplies encrypted device transport. The newest authenticated phone socket replaces the previous socket. Only that socket can clear connected state when it closes.
+
+Each activation allows the initial connection attempt and three automatic retries, one second apart. TCP connection has a five-second timeout; the protocol hello must arrive within ten seconds. Exhausting retries stops connection attempts until Start listening or an assistant activation starts again. A successful hello resets the retry budget. Rejected credentials stop immediately with an access-token message.
 
 All WebSocket data messages are JSON text. Native WebSocket ping/pong maintains transport liveness.
 
