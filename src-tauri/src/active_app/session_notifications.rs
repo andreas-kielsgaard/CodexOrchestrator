@@ -2,6 +2,19 @@
 
 use std::sync::{Arc, Mutex, Weak};
 
+pub(super) struct CompletionSoundPolicy {
+    pub(super) voice: Arc<Mutex<Option<Weak<crate::voice_sessions::VoiceSessionApplication>>>>,
+    pub(super) workflow: Arc<Mutex<Option<Weak<crate::workflows::execution::WorkflowExecutionService>>>>,
+}
+impl CompletionSoundPolicy {
+    pub(super) fn allows(&self, session: &str) -> bool {
+        let voice = self.voice.lock().ok().and_then(|slot| slot.clone()).and_then(|owner| owner.upgrade());
+        if let Some(enabled) = voice.and_then(|voice| voice.completion_sound_for_session(session)) { return enabled; }
+        self.workflow.lock().ok().and_then(|slot| slot.clone()).and_then(|owner| owner.upgrade())
+            .and_then(|workflow| workflow.completion_sound_for_session(session)).unwrap_or(true)
+    }
+}
+
 pub(super) struct SessionNotificationFanout {
     pub(super) inner: Arc<dyn crate::agent_sessions::application::AgentSessionNotifier>,
     pub(super) registry: Arc<crate::orchestration::application::ManagedPlanBuilderRegistry>,

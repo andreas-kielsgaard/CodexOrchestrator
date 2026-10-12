@@ -24,7 +24,6 @@ import { WorkflowConnectionEditor } from './WorkflowConnectionEditor';
 import { WorkflowNodeEditor } from './WorkflowNodeEditor';
 import { WorkflowCanvas } from './WorkflowCanvas';
 import { WorkflowNavigation, type WorkflowNavigationTab } from './WorkflowNavigation';
-import { WorkflowConnectionGroupDialog } from '../workflowGraph';
 import { RecipeInstanceCreationDialog } from './RecipeInstanceCreationDialog';
 import { WorkflowInstanceView } from '../workflowInstances';
 import { errorMessage, defaultsWithinCapabilities } from './workflowAuthoringPresentation';
@@ -100,7 +99,6 @@ export function WorkflowAuthoringScreen({
     kind: 'node',
     id: null,
   });
-  const [connectionGroupIds, setConnectionGroupIds] = useState<readonly string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -372,8 +370,7 @@ export function WorkflowAuthoringScreen({
                 }}
                 onSelect={setSelection}
                 onConnectionGroup={(ids) => {
-                  if (ids.length === 1) setSelection({ kind: 'connection', id: ids[0] });
-                  else setConnectionGroupIds(ids);
+                  setSelection({ kind: 'connection', id: ids[0] });
                 }}
                 onPlace={(x, y, copyFrom) => {
                   const source = draft.nodes.find((node) => node.nodeId === copyFrom);
@@ -445,6 +442,20 @@ export function WorkflowAuthoringScreen({
                   });
                   setSelection({ kind: 'connection', id: connectionId });
                 }}
+                onOrganize={(positions) =>
+                  editDraft({
+                    ...draft,
+                    nodes: draft.nodes.map((node) =>
+                      positions[node.nodeId]
+                        ? {
+                            ...node,
+                            positionX: positions[node.nodeId].x,
+                            positionY: positions[node.nodeId].y,
+                          }
+                        : node,
+                    ),
+                  })
+                }
                 onMove={(id, x, y) =>
                   editDraft({
                     ...draft,
@@ -525,6 +536,7 @@ export function WorkflowAuthoringScreen({
                                   capabilityProfileId: source.capabilityProfileId,
                                   nodeProfile: source.nodeProfile,
                                   initialPrompt: source.initialPrompt,
+                                  notifications: source.notifications,
                                   agentIdentityId: source.agentIdentityId,
                                 }
                               : candidate,
@@ -555,37 +567,6 @@ export function WorkflowAuthoringScreen({
                     </div>
                   )}
                 </section>
-              ) : null}
-              {connectionGroupIds ? (
-                <WorkflowConnectionGroupDialog
-                  connections={draft.connections
-                    .filter((connection) => connectionGroupIds.includes(connection.connectionId))
-                    .map((connection) => ({
-                      id: connection.connectionId,
-                      name: connection.name,
-                      source: connection.sourceNodeId,
-                      destination: connection.destinationNodeId,
-                    }))}
-                  nodes={draft.nodes.map((node) => ({
-                    id: node.nodeId,
-                    name: node.name,
-                    x: node.positionX,
-                    y: node.positionY,
-                  }))}
-                  summary={(connection) => {
-                    const source = draft.connections.find(
-                      (candidate) => candidate.connectionId === connection.id,
-                    );
-                    return source
-                      ? `${source.trigger.capability.tool} → ${source.action.tool}`
-                      : null;
-                  }}
-                  onClose={() => setConnectionGroupIds(null)}
-                  onSelect={(id) => {
-                    setConnectionGroupIds(null);
-                    setSelection({ kind: 'connection', id });
-                  }}
-                />
               ) : null}
             </div>
           </>

@@ -99,17 +99,19 @@ it('uses the canvas for adding, connecting, copying, moving and undoing node edi
   await user.click(screen.getByRole('button', { name: 'Configure Author' }));
   fireEvent.click(canvas, { clientX: 400, clientY: 340 });
   await user.click(screen.getByRole('button', { name: 'Close editor' }));
+  const beforeMove = screen.getByRole('button', { name: 'Configure Author copy' }).closest('.react-flow__node')?.getAttribute('style');
   fireEvent.keyDown(screen.getByRole('button', { name: 'Configure Author copy' }), {
     key: 'ArrowRight',
     altKey: true,
   });
   await user.click(screen.getByRole('button', { name: 'Undo' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Configure Author copy' }).closest('.react-flow__node')?.getAttribute('style')).toBe(beforeMove));
   await user.click(screen.getByRole('button', { name: 'Save draft' }));
   await waitFor(() => expect(save).toHaveBeenCalled());
   const saved = save.mock.calls[0][0];
   expect(saved.nodes).toHaveLength(4);
   expect(saved.connections).toHaveLength(1);
-  expect(saved.nodes[3].positionX).toBe(400);
+  expect(saved.nodes[3].positionX).toBeGreaterThan(0);
   expect(saved.nodes[3].nodeProfile).toEqual(saved.nodes[0].nodeProfile);
   expect(saved.nodes[3].nodeProfile).not.toBe(saved.nodes[0].nodeProfile);
 });

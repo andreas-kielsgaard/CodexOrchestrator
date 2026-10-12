@@ -1661,7 +1661,7 @@ export function App({
           }}
         />
       ) : surface === 'voice-sessions' && voiceSessionClient ? (
-        <VoiceSessionsScreen client={voiceSessionClient} onOpenSession={(sessionId) => dispatchProductNavigation({ type: 'navigate', intent: 'push', destination: { kind: 'agent_sessions', selection: { kind: 'session', sessionId }, focusedInvocationId: null } })} />
+        <VoiceSessionsScreen queryClient={agentSessionClient.jevQueries} client={voiceSessionClient} onOpenSession={(sessionId) => dispatchProductNavigation({ type: 'navigate', intent: 'push', destination: { kind: 'agent_sessions', selection: { kind: 'session', sessionId }, focusedInvocationId: null } })} />
       ) : surface === 'workflows' &&
         workflowAuthoringClient &&
         executionConfigurationClient &&

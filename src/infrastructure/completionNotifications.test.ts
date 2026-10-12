@@ -26,10 +26,12 @@ it('emits one completion per terminal invocation and review build', async () => 
     sessionId: 'session-one',
     invocationId: 'turn-one',
     invocation: { id: 'turn-one' },
-  } as AgentSessionUpdateDto;
+  } as Extract<AgentSessionUpdateDto, { kind: 'invocation_terminal' }>;
 
   update(terminal);
   update(terminal);
+  update({ ...terminal, invocationId: 'silent-turn', completionSound: false });
+  update({ ...terminal, invocationId: 'silent-turn', completionSound: true });
   builds.record(completedBuild);
   builds.record({ ...completedBuild, name: 'Same terminal build' });
 

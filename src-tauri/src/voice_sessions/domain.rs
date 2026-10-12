@@ -59,6 +59,8 @@ pub(crate) struct VoiceSettings {
     pub(crate) prompts: VoicePrompts,
     #[serde(default)]
     pub(crate) models: super::models::VoiceModels,
+    #[serde(default)]
+    pub(crate) workflow: super::workflow::VoiceWorkflowSettings,
 }
 impl Default for VoiceSettings {
     fn default() -> Self {
@@ -70,6 +72,7 @@ impl Default for VoiceSettings {
             instructions: DEFAULT_INSTRUCTIONS.into(),
             prompts: VoicePrompts::default(),
             models: super::models::VoiceModels::default(),
+            workflow: super::workflow::VoiceWorkflowSettings::default(),
         }
     }
 }
@@ -148,6 +151,8 @@ pub(crate) struct Conversation {
     pub(crate) last_input_release: Option<InputRelease>,
     #[serde(default)]
     pub(crate) tasks: Vec<VoiceTask>,
+    #[serde(default)]
+    pub(crate) jev_applications: Vec<super::query_inspection::AppliedJevQuery>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -173,6 +178,16 @@ pub(crate) struct Activity {
     pub(crate) kind: String,
     pub(crate) created_at: String,
     pub(crate) data: serde_json::Value,
+    #[serde(default)]
+    pub(crate) route: Option<crate::workflows::extensions::ExtensionRouteEvidence>,
+    #[serde(default)]
+    pub(crate) deliveries: Vec<ActivityDelivery>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ActivityDelivery {
+    pub(crate) session_id: String,
+    pub(crate) receipt: crate::agent_sessions::application::ProductDeliveryReceipt,
 }
 impl Conversation {
     pub(crate) fn role(&self, id: &str) -> Option<&'static str> {

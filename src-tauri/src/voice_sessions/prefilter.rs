@@ -62,13 +62,9 @@ fn prepare_window(c: &mut Conversation, seconds: u64) {
 fn may_accumulate(input: &SpokenInput, continuation: bool) -> bool {
     input.delivered_revision == 0 || (continuation && input.revision > input.delivered_revision)
 }
+#[cfg(test)]
 fn release_targets(c: &Conversation, blocks: &[SpokenInput]) -> Vec<String> {
-    let stages = c.pipeline.as_ref().expect("Reasoning stages required");
-    if !blocks.is_empty() && blocks.iter().all(|b| b.reaction.as_deref() == Some("reaction_request")) {
-        vec![stages.output.clone()]
-    } else {
-        vec![stages.summary.clone(), c.main_session_id.clone(), stages.digest.clone()]
-    }
+    super::workflow::targets(c, super::workflow::release_event(blocks, &Default::default()))
 }
 pub(super) fn ready(state: &VoiceState, c: &Conversation) -> bool {
     state.enabled
@@ -166,7 +162,7 @@ impl VoiceSessionApplication {
         recent: &[SpokenInput],
         prompts: &VoicePrompts,
         policy: &VoiceInputPolicy,
-    ) -> Result<BTreeMap<String, String>, String> {
+    ) -> Result<(String, BTreeMap<String, String>), String> {
         let filter = &c.pipeline.as_ref().ok_or("JEV session missing")?.filter;
         let session = AgentSessionId::new(filter.clone()).map_err(|e| e.to_string())?;
         let invocation =
@@ -218,7 +214,7 @@ impl VoiceSessionApplication {
                         .map(|e| e.message)
                         .unwrap_or_else(|| "JEV evaluation did not complete".into()));
                 }
-                return view
+                let answers = view
                     .result
                     .ok_or("JEV result missing".to_string())?
                     .answers
@@ -227,7 +223,8 @@ impl VoiceSessionApplication {
                         JevAnswer::Choice { choice, .. } => Ok((key, choice)),
                         _ => Err("JEV returned an unexpected answer type".into()),
                     })
-                    .collect();
+                    .collect::<Result<BTreeMap<_, _>, String>>()?;
+                return Ok((invocation.as_str().to_owned(), answers));
             }
             if Instant::now() >= deadline {
                 return Err("JEV input evaluation timed out".into());
@@ -253,7 +250,7 @@ impl VoiceSessionApplication {
             })?;
             return Ok(());
         }
-        let answers = self.evaluate_window(evaluated, &recent, prompts, policy)?;
+        let (evaluation_id, answers) = self.evaluate_window(evaluated, &recent, prompts, policy)?;
         let (opened, relevant, classifications, continued) = self.update(|state| {
             if !state.enabled {
                 return Err("Voice connection stopped during filtering".into());
@@ -267,6 +264,7 @@ impl VoiceSessionApplication {
             let mut relevant = vec![];
             let mut classifications = vec![];
             let mut continued = false;
+            let mut decisions = vec![];
             for block in &recent {
                 let input = c
                     .inputs
@@ -275,6 +273,7 @@ impl VoiceSessionApplication {
                     .ok_or("Sentence missing")?;
                 if input.revision != block.revision {
                     input.filter_pending = true;
+                    decisions.push(super::query_inspection::sentence_decision(input, block.revision, None, false));
                     continue;
                 }
                 input.evaluation_failed = false;
@@ -309,6 +308,7 @@ impl VoiceSessionApplication {
                             .clone(),
                     )
                 };
+                decisions.push(super::query_inspection::sentence_decision(input, block.revision, Some(relevance), eligible));
                 classifications
                     .push(json!({"id":input.id,"relevance":effective,"revision":input.revision,
                         "addressed":relevance != "unaddressed",
@@ -336,6 +336,7 @@ impl VoiceSessionApplication {
                 .blocks
                 .last()
                 .is_some_and(|b| b.completion.as_deref() == Some("complete"));
+            c.jev_applications.push(super::query_inspection::AppliedJevQuery { invocation_id: evaluation_id.clone(), decisions, release_id: None });
             Ok((
                 was_empty && !c.input_buffer.blocks.is_empty(),
                 relevant,
@@ -392,6 +393,11 @@ impl VoiceSessionApplication {
                 blocks: buffer.blocks.clone(),
             };
             c.last_input_release = Some(release.clone());
+            for block in &buffer.blocks {
+                if let Some(application) = c.jev_applications.iter_mut().rev().find(|a| a.decisions.iter().any(|d| d.applied && d.sentence_id == block.id && d.revision == block.revision)) {
+                    application.release_id = Some(release.id.clone());
+                }
+            }
             Ok(Some((
                 c.clone(),
                 release,
@@ -404,7 +410,8 @@ impl VoiceSessionApplication {
             return Ok(());
         };
         c.pipeline.as_ref().ok_or("No reasoning stages")?;
-        let targets = release_targets(&c, &release.blocks);
+        let settings = self.snapshot()?.settings.workflow;
+        let targets = super::workflow::targets(&c, super::workflow::release_event(&release.blocks, &settings));
         self.record_activity("user","accepted_input",json!({"requestId":release.id,"blocks":release.blocks,"previousRequest":previous,"continuationOf":continuation_of,
             "responseRoute":if targets.len()==1 {"direct_reaction"} else {"work_routing"}}), &targets)?;
         let _ = self.events.send(json!({"type":"cue","cue":"processing"}));

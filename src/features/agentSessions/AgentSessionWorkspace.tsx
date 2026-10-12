@@ -1,4 +1,5 @@
 import { projectSessionHistory } from './sessionHistoryProjector';
+import { JevQueryInspector } from '../agentProviders/jev/JevQueryInspector';
 import { SkillReferenceProvider } from './SkillReferences';
 import { ToolDetailsContext } from './ToolDetailsContext';
 import type { ComposerTargetSource } from './composerTargetActions';
@@ -37,6 +38,8 @@ export interface AgentSessionPresentation {
 }
 
 export interface AgentSessionWorkspaceProps {
+  readonly jevQueryClient?: import('../../application/agentSessions/jevQueries').JevQueryClient;
+  readonly provider?: string;
   controller: AgentSessionWorkspaceController;
   readonly composerToolbar?: ReactNode;
   readonly deviceActivityPanel?: ReactNode;
@@ -75,6 +78,8 @@ export function AgentSessionHeaderActionsProvider({
 
 export function AgentSessionWorkspace({
   controller,
+  jevQueryClient,
+  provider,
   composerToolbar,
   deviceActivityPanel,
   queuePanel,
@@ -164,6 +169,12 @@ export function AgentSessionWorkspace({
       </span>
     </div>
   );
+  if (!inspection && jevQueryClient && controller.selectedSessionId &&
+    (provider === 'jev' || controller.currentProfile?.creationResolution.sessionProfile.configuration.provider === 'jev' || controller.details?.session.executionTarget?.execution.provider === 'jev')) {
+    return <section className="agent-session-workspace"><header className="agent-session-workspace__header"><h2>{controller.details?.session.title ?? 'JEV node'}</h2></header>
+      <JevQueryInspector key={controller.selectedSessionId} sessionId={controller.selectedSessionId} client={jevQueryClient} />
+    </section>;
+  }
   return (
     <ToolDetailsContext.Provider value={controller.loadEventDetails}>
       <SkillReferenceProvider source={controller.quickFeatures}>

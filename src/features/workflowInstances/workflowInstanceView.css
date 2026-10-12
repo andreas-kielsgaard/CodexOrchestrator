@@ -91,7 +91,7 @@
   overflow: hidden;
 }
 
-.workflow-instance-view__body > .workflow-graph-scroll {
+.workflow-instance-view__body > .workflow-flow {
   grid-area: 1 / 1;
 }
 

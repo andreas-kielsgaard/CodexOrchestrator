@@ -40,6 +40,8 @@ export function ProfiledSessionPane({
       }
     >
       <AgentSessionWorkspace
+        jevQueryClient={client.jevQueries}
+        provider={view.profile?.creationResolution.sessionProfile.configuration.provider}
         controller={view.session}
         sendUnavailableReason={view.sendUnavailableReason}
       />

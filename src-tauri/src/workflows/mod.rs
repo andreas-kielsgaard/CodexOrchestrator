@@ -8,6 +8,7 @@ pub(crate) mod compiler;
 pub(crate) mod event_sources;
 pub(crate) mod execution;
 pub(crate) mod execution_transport;
+pub(crate) mod extensions;
 pub(crate) mod file_inputs;
 pub(crate) mod instance_domain;
 pub(crate) mod instances;

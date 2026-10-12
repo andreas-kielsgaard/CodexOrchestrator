@@ -63,6 +63,10 @@ export function createTauriAgentSessionClient(
     invokeCommand<AgentSessionDetailsDto>('load_agent_session', { query });
 
   const core: AgentSessionClient & AgentSessionProfileClient = {
+    jevQueries: {
+      list: (sessionId) => invokeCommand('list_jev_api_invocations', { sessionId }),
+      load: (sessionId, invocationId) => invokeCommand('load_jev_api_invocation', { sessionId, invocationId }),
+    },
     loadCurrentProfile: (sessionId) =>
       invokeCommand('load_current_agent_session_profile', { input: { sessionId } }),
     sendPreparedMessage: async (input) => {

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { VoiceSessionsScreen } from './VoiceSessionsScreen';
 import type { VoiceView } from '../../application/voiceSessions';
@@ -26,7 +26,10 @@ it('distinguishes a pending amendment from an outcome for the earlier request', 
         workingDirectory: null,
         instructions: '',
         prompts,
-        models: { response: { model: "gpt-6-luna", reasoningMode: "low", fastMode: true }, routing: { model: "gpt-6.1-sol", reasoningMode: "medium", fastMode: false } },
+        models: {
+          response: { model: 'gpt-6-luna', reasoningMode: 'low', fastMode: true },
+          routing: { model: 'gpt-6.1-sol', reasoningMode: 'medium', fastMode: false },
+        },
       },
       enabled: true,
       phoneConnected: false,
@@ -89,6 +92,7 @@ it('distinguishes a pending amendment from an outcome for the earlier request', 
       onOpenSession={vi.fn()}
     />,
   );
+  fireEvent.click(await screen.findByRole('button', { name: 'Activity' }));
   expect(await screen.findByText('Picnic plan')).toBeVisible();
   expect(screen.getByText(/Request 2 · running · amendment queued/)).toBeVisible();
   expect(screen.getByText('Earlier outcome · request 1')).toBeVisible();
@@ -117,7 +121,10 @@ it('shows held input, actual microphone fallback, and a failed reasoning stage',
         workingDirectory: null,
         instructions: '',
         prompts,
-        models: { response: { model: "gpt-6-luna", reasoningMode: "low", fastMode: true }, routing: { model: "gpt-6.1-sol", reasoningMode: "medium", fastMode: false } },
+        models: {
+          response: { model: 'gpt-6-luna', reasoningMode: 'low', fastMode: true },
+          routing: { model: 'gpt-6.1-sol', reasoningMode: 'medium', fastMode: false },
+        },
       },
       enabled: true,
       phoneConnected: true,
@@ -185,6 +192,7 @@ it('shows held input, actual microphone fallback, and a failed reasoning stage',
       onOpenSession={vi.fn()}
     />,
   );
+  fireEvent.click(await screen.findByRole('button', { name: 'Activity' }));
   expect(await screen.findByText('Waiting for you to finish')).toBeVisible();
   expect(screen.getByText(/external requested, phone fallback/)).toBeVisible();
   expect(screen.getByText('Pinned skill changed')).toBeVisible();

@@ -36,7 +36,8 @@ it('discovers continuation fields and saves ordered file selections for multiple
     />
   );
   const mounted = render(element);
-  await user.click(await screen.findByRole('button', { name: 'Edit Review changes' }));
+  await user.click(await screen.findByText('Connections · 1'));
+  await user.click(await screen.findByRole('button', { name: 'Edit Review changes in connection list' }));
   await user.click(screen.getByRole('button', { name: 'Set trigger' }));
   await user.click(screen.getByRole('button', { name: 'Workflow continuation · Continuation' }));
   await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Set trigger' }));
@@ -79,7 +80,8 @@ it('discovers continuation fields and saves ordered file selections for multiple
   });
   mounted.unmount();
   render(element);
-  await user.click(await screen.findByRole('button', { name: 'Edit Review changes' }));
+  await user.click(await screen.findByText('Connections · 1'));
+  await user.click(await screen.findByRole('button', { name: 'Edit Review changes in connection list' }));
   expect(screen.getByText('Workflow continuation · Continuation')).toBeVisible();
   expect(
     within(screen.getByRole('region', { name: 'Selected flow element' })).getByLabelText(

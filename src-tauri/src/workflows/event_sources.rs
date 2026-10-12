@@ -6,6 +6,13 @@ use crate::{
 use std::collections::BTreeSet;
 
 impl WorkflowExecutionService {
+    pub(crate) fn completion_sound_for_session(&self, session: &str) -> Option<bool> {
+        let reference = crate::session_events::ReferenceIdentity::new("orchestrator.agent_sessions", "session", session).ok()?;
+        let address = self.directory.find_exact(&reference).ok()??.logical_address?;
+        if address.scope.namespace() != "workflow" || address.scope.kind() != "instance" { return None; }
+        let instance = self.instances.load(address.scope.id()).ok()?;
+        instance.recipe.nodes.iter().find(|node| node.node_id == address.subject.id()).map(|node| node.notifications.turn_completion_sound)
+    }
     pub(crate) fn on_agent_notification(
         &self,
         notification: &AgentSessionNotification,

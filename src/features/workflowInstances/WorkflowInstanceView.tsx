@@ -16,14 +16,7 @@ import { ProfiledSessionPane } from '../agentSessions/ProfiledSessionPane';
 import { NodeProfileInspector, type AgentIdentityOption } from '../executionConfiguration';
 import { AgentIdentityBadge } from '../identities';
 import { EventGroupInspector } from '../sessionEvents';
-import {
-  WorkflowGraphConnections,
-  WorkflowConnectionGroupDialog,
-  WorkflowGraphEmpty,
-  WorkflowGraphNodeCard,
-  WorkflowGraphSurface,
-  workflowGraphBounds,
-} from '../workflowGraph';
+import { WorkflowGraphCanvas } from '../workflowGraph';
 import {
   attemptStatus,
   attemptsForConnection,
@@ -67,7 +60,6 @@ export function WorkflowInstanceView({
   );
   const [requestText, setRequestText] = useState('');
   const [eventResult, setEventResult] = useState<SessionEventResultDto | null>(null);
-  const [connectionGroupIds, setConnectionGroupIds] = useState<readonly string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(true);
@@ -124,7 +116,6 @@ export function WorkflowInstanceView({
 
   const graphNodes = instanceGraphNodes(details);
   const graphConnections = instanceGraphConnections(details);
-  const { width, height } = workflowGraphBounds(graphNodes);
   const selectedNode = selection?.kind === 'node' ? nodeById(details, selection.id) : undefined;
   const selectedConnection =
     selection?.kind === 'connection' ? connectionById(details, selection.id) : undefined;
@@ -160,80 +151,52 @@ export function WorkflowInstanceView({
         </p>
       ) : null}
       <div className="workflow-instance-view__body">
-        <WorkflowGraphSurface
-          width={width}
-          height={height}
-          aria-label="Workflow instance flow"
-          role="region"
-          tabIndex={0}
-        >
-          <WorkflowGraphConnections
-            nodes={graphNodes}
-            connections={graphConnections}
-            selectedId={selection?.kind === 'connection' ? selection.id : null}
-            highlightedIds={graphConnections
-              .filter(
-                (connection) => attemptsForConnection(details.attempts, connection.id).length > 0,
-              )
-              .map((connection) => connection.id)}
-            labelForConnection={(connection) => {
-              const count = attemptsForConnection(details.attempts, connection.id).length;
-              return count ? `${connection.name} · ${count}` : connection.name;
-            }}
-            ariaLabelForConnection={(connection) => `Open ${connection.name} activity`}
-            onActivate={(ids) => {
-              setEventResult(null);
-              if (ids.length === 1) setSelection({ kind: 'connection', id: ids[0] });
-              else setConnectionGroupIds(ids);
-            }}
-          />
-          {graphNodes.map((graphNode) => {
+        <WorkflowGraphCanvas
+          label="Workflow instance flow"
+          nodes={graphNodes}
+          connections={graphConnections}
+          selection={selection}
+          nodeLabel={(node) => `Open ${node.name}`}
+          connectionLabel={(edge) => `Open ${edge.name} activity`}
+          highlightedIds={graphConnections
+            .filter((edge) => attemptsForConnection(details.attempts, edge.id).length > 0)
+            .map((edge) => edge.id)}
+          labelForConnection={(edge) => {
+            const count = attemptsForConnection(details.attempts, edge.id).length;
+            return count ? `${edge.name} · ${count}` : edge.name;
+          }}
+          onConnectionActivate={(ids) => {
+            setEventResult(null);
+            setSelection({ kind: 'connection', id: ids[0] });
+          }}
+          onNodeActivate={(node) => {
+            setEventResult(null);
+            setRequestText('');
+            setSelection({ kind: 'node', id: node.id });
+          }}
+          renderNode={(graphNode) => {
             const node = nodeById(details, graphNode.id)!;
             const nodeSessions = sessionsForNode(details.sessions, graphNode.id);
             const nodeAttempts = attemptsForNode(details.attempts, graphNode.id);
             const identity = identities.find((candidate) => candidate.id === node.agentIdentityId);
             return (
-              <WorkflowGraphNodeCard
-                key={graphNode.id}
-                node={graphNode}
-                selected={
-                  (selection?.kind === 'node' && selection.id === graphNode.id) ||
-                  (selection?.kind === 'session' && selection.nodeId === graphNode.id)
-                }
-                aria-label={`Open ${graphNode.name}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setEventResult(null);
-                  setRequestText('');
-                  setSelection({ kind: 'node', id: graphNode.id });
-                }}
-              >
+              <>
                 <span className="workflow-node__badges">
-                  {graphNode.entry ? <small>Entry</small> : null}
-                  {identity ? <AgentIdentityBadge identity={identity} compact /> : null}
-                  {nodeSessions.some((entry) => entry.running) ? (
+                  {graphNode.entry && <small>Entry</small>}
+                  {identity && <AgentIdentityBadge identity={identity} compact />}
+                  {nodeSessions.some((entry) => entry.running) && (
                     <small className="is-running">Running</small>
-                  ) : null}
+                  )}
                 </span>
                 <strong>{graphNode.name}</strong>
                 <span>
-                  {nodeSessions.length
-                    ? `${nodeSessions.length} Session${nodeSessions.length === 1 ? '' : 's'}`
-                    : 'No Sessions yet'}
-                  {nodeAttempts.length
-                    ? ` · ${nodeAttempts.length} event${nodeAttempts.length === 1 ? '' : 's'}`
-                    : ''}
+                  {nodeSessions.length ? `${nodeSessions.length} Sessions` : 'No Sessions yet'}
+                  {nodeAttempts.length ? ` · ${nodeAttempts.length} events` : ''}
                 </span>
-              </WorkflowGraphNodeCard>
+              </>
             );
-          })}
-          {!graphNodes.length ? (
-            <WorkflowGraphEmpty>
-              <strong>No nodes in this instance</strong>
-              <span>The pinned recipe is empty.</span>
-            </WorkflowGraphEmpty>
-          ) : null}
-        </WorkflowGraphSurface>
+          }}
+        />
 
         {selection ? (
           <aside
@@ -322,23 +285,6 @@ export function WorkflowInstanceView({
               />
             ) : null}
           </aside>
-        ) : null}
-        {connectionGroupIds ? (
-          <WorkflowConnectionGroupDialog
-            connections={graphConnections.filter((connection) =>
-              connectionGroupIds.includes(connection.id),
-            )}
-            nodes={graphNodes}
-            summary={(connection) => {
-              const count = attemptsForConnection(details.attempts, connection.id).length;
-              return `${count} activit${count === 1 ? 'y' : 'ies'}`;
-            }}
-            onClose={() => setConnectionGroupIds(null)}
-            onSelect={(id) => {
-              setConnectionGroupIds(null);
-              setSelection({ kind: 'connection', id });
-            }}
-          />
         ) : null}
       </div>
       {unassignedAttempts.length ? (

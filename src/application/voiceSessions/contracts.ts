@@ -1,3 +1,8 @@
+import type {
+  ExtensionWorkflowDefinition,
+  ExtensionRouteEvidence,
+} from '../extensionWorkflows/contracts';
+
 export interface VoicePrompts {
   relevance: string;
   completion: string;
@@ -22,8 +27,10 @@ export interface VoiceSettings {
   instructions: string;
   prompts: VoicePrompts;
   models: { response: VoiceModel; routing: VoiceModel };
+  workflow?: { directReactions: boolean; notificationSounds?: Record<string, boolean> };
 }
 export interface VoiceView {
+  workflow?: ExtensionWorkflowDefinition;
   diagnostics?: {
     updatedAt: string;
     phoneConnected: boolean;
@@ -80,7 +87,14 @@ export interface VoiceView {
     error: string | null;
     speaking?: boolean;
     pendingAudio?: number;
+    inputPolicy?: {
+      sentencesPerQuery: number;
+      pauseSeconds: number;
+      contextSeconds: number;
+      followupSeconds: number;
+    };
     conversation: {
+      jevApplications?: import('../agentSessions/jevQueries').AppliedJevQuery[];
       id: string;
       mainSessionId: string;
       pipeline?: { filter: string; summary: string; digest: string; output: string } | null;
@@ -92,6 +106,11 @@ export interface VoiceView {
         kind: string;
         createdAt: string;
         data: Record<string, unknown>;
+        route?: ExtensionRouteEvidence | null;
+        deliveries?: {
+          sessionId: string;
+          receipt: { state: string; invocationId: string; inputId: string | null };
+        }[];
       }[];
       delegations: {
         id?: string;

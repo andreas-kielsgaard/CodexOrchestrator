@@ -302,6 +302,7 @@ pub(crate) enum AgentSessionUpdateDto {
         session_id: AgentSessionId,
         invocation_id: AgentInvocationId,
         invocation: AgentInvocationDto,
+        completion_sound: bool,
     },
     DiagnosticRecorded {
         session_id: AgentSessionId,
@@ -354,6 +355,7 @@ impl From<AgentSessionNotification> for AgentSessionUpdateDto {
                 session_id,
                 invocation_id: invocation.id.clone(),
                 invocation,
+                completion_sound: true,
             },
             AgentSessionNotification::DiagnosticRecorded {
                 session_id,

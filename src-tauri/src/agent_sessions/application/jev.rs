@@ -12,7 +12,7 @@ use crate::{
     },
     execution_targets::domain::ExecutionBinding,
     runtime::providers::jev::{
-        contracts::{JevEvaluation, JevResult},
+        contracts::{JevAnswer, JevEvaluation, JevResult},
         DEFAULT_MODEL, PROVIDER,
     },
 };
@@ -29,7 +29,21 @@ pub(crate) struct CreateJevApiSessionInput {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct JevApiInvocationView {
     pub(crate) invocation: AgentInvocation,
+    pub(crate) evaluation: JevEvaluation,
     pub(crate) result: Option<JevResult>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct JevQuerySummary {
+    invocation_id: AgentInvocationId,
+    status: super::super::domain::AgentInvocationStatus,
+    created_at: chrono::DateTime<chrono::Utc>,
+    started_at: Option<chrono::DateTime<chrono::Utc>>,
+    completed_at: Option<chrono::DateTime<chrono::Utc>>,
+    input_preview: String,
+    question_count: usize,
+    answers: Vec<String>,
 }
 
 impl AgentSessionApplication {
@@ -141,10 +155,82 @@ impl AgentSessionApplication {
             .map(|value| serde_json::from_value(value.clone()))
             .transpose()
             .map_err(|_| AgentSessionApplicationError::invalid("Stored Jev result is invalid"))?;
+        let evaluation =
+            serde_json::from_str(&invocation.invocation.submitted_text).map_err(|_| {
+                AgentSessionApplicationError::invalid("Stored Jev evaluation is invalid")
+            })?;
         Ok(JevApiInvocationView {
             invocation: invocation.invocation,
+            evaluation,
             result,
         })
+    }
+
+    pub(crate) fn list_jev_api_invocations(
+        &self,
+        session_id: &AgentSessionId,
+    ) -> Result<Vec<JevQuerySummary>, AgentSessionApplicationError> {
+        let history = self.load_session(session_id)?;
+        self.require_jev_session(&history.session)?;
+        history
+            .invocations
+            .into_iter()
+            .rev()
+            .map(|entry| {
+                let evaluation: JevEvaluation =
+                    serde_json::from_str(&entry.invocation.submitted_text).map_err(|_| {
+                        AgentSessionApplicationError::invalid("Stored Jev evaluation is invalid")
+                    })?;
+                let result = entry
+                    .events
+                    .iter()
+                    .filter_map(|event| event.normalized.as_ref())
+                    .filter_map(|event| event.details.as_ref()?.get("structuredOutput"))
+                    .last()
+                    .map(|value| serde_json::from_value::<JevResult>(value.clone()))
+                    .transpose()
+                    .map_err(|_| {
+                        AgentSessionApplicationError::invalid("Stored Jev result is invalid")
+                    })?;
+                let preview = evaluation
+                    .state
+                    .get("recentSpeech")
+                    .and_then(|v| v.as_array())
+                    .and_then(|v| v.last())
+                    .and_then(|v| v.get("text"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| evaluation.state.to_string());
+                Ok(JevQuerySummary {
+                    invocation_id: entry.invocation.id,
+                    status: entry.invocation.status,
+                    created_at: entry.invocation.created_at,
+                    started_at: entry.invocation.started_at,
+                    completed_at: entry.invocation.completed_at,
+                    input_preview: preview.chars().take(160).collect(),
+                    question_count: evaluation.questions.len(),
+                    answers: result
+                        .map(|r| {
+                            r.answers
+                                .into_iter()
+                                .map(|(key, answer)| {
+                                    let kind = key.split(':').next().unwrap_or(&key);
+                                    match answer {
+                                        JevAnswer::Choice { choice, .. } => {
+                                            format!("{kind}: {choice}")
+                                        }
+                                        JevAnswer::Noul { noul } => format!("{kind}: {noul:.2}"),
+                                        JevAnswer::Score { score, .. } => {
+                                            format!("{kind}: {score:.2}")
+                                        }
+                                    }
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                })
+            })
+            .collect()
     }
 
     fn require_jev_session(

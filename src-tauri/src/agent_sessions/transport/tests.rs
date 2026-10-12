@@ -15,6 +15,7 @@ fn tauri_notifier_emits_correlated_persisted_update_dto() {
     let publisher = Arc::new(FakePublisher::default());
     let notifier = TauriAgentSessionNotifier {
         publisher: publisher.clone(),
+        completion_sound: None,
     };
     notifier
         .notify(AgentSessionNotification::EventPersisted {
@@ -56,6 +57,27 @@ fn tauri_notifier_emits_correlated_persisted_update_dto() {
 #[derive(Default)]
 struct FakePublisher {
     emitted: Mutex<Vec<(String, AgentSessionUpdateDto)>>,
+}
+
+#[test]
+fn terminal_updates_carry_the_node_sound_policy_without_suppressing_updates() {
+    use crate::agent_sessions::domain::{AgentInvocation, AgentInvocationId, AgentInvocationInputProvenance, AgentInvocationStatus, AgentRuntimeOptions};
+    let publisher = Arc::new(FakePublisher::default());
+    let notifier = TauriAgentSessionNotifier { publisher:publisher.clone(),completion_sound:Some(Arc::new(|id| id != "silent")) };
+    let at = Utc.with_ymd_and_hms(2026,10,12,12,0,0).unwrap();
+    for (name,expected) in [("silent",false),("normal",true)] {
+        let session = AgentSessionId::new(name).unwrap();
+        let invocation = AgentInvocation {id:AgentInvocationId::new(format!("turn-{name}")).unwrap(),session_id:session.clone(),submitted_text:"Test".into(),attachments:vec![],
+            input_provenance:AgentInvocationInputProvenance::Application,status:AgentInvocationStatus::Completed,requested_options:AgentRuntimeOptions::default(),effective_options:None,
+            started_at:Some(at),completed_at:Some(at),exit_code:Some(0),signal:None,runtime_error:None,diagnostics:vec![],created_at:at,updated_at:at};
+        notifier.notify(AgentSessionNotification::InvocationTerminal {session_id:session,invocation}).unwrap();
+        let emitted = publisher.emitted.lock().unwrap();
+        let payload=serde_json::to_value(&emitted.last().unwrap().1).unwrap();
+        assert_eq!(payload["completionSound"],expected);
+        assert_eq!(payload["kind"],"invocation_terminal");
+        assert_eq!(payload["sessionId"],name);
+    }
+    assert_eq!(publisher.emitted.lock().unwrap().len(),2);
 }
 
 impl AgentSessionEventPublisher for FakePublisher {

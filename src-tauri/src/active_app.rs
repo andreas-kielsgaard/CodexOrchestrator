@@ -129,6 +129,9 @@ pub(crate) fn run() {
             let sprint_transition_notification = Arc::new(Mutex::new(None));
             let workflow_execution_notification = Arc::new(Mutex::new(None));
             let voice_notification = Arc::new(Mutex::new(None));
+            let completion_sound_policy = session_notifications::CompletionSoundPolicy {
+                voice: voice_notification.clone(), workflow: workflow_execution_notification.clone(),
+            };
             let mut product_tools = otp_registry.mcp_tools();
             product_tools.extend(crate::orchid_control::tool_map());
             let notifier: Arc<dyn crate::agent_sessions::application::AgentSessionNotifier> =
@@ -136,7 +139,7 @@ pub(crate) fn run() {
                     inner: Arc::new(
                         crate::agent_sessions::transport::TauriAgentSessionNotifier::new(
                             app.handle().clone(),
-                        ),
+                        ).with_completion_sound(Arc::new(move |session| completion_sound_policy.allows(session))),
                     ),
                     registry: registry.clone(),
                     transition: transition_notification.clone(),
@@ -404,6 +407,7 @@ pub(crate) fn run() {
             crate::agent_sessions::transport::jev::create_jev_api_session,
             crate::agent_sessions::transport::jev::invoke_jev_api_session,
             crate::agent_sessions::transport::jev::load_jev_api_invocation,
+            crate::agent_sessions::transport::jev::list_jev_api_invocations,
             crate::runtime::providers::jev::transport::load_jev_credential_status,
             crate::runtime::providers::jev::transport::save_jev_api_key,
             crate::runtime::providers::jev::transport::remove_jev_api_key,

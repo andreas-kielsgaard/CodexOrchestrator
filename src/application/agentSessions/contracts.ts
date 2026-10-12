@@ -286,6 +286,7 @@ export type AgentSessionUpdateDto =
       sessionId: AgentSessionIdDto;
       invocationId: AgentInvocationIdDto;
       invocation: AgentInvocationDto;
+      completionSound?: boolean;
     }
   | {
       kind: 'diagnostic_recorded';
@@ -301,6 +302,7 @@ export type RuntimeInteractionResponseDto =
   | { readonly kind: 'answer'; readonly answers: Readonly<Record<string, readonly string[]>> };
 
 export interface AgentSessionClient {
+  jevQueries?: import('./jevQueries').JevQueryClient;
   readonly historySource?: import('./liveHistory').AgentSessionHistorySource;
   resolveWorkingDirectory?(sessionId: string, directory: string): Promise<void>;
   steerSession?(input: {

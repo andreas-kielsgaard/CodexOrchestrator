@@ -30,3 +30,41 @@ if (!HTMLElement.prototype.setPointerCapture)
   HTMLElement.prototype.setPointerCapture = () => undefined;
 if (!HTMLElement.prototype.releasePointerCapture)
   HTMLElement.prototype.releasePointerCapture = () => undefined;
+
+// Geometry APIs used by the shared React Flow canvas. jsdom has no layout engine.
+if (!globalThis.ResizeObserver) {
+  globalThis.ResizeObserver = class {
+    constructor(private callback: ResizeObserverCallback) {}
+    observe(target: Element) {
+      this.callback(
+        [{ target, contentRect: target.getBoundingClientRect() } as ResizeObserverEntry],
+        this as unknown as ResizeObserver,
+      );
+    }
+    unobserve() {}
+    disconnect() {}
+  };
+}
+if (!window.DOMMatrixReadOnly) {
+  window.DOMMatrixReadOnly = class {
+    m22 = 1;
+  } as unknown as typeof DOMMatrixReadOnly;
+}
+Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+  configurable: true,
+  get() {
+    return (
+      Number.parseFloat(this.style.width) ||
+      (this.classList.contains('react-flow__node') ? 220 : 1000)
+    );
+  },
+});
+Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+  configurable: true,
+  get() {
+    return (
+      Number.parseFloat(this.style.height) ||
+      (this.classList.contains('react-flow__node') ? 100 : 600)
+    );
+  },
+});

@@ -1,172 +1,18 @@
-.workflow-graph-scroll {
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
+.node-notification-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-
-.workflow-canvas {
-  position: relative;
-  min-height: 0;
-  overflow: hidden;
-  background-color: var(--canvas);
-  box-sizing: border-box;
-}
-
-.workflow-canvas.is-grid-visible {
-  background-image:
-    linear-gradient(to right, var(--graph-grid) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--graph-grid) 1px, transparent 1px);
-  background-size: 20px 20px;
-}
-
-.workflow-canvas.has-node-brush {
-  cursor: crosshair;
-}
-
-.workflow-canvas__connections {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-}
-
-.workflow-canvas__connections .workflow-connection__visible {
-  stroke: var(--graph-edge);
-  stroke-width: 2;
-}
-
-.workflow-canvas__connections g[role='button'] {
-  outline: none;
-  pointer-events: auto;
-  cursor: pointer;
-}
-
-.workflow-canvas__connections .workflow-connection__hitbox {
-  stroke: transparent;
-  stroke-width: 18;
-}
-
-.workflow-canvas__connections g.is-highlighted .workflow-connection__visible,
-.workflow-canvas__connections g.is-selected .workflow-connection__visible,
-.workflow-canvas__connections g:focus .workflow-connection__visible {
-  stroke: var(--accent);
-  stroke-width: 4;
-}
-
-.workflow-canvas__connections g.is-selected .workflow-connection__visible {
-  filter: drop-shadow(0 0 3px var(--accent-ring));
-}
-
-.workflow-canvas__connections g.is-dangling .workflow-connection__visible {
-  stroke: var(--danger);
-  stroke-dasharray: 7 5;
-}
-
-.workflow-canvas__connections text {
-  fill: var(--text-primary);
-  font-size: 12px;
-  font-weight: 850;
-  paint-order: stroke;
-  pointer-events: none;
-  stroke: var(--canvas);
-  stroke-width: 5px;
-  text-anchor: middle;
-}
-
-.workflow-canvas__connections marker path {
-  fill: var(--graph-edge);
-}
-
-.workflow-canvas__empty {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: 7px;
-  color: var(--text-muted);
-  pointer-events: none;
-}
-
-.workflow-canvas__empty strong {
-  color: var(--text-secondary);
-}
-
-.workflow-canvas__empty span {
-  font-size: 0.8rem;
-}
-
-.workflow-node {
-  position: absolute;
-  z-index: 2;
-  box-sizing: border-box;
-  border: 1px solid var(--border-strong);
-  border-radius: 10px;
-  background: var(--surface);
-  box-shadow: 0 5px 14px var(--shadow-color);
-  cursor: grab;
-  touch-action: none;
-}
-
-.workflow-node__body {
-  display: grid;
-  gap: 5px;
-  width: 100%;
-  height: 100%;
-  box-sizing: border-box;
-  padding: 12px;
-  border: 0;
-  border-radius: inherit;
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
-  text-align: left;
-  cursor: inherit;
-}
-
-.workflow-node:active,
-.workflow-node.is-dragging {
-  cursor: grabbing;
-}
-
-.workflow-node.is-dragging {
-  box-shadow: 0 9px 22px var(--shadow-color);
-}
-
-.workflow-node.is-entry {
-  border-color: var(--warning-border);
-  box-shadow: 0 0 0 2px var(--warning-ring);
-}
-
-.workflow-node.is-selected {
-  border-color: var(--accent);
-  box-shadow:
-    0 0 0 3px var(--accent-ring),
-    0 9px 20px var(--shadow-color);
-}
-
-.workflow-node.is-connection-source {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-ring);
-}
-
-.workflow-node.is-deleted {
-  border-style: dashed;
-  opacity: 0.72;
+.node-notification-toggle input[type='checkbox'] {
+  display: inline-block;
+  width: auto;
+  margin: 0;
 }
 
 .workflow-node__badges {
   display: flex;
   gap: 5px;
   min-height: 19px;
-}
-
-.workflow-node__actions {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-  z-index: 1;
 }
 
 .workflow-node__entry-toggle {
@@ -180,86 +26,8 @@
   opacity: 0;
 }
 
-.workflow-node:hover .workflow-node__entry-toggle,
-.workflow-node:focus-within .workflow-node__entry-toggle,
+.workflow-flow-card:hover .workflow-node__entry-toggle,
+.workflow-flow-card:focus-within .workflow-node__entry-toggle,
 .workflow-node__entry-toggle[aria-pressed='true'] {
   opacity: 1;
-}
-
-.workflow-node__badges small.is-draft {
-  background: var(--warning-surface);
-  color: var(--warning);
-}
-
-.workflow-node__body strong {
-  overflow: hidden;
-  font-size: 0.86rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workflow-node__body > span:last-child {
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workflow-connection-group-dialog {
-  width: min(560px, calc(100vw - 32px));
-  max-height: min(680px, calc(100vh - 32px));
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface-raised);
-  color: var(--text-primary);
-}
-
-.workflow-connection-group-dialog::backdrop {
-  background: var(--backdrop);
-}
-
-.workflow-connection-group-dialog header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 18px;
-  border-bottom: 1px solid var(--border);
-}
-
-.workflow-connection-group-dialog header p,
-.workflow-connection-group-dialog header h2 {
-  margin: 0;
-}
-
-.workflow-connection-group-dialog header p {
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  font-weight: 750;
-  text-transform: uppercase;
-}
-
-.workflow-connection-group-dialog__list {
-  display: grid;
-  gap: 8px;
-  padding: 14px;
-  overflow: auto;
-}
-
-.workflow-connection-group-dialog__list button {
-  display: grid;
-  gap: 4px;
-  padding: 12px;
-  border: 1px solid var(--control-border);
-  border-radius: 8px;
-  background: var(--surface-raised);
-  color: inherit;
-  text-align: left;
-}
-
-.workflow-connection-group-dialog__list span,
-.workflow-connection-group-dialog__list small {
-  color: var(--text-muted);
 }

@@ -1,4 +1,5 @@
 import type { WorkflowActionResult } from '../workflowInstances';
+import type { NodeNotifications } from '../completionNotifications';
 import type { NodeProfileDto } from '../executionConfiguration';
 import type { ReferenceIdentityDto } from '../sessionEvents';
 
@@ -45,6 +46,7 @@ export interface WorkflowAuthoringNodeDto {
   readonly nodeProfile: NodeProfileDto;
   readonly initialPrompt: string | null;
   readonly agentIdentityId: string | null;
+  readonly notifications?: NodeNotifications;
 }
 
 export interface WorkflowAuthoringConnectionDto {

@@ -287,6 +287,7 @@ mod tests {
                 },
                 initial_prompt: None,
                 agent_identity_id: None,
+                notifications: Default::default(),
             }],
             connections: Vec::new(),
         }

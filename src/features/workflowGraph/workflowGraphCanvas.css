@@ -1,0 +1,173 @@
+.workflow-flow {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.workflow-flow-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.workflow-flow-toolbar button,
+.workflow-flow-toolbar input {
+  font-size: 12px;
+  padding: 6px 8px;
+}
+.workflow-flow-toolbar input[type='search'] {
+  width: 150px;
+  flex: 0 0 150px;
+  min-width: 0;
+}
+.workflow-flow-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+.workflow-flow-toolbar input[type='checkbox'] {
+  width: auto;
+}
+.workflow-flow-viewport {
+  height: 560px;
+  min-height: 360px;
+  position: relative;
+  border: 1px solid var(--border);
+  background: var(--canvas);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.workflow-flow-card {
+  width: 220px;
+  height: 100px;
+  box-sizing: border-box;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  border-radius: 8px;
+  position: relative;
+  cursor: grab;
+  padding-top: 10px;
+}
+.workflow-flow-card.is-selected {
+  border: 2px solid var(--accent);
+}
+.workflow-flow .workflow-flow-card__body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 10px 12px;
+  border-radius: 7px;
+}
+.workflow-flow-card__body strong {
+  font-size: 14px;
+}
+.workflow-flow-card.is-overview .workflow-flow-card__body small,
+.workflow-flow-card.is-overview .workflow-flow-card__body span {
+  display: none;
+}
+.workflow-flow-card.is-overview .workflow-flow-card__body strong {
+  font-size: 20px;
+}
+.workflow-flow-card__body small,
+.workflow-flow-card__body span {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.workflow-flow-card__actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
+.workflow-flow-card__drag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 12px;
+  border-top: 3px solid var(--border-strong);
+  border-radius: 8px 8px 0 0;
+  cursor: grab;
+}
+.workflow-flow-card__actions button {
+  padding: 3px;
+}
+.workflow-flow .workflow-flow-edge-label {
+  position: absolute;
+  pointer-events: all;
+  padding: 3px 6px;
+  font-size: 11px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  border-radius: 4px;
+}
+.workflow-flow .react-flow__edge-path {
+  stroke: var(--graph-edge);
+}
+.workflow-flow .react-flow__controls button {
+  background: var(--surface);
+  color: var(--text-primary);
+  border-color: var(--border);
+  width: 26px;
+  height: 26px;
+  padding: 5px;
+  margin: 0;
+}
+.workflow-flow .react-flow__controls svg {
+  fill: currentColor;
+}
+.workflow-flow .react-flow__minimap {
+  background: var(--surface);
+  width: 130px;
+  height: 85px;
+}
+.workflow-flow .react-flow__attribution {
+  background: var(--surface);
+  font-size: 9px;
+}
+.workflow-flow .react-flow__attribution a {
+  color: var(--text-muted);
+}
+.workflow-flow-connections {
+  font-size: 12px;
+}
+.workflow-flow-connections ul {
+  max-height: 220px;
+  overflow: auto;
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+}
+.workflow-flow-connections li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0;
+}
+.workflow-flow-connections small {
+  color: var(--text-muted);
+}
+.workflow-flow-empty,
+.workflow-flow-placement {
+  position: absolute;
+  bottom: 20px;
+  left: 80px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.workflow-flow-search {
+  display: flex;
+  gap: 6px;
+}
+.workflow-flow button:focus-visible,
+.workflow-flow input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

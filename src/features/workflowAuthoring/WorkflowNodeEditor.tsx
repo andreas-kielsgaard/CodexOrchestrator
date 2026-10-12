@@ -4,6 +4,7 @@ import {
   type ExecutionConfigurationClient,
   type ProfileModelCatalogueDto,
 } from '../../application/executionConfiguration';
+import { NodeNotificationEditor } from '../workflowGraph/NodeNotificationEditor';
 import type {
   WorkflowAuthoringNodeDto,
   WorkflowRecipeDraftDto,
@@ -149,6 +150,10 @@ export function WorkflowNodeEditor({
           .map((candidate) => ({ nodeId: candidate.nodeId, nodeName: candidate.name }))}
         onChange={update}
         onCopyFromNode={onCopy}
+      />
+      <NodeNotificationEditor
+        value={node.notifications ?? { turnCompletionSound: true }}
+        onChange={(notifications) => onChange({ ...node, notifications })}
       />
     </>
   );

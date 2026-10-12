@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     agent_sessions::{
-        application::jev::{CreateJevApiSessionInput, JevApiInvocationView},
+        application::jev::{CreateJevApiSessionInput, JevApiInvocationView, JevQuerySummary},
         domain::{AgentInvocationId, AgentSessionId},
     },
     runtime::providers::jev::contracts::JevEvaluation,
@@ -68,6 +68,20 @@ pub(crate) async fn load_jev_api_invocation(
     let app = state.application.clone();
     tauri::async_runtime::spawn_blocking(move || {
         app.load_jev_api_invocation(&session_id, &invocation_id)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn list_jev_api_invocations(
+    state: State<'_, AgentSessionTauriState>,
+    session_id: AgentSessionId,
+) -> Result<Vec<JevQuerySummary>, String> {
+    let app = state.application.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        app.list_jev_api_invocations(&session_id)
             .map_err(|e| e.to_string())
     })
     .await

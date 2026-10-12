@@ -55,20 +55,29 @@ impl AgentSessionEventPublisher for TauriAgentSessionEventPublisher {
 
 pub(crate) struct TauriAgentSessionNotifier {
     publisher: Arc<dyn AgentSessionEventPublisher>,
+    completion_sound: Option<Arc<dyn Fn(&str) -> bool + Send + Sync>>,
 }
 
 impl TauriAgentSessionNotifier {
+    pub(crate) fn with_completion_sound(mut self, policy: Arc<dyn Fn(&str) -> bool + Send + Sync>) -> Self {
+        self.completion_sound = Some(policy);
+        self
+    }
     pub(crate) fn new(app: AppHandle) -> Self {
         Self {
             publisher: Arc::new(TauriAgentSessionEventPublisher { app }),
+            completion_sound: None,
         }
     }
 }
 
 impl AgentSessionNotifier for TauriAgentSessionNotifier {
     fn notify(&self, notification: AgentSessionNotification) -> Result<(), String> {
-        self.publisher
-            .emit(AGENT_SESSION_UPDATE_EVENT, notification.into())
+        let mut update: AgentSessionUpdateDto = notification.into();
+        if let AgentSessionUpdateDto::InvocationTerminal { session_id, completion_sound, .. } = &mut update {
+            if let Some(policy) = &self.completion_sound { *completion_sound = policy(session_id.as_str()); }
+        }
+        self.publisher.emit(AGENT_SESSION_UPDATE_EVENT, update)
     }
 }
 

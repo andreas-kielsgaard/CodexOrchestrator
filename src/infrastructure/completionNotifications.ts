@@ -27,6 +27,7 @@ export function createCompletionNotificationSource(
           if (!active || update.kind !== 'invocation_terminal') return;
           if (seenInvocations.has(update.invocationId)) return;
           seenInvocations.add(update.invocationId);
+          if (update.completionSound === false) return;
           listener({ kind: 'agent_turn', id: update.invocationId });
         })
         .catch(() => () => undefined);

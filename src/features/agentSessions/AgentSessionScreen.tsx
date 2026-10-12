@@ -676,6 +676,8 @@ export function StandaloneAgentSessionScreen({
     ) : (
       <AgentSessionHeaderActionsProvider actions={null}>
         <AgentSessionWorkspace
+          jevQueryClient={client.jevQueries}
+          provider={view.profile?.creationResolution.sessionProfile.configuration.provider}
           controller={session}
           composerToolbar={toolbar}
           deviceActivityPanel={deviceActivityPanel}

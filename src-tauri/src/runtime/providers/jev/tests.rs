@@ -212,6 +212,12 @@ fn jev_api_sessions_persist_typed_results_and_repeated_evaluations_are_independe
     );
     let finished = wait(&app, &session.id, &id);
     assert_eq!(finished.invocation.status, AgentInvocationStatus::Completed);
+    assert_eq!(finished.evaluation, evaluation());
+    let query_list = serde_json::to_value(app.list_jev_api_invocations(&session.id).unwrap()).unwrap();
+    assert_eq!(query_list[0]["invocationId"], "voice-query-1");
+    assert_eq!(query_list[0]["questionCount"], 3);
+    assert_eq!(query_list[0]["status"], "completed");
+    assert_eq!(query_list[0]["answers"].as_array().unwrap().len(), 3);
     assert_eq!(serde_json::to_value(finished.result).unwrap(), result());
     assert_eq!(
         finished.invocation.input_provenance,
@@ -231,6 +237,10 @@ fn jev_api_sessions_persist_typed_results_and_repeated_evaluations_are_independe
     app.invoke_jev_api_session(session.id.clone(), second_id.clone(), second.clone())
         .unwrap();
     wait(&app, &session.id, &second_id);
+    let summaries = serde_json::to_value(app.list_jev_api_invocations(&session.id).unwrap()).unwrap();
+    assert_eq!(summaries.as_array().unwrap().len(), 2);
+    assert_eq!(summaries[0]["invocationId"], "voice-query-2");
+    assert_eq!(summaries[1]["invocationId"], "voice-query-1");
     let calls = api.calls.lock().unwrap().clone();
     assert_eq!(calls.len(), 2);
     assert_eq!(calls[0]["state"], evaluation().state);

@@ -1,4 +1,4 @@
 export * from './workflowGraphModel';
-export * from './workflowNodeDrag';
-export * from './WorkflowGraphSurface';
-export * from './WorkflowConnectionGroupDialog';
+export * from './workflowCoordinates';
+export * from './WorkflowGraphCanvas';
+export * from './workflowLayout';

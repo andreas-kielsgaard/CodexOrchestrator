@@ -112,8 +112,8 @@ impl VoiceSessionApplication {
             return;
         }
         let mut targets = match c.role(&source) {
-            Some("summary") => vec![c.main_session_id.clone(), stages.digest.clone()],
-            Some("router") => vec![stages.digest.clone()],
+            Some("summary") => super::workflow::targets(&c, super::workflow::FlowEvent::SummaryResult),
+            Some("router") => super::workflow::targets(&c, super::workflow::FlowEvent::RouterResult),
             Some("digest" | "output" | "filter") => {
                 self.schedule_observations();
                 return;
@@ -259,6 +259,7 @@ impl VoiceSessionApplication {
                         }
                     }
                 }
+                super::workflow::retain_delivery_evidence(c);
                 c.observations.retain(|o| {
                     o.return_session_id != destination || !accepted.contains(&o.invocation_id)
                 });
@@ -299,6 +300,7 @@ impl VoiceSessionApplication {
                         d.delivery = Some(receipt.clone());
                     }
                 }
+                super::workflow::retain_delivery_evidence(c);
                 if receipt.input_id.is_none() || receipt.state == "accepted" {
                     c.observations.retain(|o| {
                         o.return_session_id != destination

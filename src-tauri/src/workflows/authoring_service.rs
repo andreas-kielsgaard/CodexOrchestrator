@@ -191,6 +191,7 @@ fn copy_configurable_node_state(
     destination.node_profile = source.node_profile.clone();
     destination.initial_prompt = source.initial_prompt.clone();
     destination.agent_identity_id = source.agent_identity_id.clone();
+    destination.notifications = source.notifications.clone();
 }
 
 #[cfg(test)]
@@ -279,6 +280,7 @@ mod tests {
             },
             initial_prompt: Some(format!("You are {name}.")),
             agent_identity_id: None,
+            notifications: Default::default(),
         }
     }
 
@@ -328,6 +330,7 @@ mod tests {
         state.draft.name = "Review".into();
         let mut source = node("planner", "Planner");
         source.agent_identity_id = Some("identity-avery".into());
+        source.notifications.turn_completion_sound = false;
         source.position_x = 50.0;
         let mut destination = node("reviewer", "Reviewer");
         destination.position_x = 250.0;
@@ -351,6 +354,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(reviewer.name, "Reviewer");
+        assert!(!reviewer.notifications.turn_completion_sound);
         assert_eq!(reviewer.position_x, 250.0);
         assert_eq!(reviewer.initial_prompt.as_deref(), Some("You are Planner."));
         assert_eq!(

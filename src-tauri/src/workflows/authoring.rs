@@ -230,6 +230,8 @@ pub(crate) struct WorkflowAuthoringNode {
     pub(crate) node_profile: NodeProfile,
     pub(crate) initial_prompt: Option<String>,
     pub(crate) agent_identity_id: Option<String>,
+    #[serde(default)]
+    pub(crate) notifications: crate::agent_sessions::notifications::NodeNotifications,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -648,6 +650,7 @@ mod tests {
                 },
                 initial_prompt: Some("Plan the work.".into()),
                 agent_identity_id: Some("identity-avery".into()),
+                notifications: Default::default(),
             }],
             connections: Vec::new(),
         }

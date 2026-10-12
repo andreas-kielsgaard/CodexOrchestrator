@@ -1,28 +1,17 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { LogIn } from 'lucide-react';
 import {
-  WorkflowGraphConnections,
-  WorkflowGraphEmpty,
-  WorkflowGraphNodeCard,
-  WorkflowGraphSurface,
-  beginWorkflowNodeDrag,
-  projectWorkflowNodeDrag,
+  WorkflowGraphCanvas,
   snapWorkflowPoint,
-  workflowGraphBounds,
-  WORKFLOW_GRAPH_NODE_HEIGHT,
-  WORKFLOW_GRAPH_NODE_WIDTH,
   type WorkflowGraphConnection,
   type WorkflowGraphNode,
-  type WorkflowNodeDragPreview,
-  type WorkflowNodeDragState,
+  type GraphLayout,
 } from '../workflowGraph';
 import type { WorkflowEditorSelection } from './workflowAuthoringTypes';
 import './workflowCanvas.css';
-
 export type CanvasNode = WorkflowGraphNode & { readonly entry: boolean };
 export type CanvasConnection = WorkflowGraphConnection;
-
-/** Layout and gestures only. Profile editing, persistence and execution belong to the caller. */
+/** Draft edits remain owned by authoring. */
 export function WorkflowCanvas({
   nodes,
   connections,
@@ -32,6 +21,7 @@ export function WorkflowCanvas({
   onPlace,
   onConnect,
   onMove,
+  onOrganize,
   onRemove,
   onEntryNode,
   onConnectionGroup,
@@ -40,278 +30,134 @@ export function WorkflowCanvas({
   onUndo,
   onRedo,
 }: {
-  readonly nodes: readonly CanvasNode[];
-  readonly connections: readonly CanvasConnection[];
-  readonly selection: WorkflowEditorSelection;
-  readonly canAdd: boolean;
+  nodes: readonly CanvasNode[];
+  connections: readonly CanvasConnection[];
+  selection: WorkflowEditorSelection;
+  canAdd: boolean;
   onSelect(selection: WorkflowEditorSelection): void;
   onPlace(x: number, y: number, copyFrom?: string): void;
   onConnect(source: string, destination: string): void;
   onMove(id: string, x: number, y: number): void;
+  onOrganize?(positions: GraphLayout['positions']): void;
   onRemove(): void;
   onEntryNode(id: string): void;
   onConnectionGroup(ids: readonly string[]): void;
-  readonly canUndo?: boolean;
-  readonly canRedo?: boolean;
+  canUndo?: boolean;
+  canRedo?: boolean;
   onUndo?(): void;
   onRedo?(): void;
 }) {
   const [brush, setBrush] = useState<'select' | 'node' | 'connection' | 'copy'>('select');
   const [source, setSource] = useState<string | null>(null);
-  const drag = useRef<WorkflowNodeDragState | null>(null);
-  const surface = useRef<HTMLDivElement>(null);
-  const [preview, setPreview] = useState<WorkflowNodeDragPreview | null>(null);
-  const [placementPreview, setPlacementPreview] = useState<{ x: number; y: number } | null>(null);
-  const suppressed = useRef(false);
-  const { width, height } = workflowGraphBounds(nodes);
-  const canvasBounds = () => ({
-    width: Math.max(width, surface.current?.clientWidth ?? 0),
-    height: Math.max(height, surface.current?.clientHeight ?? 0),
-  });
-  const located = nodes.map((node) =>
-    preview?.nodeId === node.id ? { ...node, x: preview.positionX, y: preview.positionY } : node,
-  );
-  const chooseBrush = (next: typeof brush) => {
+  const choosing = (next: typeof brush) => {
     setBrush(next);
     setSource(null);
-    setPlacementPreview(null);
     onSelect({ kind: 'node', id: null });
-  };
-  const place = (x: number, y: number, snap = true) => {
-    if (brush === 'node' || (brush === 'copy' && source)) {
-      const point = snapWorkflowPoint(x, y, canvasBounds(), snap);
-      onPlace(point.x, point.y, brush === 'copy' ? source! : undefined);
-      setBrush('select');
-      setSource(null);
-      setPlacementPreview(null);
-    } else onSelect({ kind: 'node', id: null });
   };
   return (
     <section className="recipe-canvas-workspace">
       <div className="recipe-canvas-toolbar" role="toolbar" aria-label="Flow tools">
-        <button type="button" disabled={!canUndo} onClick={onUndo}>
+        <button disabled={!canUndo} onClick={onUndo}>
           Undo
         </button>
-        <button type="button" disabled={!canRedo} onClick={onRedo}>
+        <button disabled={!canRedo} onClick={onRedo}>
           Redo
         </button>
         {(['select', 'node', 'connection', 'copy'] as const).map((tool) => (
           <button
-            type="button"
             key={tool}
             aria-pressed={brush === tool}
-            disabled={
-              (tool === 'node' && !canAdd) ||
-              ((tool === 'connection' || tool === 'copy') && !nodes.length)
-            }
-            onClick={() => chooseBrush(tool)}
+            disabled={tool === 'node' ? !canAdd : tool !== 'select' && !nodes.length}
+            onClick={() => choosing(tool)}
           >
             {{ select: 'Select', node: 'Add node', connection: 'Connect', copy: 'Copy node' }[tool]}
           </button>
         ))}
-        <button type="button" disabled={!selection.id} onClick={onRemove}>
+        <button disabled={!selection.id} onClick={onRemove}>
           Delete selected
         </button>
       </div>
       <p className="recipe-canvas-help">
         {brush === 'node'
           ? 'Click the canvas to place a node.'
-          : brush === 'connection'
+          : brush === 'copy'
             ? source
-              ? 'Choose the destination node.'
-              : 'Choose the source node, then the destination.'
-            : brush === 'copy'
+              ? 'Click the canvas to place the copy.'
+              : 'Choose a node to copy.'
+            : brush === 'connection'
               ? source
-                ? 'Click the canvas to place the copy.'
-                : 'Choose a node to copy.'
-              : 'Click a node or connection to edit. Drag nodes to move them.'}
+                ? 'Choose the destination node.'
+                : 'Choose the source node, then the destination.'
+              : 'Select a node or connection. Drag nodes to move them; Organize arranges the draft.'}
       </p>
-      {!canAdd ? (
+      {!canAdd && (
         <p className="recipe-canvas-help">Create a Capability Profile before adding nodes.</p>
-      ) : null}
-      <WorkflowGraphSurface
-        canvasRef={surface}
-        width={width}
-        height={height}
-        scrollClassName="recipe-canvas-scroll"
-        className={`recipe-canvas${brush === 'node' || brush === 'copy' || preview ? ' is-grid-visible' : ''}`}
-        role="region"
-        aria-label="Workflow canvas"
-        tabIndex={0}
-        onPointerMove={(event) => {
-          if (brush !== 'node' && !(brush === 'copy' && source)) return;
-          const rect = event.currentTarget.getBoundingClientRect();
-          setPlacementPreview(
-            snapWorkflowPoint(
-              event.clientX - rect.left,
-              event.clientY - rect.top,
-              canvasBounds(),
-              !event.altKey,
-            ),
-          );
+      )}
+      <WorkflowGraphCanvas
+        label="Workflow canvas"
+        nodes={nodes}
+        connections={connections}
+        selection={selection}
+        nodeLabel={(node) => `Configure ${node.name}`}
+        connectionLabel={(edge) => `Edit ${edge.name}`}
+        onConnectionActivate={onConnectionGroup}
+        onOrganize={onOrganize}
+        onMove={
+          brush === 'select'
+            ? (id, x, y) => {
+                const p = snapWorkflowPoint(x, y);
+                onMove(id, p.x, p.y);
+              }
+            : undefined
+        }
+        placing={
+          brush === 'node' ? 'New node' : brush === 'copy' && source ? 'Node copy' : undefined
+        }
+        onPlace={(x, y, snap) => {
+          if (brush === 'node' || (brush === 'copy' && source)) {
+            const point = snapWorkflowPoint(x, y, undefined, snap);
+            onPlace(point.x, point.y, brush === 'copy' ? source! : undefined);
+            setBrush('select');
+            setSource(null);
+          } else onSelect({ kind: 'node', id: null });
         }}
-        onPointerLeave={() => setPlacementPreview(null)}
-        onClick={(event) => {
-          if (event.target === event.currentTarget) {
-            const rect = event.currentTarget.getBoundingClientRect();
-            place(event.clientX - rect.left, event.clientY - rect.top, !event.altKey);
+        onNodeActivate={(node) => {
+          if (brush === 'copy') {
+            setSource(node.id);
+            return;
           }
-        }}
-        onKeyDown={(event) => {
-          if (
-            event.target === event.currentTarget &&
-            (event.key === 'Enter' || event.key === ' ')
-          ) {
-            event.preventDefault();
-            place(50 + nodes.length * 45, 60 + nodes.length * 45);
+          if (brush === 'connection') {
+            if (source && source !== node.id) {
+              onConnect(source, node.id);
+              setSource(null);
+              setBrush('select');
+            } else setSource(node.id);
+            return;
           }
+          onSelect({ kind: 'node', id: node.id });
         }}
-      >
-        <WorkflowGraphConnections
-          nodes={located}
-          connections={connections}
-          selectedId={selection.kind === 'connection' ? selection.id : null}
-          ariaLabelForConnection={(connection) => `Edit ${connection.name}`}
-          onActivate={onConnectionGroup}
-        />
-        {placementPreview ? (
-          <div
-            className="workflow-node workflow-node--placement-preview"
-            style={{
-              left: placementPreview.x,
-              top: placementPreview.y,
-              width: WORKFLOW_GRAPH_NODE_WIDTH,
-              height: WORKFLOW_GRAPH_NODE_HEIGHT,
-            }}
-            aria-hidden="true"
-          >
-            <div className="workflow-node__body">
-              <strong>{brush === 'copy' ? 'Node copy' : 'New node'}</strong>
-              <span>Node profile</span>
-            </div>
-          </div>
-        ) : null}
-        {located.map((node) => (
-          <WorkflowGraphNodeCard
-            key={node.id}
-            node={node}
-            aria-label={`Configure ${node.name}`}
-            selected={selection.kind === 'node' && selection.id === node.id}
-            className={source === node.id ? 'is-connection-source' : undefined}
-            actions={
-              <button
-                type="button"
-                className="workflow-node__entry-toggle"
-                aria-label={
-                  node.entry
-                    ? `Remove ${node.name} as an entry node`
-                    : `Make ${node.name} an entry node`
-                }
-                aria-pressed={node.entry}
-                title={node.entry ? 'Remove entry node' : 'Make entry node'}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onEntryNode(node.id);
-                }}
-              >
-                <LogIn size={16} aria-hidden="true" />
-              </button>
-            }
-            onPointerDown={(event) => {
-              if (brush !== 'select' || event.button > 0) return;
-              drag.current = beginWorkflowNodeDrag({
-                nodeId: node.id,
-                pointerId: event.pointerId,
-                positionX: node.x,
-                positionY: node.y,
-                clientX: event.clientX,
-                clientY: event.clientY,
-              });
-              event.currentTarget.setPointerCapture?.(event.pointerId);
-            }}
-            onPointerMove={(event) => {
-              if (drag.current?.pointerId === event.pointerId)
-                setPreview(
-                  projectWorkflowNodeDrag(
-                    drag.current,
-                    event.clientX,
-                    event.clientY,
-                    canvasBounds(),
-                    !event.altKey,
-                  ),
-                );
-            }}
-            onPointerUp={(event) => {
-              if (!drag.current || drag.current.pointerId !== event.pointerId) return;
-              const next = projectWorkflowNodeDrag(
-                drag.current,
-                event.clientX,
-                event.clientY,
-                canvasBounds(),
-                !event.altKey,
-              );
-              drag.current = null;
-              setPreview(null);
-              if (next.moved) {
-                suppressed.current = true;
-                onMove(node.id, next.positionX, next.positionY);
-              }
-              event.currentTarget.releasePointerCapture?.(event.pointerId);
-            }}
-            onPointerCancel={() => {
-              drag.current = null;
-              setPreview(null);
-            }}
-            onKeyDown={(event) => {
-              if (
-                brush !== 'select' ||
-                !event.altKey ||
-                !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)
-              )
-                return;
-              event.preventDefault();
-              const point = snapWorkflowPoint(
-                node.x + (event.key === 'ArrowRight' ? 20 : event.key === 'ArrowLeft' ? -20 : 0),
-                node.y + (event.key === 'ArrowDown' ? 20 : event.key === 'ArrowUp' ? -20 : 0),
-                canvasBounds(),
-              );
-              onMove(node.id, point.x, point.y);
-            }}
-            onClick={(event) => {
-              event.stopPropagation();
-              if (suppressed.current) {
-                suppressed.current = false;
-                return;
-              }
-              if (brush === 'copy') {
-                setSource(node.id);
-                return;
-              }
-              if (brush === 'connection') {
-                if (source && source !== node.id) {
-                  onConnect(source, node.id);
-                  setSource(null);
-                  setBrush('select');
-                } else setSource(node.id);
-                return;
-              }
-              onSelect({ kind: 'node', id: node.id });
-            }}
-          >
-            <span className="workflow-node__badges">
-              {node.entry ? <small>Entry</small> : null}
-            </span>
+        renderNode={(node) => (
+          <>
+            <span className="workflow-node__badges">{node.entry && <small>Entry</small>}</span>
             <strong>{node.name}</strong>
             <span>Node profile</span>
-          </WorkflowGraphNodeCard>
-        ))}
-        {!nodes.length ? (
-          <WorkflowGraphEmpty>
-            <strong>Add your first node</strong>
-            <span>Choose Add node, then click the canvas.</span>
-          </WorkflowGraphEmpty>
-        ) : null}
-      </WorkflowGraphSurface>
+          </>
+        )}
+        renderActions={(node) => (
+          <button
+            className="workflow-node__entry-toggle"
+            aria-label={
+              node.entry
+                ? `Remove ${node.name} as an entry node`
+                : `Make ${node.name} an entry node`
+            }
+            aria-pressed={node.entry}
+            onClick={() => onEntryNode(node.id)}
+          >
+            <LogIn size={14} aria-hidden="true" />
+          </button>
+        )}
+      />
     </section>
   );
 }

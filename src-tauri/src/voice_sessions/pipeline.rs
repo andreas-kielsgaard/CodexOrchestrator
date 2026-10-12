@@ -130,12 +130,15 @@ impl VoiceSessionApplication {
         data: Value,
         targets: &[String],
     ) -> Result<Activity, String> {
+        let conversation = self.snapshot()?.conversation.ok_or("No conversation")?;
         let activity = Activity {
             id: uuid::Uuid::new_v4().to_string(),
             source: source.into(),
             kind: kind.into(),
             created_at: chrono::Utc::now().to_rfc3339(),
             data,
+            route: Some(super::workflow::evidence(&conversation, source, kind, targets)),
+            deliveries: vec![],
         };
         self.update(|state| {
             let conversation = state.conversation.as_mut().ok_or("No conversation")?;
@@ -158,8 +161,7 @@ impl VoiceSessionApplication {
         self.snapshot()
             .ok()
             .and_then(|s| s.conversation)
-            .and_then(|c| c.pipeline)
-            .map(|p| vec![p.digest])
+            .map(|c| super::workflow::targets(&c, super::workflow::FlowEvent::Progress))
             .unwrap_or_default()
     }
     pub(crate) fn read_context(&self, caller: &str, args: Value) -> Result<Value, String> {
@@ -215,17 +217,12 @@ impl VoiceSessionApplication {
         if reason.is_empty() {
             return Err("reason is required".into());
         }
-        let output = conversation
-            .pipeline
-            .as_ref()
-            .ok_or("No output session")?
-            .output
-            .clone();
+        conversation.pipeline.as_ref().ok_or("No output session")?;
         let activity = self.record_activity(
             caller,
             "output_request",
             json!({"reason":reason,"activityIds":input.activity_ids,"topicId":input.topic_id}),
-            &[output],
+            &super::workflow::targets(&conversation, super::workflow::FlowEvent::OutputRequested),
         )?;
         self.schedule_observations();
         Ok(json!({"accepted":true,"activityId":activity.id}))
@@ -242,7 +239,7 @@ impl VoiceSessionApplication {
             return Ok(json!({"accepted":true,"alreadyRouted":true}));
         }
         let activity = self.record_activity(caller,"reaction_rerouted",json!({"requestId":input.request_id,
-            "reason":input.reason,"acceptedInput":accepted}), &[c.main_session_id.clone()])?;
+            "reason":input.reason,"acceptedInput":accepted}), &super::workflow::targets(&c, super::workflow::FlowEvent::ReactionRerouted))?;
         self.schedule_observations();
         Ok(json!({"accepted":true,"activityId":activity.id}))
     }

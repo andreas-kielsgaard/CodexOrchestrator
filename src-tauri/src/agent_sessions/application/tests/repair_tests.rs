@@ -527,6 +527,7 @@ impl Fixture {
                 node_profile: test_session_creation_request().node_profile,
                 initial_prompt: Some(format!("Initial for {id}")),
                 agent_identity_id: None,
+                notifications: Default::default(),
             })
             .collect();
         let mut prompt_inputs = vec![WorkflowConnectionPromptInput::OutputField {
