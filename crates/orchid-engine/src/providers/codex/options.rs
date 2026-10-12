@@ -18,6 +18,8 @@ pub enum CodexPersonality {
 pub struct CodexNativeOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub personality: Option<CodexPersonality>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast_mode: Option<bool>,
 }
 
 impl CodexNativeOptions {
@@ -50,6 +52,13 @@ impl CodexNativeOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn missing_fast_setting_preserves_the_existing_serialized_contract() {
+        let old = serde_json::json!({"personality":"friendly"});
+        let options: CodexNativeOptions = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(options.fast_mode, None);
+        assert_eq!(serde_json::to_value(options).unwrap(), old);
+    }
 
     #[test]
     fn rejects_another_providers_native_options() {

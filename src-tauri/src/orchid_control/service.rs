@@ -56,6 +56,7 @@ pub(crate) fn tool_map() -> BTreeMap<String, BTreeSet<String>> {
                 "read_context",
                 "report_progress",
                 "request_output",
+                "route_input",
             ]
             .as_slice(),
         ),

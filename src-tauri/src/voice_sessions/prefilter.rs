@@ -62,6 +62,14 @@ fn prepare_window(c: &mut Conversation, seconds: u64) {
 fn may_accumulate(input: &SpokenInput, continuation: bool) -> bool {
     input.delivered_revision == 0 || (continuation && input.revision > input.delivered_revision)
 }
+fn release_targets(c: &Conversation, blocks: &[SpokenInput]) -> Vec<String> {
+    let stages = c.pipeline.as_ref().expect("Reasoning stages required");
+    if !blocks.is_empty() && blocks.iter().all(|b| b.reaction.as_deref() == Some("reaction_request")) {
+        vec![stages.output.clone()]
+    } else {
+        vec![stages.summary.clone(), c.main_session_id.clone(), stages.digest.clone()]
+    }
+}
 pub(super) fn ready(state: &VoiceState, c: &Conversation) -> bool {
     state.enabled
         && !c.inputs.iter().any(|i| i.filter_pending)
@@ -173,6 +181,10 @@ impl VoiceSessionApplication {
             questions.insert(format!("completion:{}",block.id), question(&prompts.completion,&block.id,&[
                 ("complete","The request including this sentence is ready to handle in the current transcript context."),
                 ("continue","The request is still being explained or is not ready to handle.")]));
+            questions.insert(format!("reaction:{}",block.id), question(&prompts.reaction,&block.id,&[
+                ("reaction_request","An addressed request to respond to, explain, or clarify available output or task status; no new work or changed requirements."),
+                ("work_or_context","New work, changed requirements, mixed reaction and work, or context requiring the work router."),
+                ("none","Unaddressed speech or no expected conversational reaction.")]));
             if released.is_some() {
                 questions.insert(format!("continuation:{}",block.id), question(&prompts.continuation,&block.id,&[
                 ("continued","This sentence continues or corrects the recently delivered request."),
@@ -183,7 +195,8 @@ impl VoiceSessionApplication {
         let evaluation = JevEvaluation {
             state: json!({"recentSpeech":recent.iter().map(evidence).collect::<Vec<_>>(),
             "acceptedInput":c.input_buffer.blocks.iter().map(evidence).collect::<Vec<_>>(),"lastDeliveredRequest":released,
-            "recentActivity":c.activity.iter().rev().take(10).collect::<Vec<_>>(),"tasks":c.tasks,"pendingTopics":c.pending_topics}),
+            "recentActivity":c.activity.iter().rev().take(10).collect::<Vec<_>>(),"tasks":c.tasks,"pendingTopics":c.pending_topics,
+            "recentOutput":c.utterances.iter().rev().take(5).collect::<Vec<_>>()}),
             questions,
         };
         self.agents
@@ -283,6 +296,7 @@ impl VoiceSessionApplication {
                     relevant.push(input.id.clone());
                 }
                 input.relevance = Some(effective.clone());
+                input.reaction = Some(answers.get(&format!("reaction:{}", block.id)).ok_or("Reaction answer missing")?.clone());
                 input.evaluated_revision = block.revision;
                 input.filter_pending = input.revision != block.revision;
                 input.completion = if input.filter_pending {
@@ -296,7 +310,9 @@ impl VoiceSessionApplication {
                     )
                 };
                 classifications
-                    .push(json!({"id":input.id,"relevance":effective,"revision":input.revision}));
+                    .push(json!({"id":input.id,"relevance":effective,"revision":input.revision,
+                        "addressed":relevance != "unaddressed",
+                        "sentenceComplete":super::query_schedule::sentence_complete(&input.text),"reaction":input.reaction}));
                 if eligible {
                     continued |= continuation && revised;
                     if let Some(existing) =
@@ -328,7 +344,7 @@ impl VoiceSessionApplication {
             ))
         })?;
         for value in classifications {
-            let _=self.events.send(json!({"type":"input_classification","id":value["id"],"relevance":value["relevance"],"revision":value["revision"]}));
+            let mut event=value; event["type"]="input_classification".into(); let _=self.events.send(event);
         }
         if opened {
             let _ = self.events.send(json!({"type":"cue","cue":"listening"}));
@@ -387,9 +403,10 @@ impl VoiceSessionApplication {
         let Some((c, release, previous, policy, continuation_of)) = captured else {
             return Ok(());
         };
-        let stages = c.pipeline.as_ref().ok_or("No reasoning stages")?;
-        self.record_activity("user","accepted_input",json!({"requestId":release.id,"blocks":release.blocks,"previousRequest":previous,"continuationOf":continuation_of}),
-            &[stages.summary.clone(),c.main_session_id.clone(),stages.digest.clone()])?;
+        c.pipeline.as_ref().ok_or("No reasoning stages")?;
+        let targets = release_targets(&c, &release.blocks);
+        self.record_activity("user","accepted_input",json!({"requestId":release.id,"blocks":release.blocks,"previousRequest":previous,"continuationOf":continuation_of,
+            "responseRoute":if targets.len()==1 {"direct_reaction"} else {"work_routing"}}), &targets)?;
         let _ = self.events.send(json!({"type":"cue","cue":"processing"}));
         let _=self.events.send(json!({"type":"input_released","requestId":release.id,"followupSeconds":policy.followup_seconds}));
         self.schedule_observations();
@@ -399,6 +416,15 @@ impl VoiceSessionApplication {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reactions_bypass_work_but_mixed_inputs_keep_parallel_routing() {
+        let c = Conversation { main_session_id:"router".into(), pipeline:Some(PipelineSessions {
+            filter:"filter".into(), summary:"summary".into(), digest:"digest".into(), output:"output".into()
+        }), ..Default::default() };
+        let reaction = SpokenInput { reaction:Some("reaction_request".into()), ..Default::default() };
+        assert_eq!(release_targets(&c, &[reaction.clone()]), vec!["output"]);
+        assert_eq!(release_targets(&c, &[reaction, SpokenInput {reaction:Some("work_or_context".into()), ..Default::default()}]), vec!["summary","router","digest"]);
+    }
     #[test]
     fn failed_evaluation_retains_the_opening_after_the_rolling_window_expires() {
         let mut c = Conversation::default();

@@ -18,6 +18,7 @@ class ConversationService : Service() {
     private var wake: PowerManager.WakeLock? = null
     private val handler = Handler(Looper.getMainLooper())
     private val inactivity = ListeningInactivity()
+    private val interruption = AddressedSpeechInterruption()
     @Volatile private var listening = false
     private val checkInactivity = object : Runnable {
         override fun run() {
@@ -90,13 +91,14 @@ class ConversationService : Service() {
                         if (inputs != null) for (index in 0 until inputs.length()) {
                             val input = inputs.getJSONObject(index)
                             detectedInput.classify(input.getString("id"), input.getString("relevance"))
+                            interruption.remember(input.getString("id"), input.optLong("revision"))
                         }
                     }
                     connection?.send(JSONObject().put("type", "capture_status").put("capture", JSONObject(settings.captureStatus)))
                     connection?.send(JSONObject().put("type", "speech_state").put("speaking", capture?.speaking == true))
                 }
                 "cue" -> cues?.play(value.optString("cue"))
-                "speak" -> { val utterance = value.getJSONObject("utterance"); settings.lastExchange = "Orchid: ${utterance.getString("text")}"; if (capture?.speaking != true) player?.speak(utterance) else connection?.send(JSONObject().put("type", "playback").put("playback", JSONObject().put("utteranceId", utterance.getString("id")).put("playedMs", 0).put("state", "interrupted"))) }
+                "speak" -> { val utterance = value.getJSONObject("utterance"); settings.lastExchange = "Orchid: ${utterance.getString("text")}"; player?.speak(utterance) }
                 "transcript" -> handler.post {
                     settings.lastExchange = "You: ${value.getString("text")}"
                     detectedInput.append(value.getString("id"), value.getString("text"))
@@ -105,7 +107,10 @@ class ConversationService : Service() {
                     detectedInput.window(value.getString("streamId"), value.getLong("windowStartMs"), value.getJSONArray("blocks"))
                     value.getJSONArray("blocks").let { blocks -> if (blocks.length() > 0) settings.lastExchange = "You: ${blocks.getJSONObject(blocks.length() - 1).getString("text")}" }
                 }
-                "input_classification" -> handler.post { detectedInput.classify(value.getString("id"), value.getString("relevance")) }
+                "input_classification" -> handler.post {
+                    detectedInput.classify(value.getString("id"), value.getString("relevance"))
+                    if (interruption.accept(value.getString("id"), value.optLong("revision"), value.optBoolean("addressed"), value.optBoolean("sentenceComplete"))) player?.interrupt()
+                }
                 "error" -> status(value.optString("message"))
                 "ended" -> handler.post { stopSelf() }
             }
@@ -115,7 +120,7 @@ class ConversationService : Service() {
         capture?.close()
         connection?.send(JSONObject().put("type", "speech_state").put("speaking", false))
         var segmentsSent = 0L
-        capture = AudioCapture(this, { player?.interrupt(); connection?.send(JSONObject().put("type", "speech_state").put("speaking", true)) }, { streamId, epochMs, startSample, bytes, hasSpeech ->
+        capture = AudioCapture(this, { connection?.send(JSONObject().put("type", "speech_state").put("speaking", true)) }, { streamId, epochMs, startSample, bytes, hasSpeech ->
             if (connection?.send(JSONObject().put("type", "audio_stream").put("streamId", streamId).put("epochMs", epochMs).put("startSample", startSample).put("hasSpeech", hasSpeech).put("pcm", Base64.encodeToString(bytes, Base64.NO_WRAP))) == true) segmentsSent++
         }, { status(it) }, { connection?.send(JSONObject().put("type", "speech_state").put("speaking", false)) }, { report ->
             report.put("segmentsSent", segmentsSent)

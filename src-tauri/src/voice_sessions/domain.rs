@@ -17,6 +17,7 @@ pub(crate) struct VoicePrompts {
     pub(crate) relevance: String,
     pub(crate) completion: String,
     pub(crate) continuation: String,
+    pub(crate) reaction: String,
     pub(crate) summary: String,
     pub(crate) router: String,
     pub(crate) digest: String,
@@ -37,6 +38,7 @@ impl Default for VoicePrompts {
             )
             .into(),
             summary: SUMMARY_INSTRUCTIONS.into(),
+            reaction: include_str!("../../../resources/voice-sessions/reaction-instructions.md").into(),
             router: INPUT_INSTRUCTIONS.into(),
             digest: DIGEST_INSTRUCTIONS.into(),
             output: OUTPUT_INSTRUCTIONS.into(),
@@ -55,6 +57,8 @@ pub(crate) struct VoiceSettings {
     pub(crate) instructions: String,
     #[serde(default)]
     pub(crate) prompts: VoicePrompts,
+    #[serde(default)]
+    pub(crate) models: super::models::VoiceModels,
 }
 impl Default for VoiceSettings {
     fn default() -> Self {
@@ -65,6 +69,7 @@ impl Default for VoiceSettings {
             working_directory: None,
             instructions: DEFAULT_INSTRUCTIONS.into(),
             prompts: VoicePrompts::default(),
+            models: super::models::VoiceModels::default(),
         }
     }
 }
@@ -254,6 +259,8 @@ pub(crate) struct SpokenInput {
     pub(crate) created_at: String,
     #[serde(default)]
     pub(crate) relevance: Option<String>,
+    #[serde(default)]
+    pub(crate) reaction: Option<String>,
     #[serde(default)]
     pub(crate) completion: Option<String>,
     #[serde(default)]

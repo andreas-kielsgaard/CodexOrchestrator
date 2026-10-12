@@ -14,6 +14,7 @@ mod diagnostics;
 mod direct_user;
 mod product_delivery;
 mod product_sessions;
+pub(crate) use product_sessions::ProductSessionOptions;
 pub(crate) use product_delivery::ProductDeliveryReceipt;
 mod interactions;
 mod invocation;

@@ -462,6 +462,24 @@ export function VoiceSessionsScreen({
             and runtime requests.
           </p>
           <details>
+            <summary>Voice models</summary>
+            {(['response', 'routing'] as const).map((role) => (
+              <fieldset key={role} disabled={state.enabled}>
+                <legend>{role === 'response' ? 'Immediate response, digestion and output' : 'Work routing and new workers'}</legend>
+                <label>Model
+                  <input value={settings.models[role].model} onChange={(event) => edit({ models: { ...settings.models, [role]: { ...settings.models[role], model: event.target.value } } })} />
+                </label>
+                <label>Reasoning effort
+                  <select value={settings.models[role].reasoningMode} onChange={(event) => edit({ models: { ...settings.models, [role]: { ...settings.models[role], reasoningMode: event.target.value } } })}>
+                    {['low', 'medium', 'high', 'xhigh', 'max', 'ultra'].map((effort) => <option key={effort} value={effort}>{effort}</option>)}
+                  </select>
+                </label>
+                <label><input type="checkbox" checked={settings.models[role].fastMode} onChange={(event) => edit({ models: { ...settings.models, [role]: { ...settings.models[role], fastMode: event.target.checked } } })} />Fast mode</label>
+              </fieldset>
+            ))}
+            <p className="voice-muted">Save setup, then start a new conversation to use these models. Existing chats retain their settings.</p>
+          </details>
+          <details>
             <summary>Voice prompts</summary>
             <label>
               Stage
@@ -472,6 +490,7 @@ export function VoiceSessionsScreen({
                 <option value="relevance">JEV relevance</option>
                 <option value="completion">JEV input completion</option>
                 <option value="continuation">JEV continuation</option>
+                <option value="reaction">JEV reaction requests</option>
                 <option value="summary">Input summarization</option>
                 <option value="router">Routing</option>
                 <option value="digest">Digest</option>

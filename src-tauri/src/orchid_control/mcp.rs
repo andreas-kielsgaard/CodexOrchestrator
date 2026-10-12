@@ -169,6 +169,7 @@ async fn handle(
                         "read_context" => voice.read_context(&caller, args),
                         "report_progress" => voice.report_progress(&caller, args),
                         "request_output" => voice.request_output(&caller, args),
+                        "route_input" => voice.route_input(&caller, args),
                         _ => Err("Unknown voice tool".into()),
                     }
                 }
@@ -207,6 +208,7 @@ fn definitions(package: &str) -> Vec<Value> {
         definition("read_context","Read retained voice activity, accepted input, task handoffs, publications, and playback. Optionally select activity IDs; use orchid_control.read_session for detailed referenced sessions.",json!({"activityIds":{"type":"array","items":string}}),&[]),
         definition("report_progress","Send process feedback to the ongoing digest.",json!({"text":string}),&["text"]),
         definition("request_output","Digest only: request output with a brief reason why now is a good time and relevant activity or topic references.",json!({"reason":string,"activityIds":{"type":"array","items":string},"topicId":string}),&["reason"]),
+        definition("route_input","Output only: forward a misclassified direct reaction to the stronger work router using the original accepted requestId and a brief reason.",json!({"requestId":string,"reason":string}),&["requestId","reason"]),
     ];
     }
     vec![

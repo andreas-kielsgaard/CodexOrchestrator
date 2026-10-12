@@ -479,7 +479,10 @@ fn initialize_turn(
         .and_then(|extension| extension.provider_options.as_ref())
         .map(crate::providers::codex::options::CodexNativeOptions::decode)
         .transpose()?;
-    if let Some(personality) = native_options.and_then(|options| options.personality) {
+    let service_tier = native_options.as_ref().and_then(|options| options.fast_mode)
+        .map(|fast| if fast { "fast" } else { "default" });
+    if let Some(tier) = service_tier { params["serviceTier"] = tier.into(); }
+    if let Some(personality) = native_options.as_ref().and_then(|options| options.personality) {
         params["personality"] = match personality {
             crate::providers::codex::options::CodexPersonality::None => "none",
             crate::providers::codex::options::CodexPersonality::Friendly => "friendly",
@@ -555,7 +558,7 @@ fn initialize_turn(
     for event in context.events {
         invocation.emit(RuntimeUpdate::Event(event));
     }
-    invocation.event(json!({"kind":"runtime_effective_configuration","model":result["model"],"reasoningEffort":result["reasoningEffort"],"personality":result["personality"],"cwd":result["cwd"],"approvalPolicy":result["approvalPolicy"],"sandbox":result["sandbox"]}));
+    invocation.event(json!({"kind":"runtime_effective_configuration","model":result["model"],"reasoningEffort":result["reasoningEffort"],"personality":result["personality"],"serviceTier":result["serviceTier"],"requestedServiceTier":service_tier,"cwd":result["cwd"],"approvalPolicy":result["approvalPolicy"],"sandbox":result["sandbox"]}));
     configuration::validate_effective_sandbox(request.options.sandbox, &result["sandbox"])?;
     let working_directory = result["cwd"]
         .as_str()
@@ -603,6 +606,7 @@ fn initialize_turn(
         }
     }
     let mut turn = json!({"threadId":thread_id,"input":input});
+    if let Some(tier) = service_tier { turn["serviceTier"] = tier.into(); }
     if let Some(effort) = request
         .launch_extension
         .as_ref()

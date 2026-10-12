@@ -33,7 +33,7 @@ impl VoiceSessionApplication {
             AgentSessionId::new(id.clone()).map_err(|e| e.to_string())?
         } else {
             self.agents
-                .create_product_session(
+                .create_product_session_configured(
                     input
                         .title
                         .clone()
@@ -47,6 +47,7 @@ impl VoiceSessionApplication {
                         .clone()
                         .unwrap_or(state.settings.profile_id),
                     crate::orchid_control::tool_map(),
+                    state.settings.models.routing.options(),
                 )?
                 .id
         };

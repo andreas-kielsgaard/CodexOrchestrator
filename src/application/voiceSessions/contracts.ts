@@ -2,11 +2,17 @@ export interface VoicePrompts {
   relevance: string;
   completion: string;
   continuation: string;
+  reaction: string;
   summary: string;
   router: string;
   digest: string;
   output: string;
   tools: string;
+}
+export interface VoiceModel {
+  model: string;
+  reasoningMode: string;
+  fastMode: boolean;
 }
 export interface VoiceSettings {
   bindAddress: string;
@@ -15,6 +21,7 @@ export interface VoiceSettings {
   workingDirectory: string | null;
   instructions: string;
   prompts: VoicePrompts;
+  models: { response: VoiceModel; routing: VoiceModel };
 }
 export interface VoiceView {
   diagnostics?: {

@@ -231,6 +231,7 @@ impl ProviderConfigurationSource for CodexConfigurationSource {
             .map(|personality| {
                 CodexNativeOptions {
                     personality: Some(personality),
+                    ..Default::default()
                 }
                 .encode()
             });

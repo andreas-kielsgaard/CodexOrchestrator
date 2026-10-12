@@ -173,7 +173,7 @@ async fn connection(socket: WebSocket, state: GatewayState) {
                     input
                         .relevance
                         .as_ref()
-                        .map(|relevance| json!({"id":input.id,"relevance":relevance}))
+                        .map(|relevance| json!({"id":input.id,"relevance":relevance,"revision":input.evaluated_revision}))
                 })
                 .collect()
         })
@@ -239,7 +239,7 @@ async fn connection(socket: WebSocket, state: GatewayState) {
                     if let Some(c)=snapshot.conversation {
                         let blocks:Vec<_>=c.inputs.iter().filter(|i|i.stream_id.as_deref()==Some(&active_stream)&&!i.text.is_empty()).cloned().collect();
                         let quiet=if snapshot.speaking {0} else {last_voice.elapsed().as_millis() as u64};
-                        if schedule.due(&blocks,&snapshot.input_policy,quiet,last_voice_ms,c.inputs.iter().any(|i|i.filter_pending)) {
+                        if schedule.due(&blocks,&snapshot.input_policy,quiet,last_voice_ms,c.inputs.iter().any(|i|i.filter_pending),c.playback.as_ref().is_some_and(|p|p.state=="playing")) {
                             if let Err(error)=state.app.request_filter(){state.app.set_error(error);}
                         }
                     }

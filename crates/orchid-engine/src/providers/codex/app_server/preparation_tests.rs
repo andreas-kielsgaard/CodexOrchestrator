@@ -272,6 +272,7 @@ fn personality_is_omitted_for_inherit_and_matches_on_start_and_resume() {
                 provider_options: personality.map(|personality| {
                     crate::providers::codex::options::CodexNativeOptions {
                         personality: Some(personality),
+                        ..Default::default()
                     }
                     .encode()
                 }),
@@ -295,6 +296,32 @@ fn personality_is_omitted_for_inherit_and_matches_on_start_and_resume() {
             assert_eq!(launch_calls.len(), if resume { 2 } else { 1 });
             for call in launch_calls {
                 assert_eq!(call["params"]["personality"].as_str(), expected);
+            }
+            drop(calls);
+            runtime.shutdown().unwrap();
+        }
+    }
+}
+
+#[test]
+fn service_tier_applies_to_thread_and_turn_without_changing_inherited_options() {
+    for fast in [None, Some(false), Some(true)] {
+        for resume in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let factory = Arc::new(Factory::default());
+            let runtime = CodexAppServerRuntime::new("fake", factory.clone());
+            let mut request = request(directory.path());
+            request.launch_extension = Some(RuntimeLaunchExtension {
+                provider_options: Some(crate::providers::codex::options::CodexNativeOptions { fast_mode:fast, ..Default::default() }.encode()),
+                ..Default::default()
+            });
+            let id = request.invocation_id.clone();
+            runtime.prepare_invocation(request, resume.then(||ExternalRuntimeContextId::new("thread-one").unwrap()), Arc::new(Sink::default())).unwrap();
+            runtime.deliver_prepared_invocation(&id).unwrap();
+            let child = factory.0.lock().unwrap()[0].clone();
+            let calls = child.requests.lock().unwrap();
+            for call in calls.iter().filter(|r|matches!(r["method"].as_str(),Some("thread/start"|"thread/resume"|"turn/start"))) {
+                assert_eq!(call["params"]["serviceTier"].as_str(), fast.map(|v|if v {"fast"} else {"default"}));
             }
             drop(calls);
             runtime.shutdown().unwrap();

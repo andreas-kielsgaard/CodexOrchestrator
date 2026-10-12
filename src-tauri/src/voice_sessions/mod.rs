@@ -4,6 +4,7 @@ mod delegation;
 mod diagnostics;
 mod domain;
 mod gateway;
+mod models;
 mod observations;
 mod phone_history;
 mod pipeline;

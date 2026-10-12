@@ -113,11 +113,12 @@ impl VoiceSessionApplication {
             return self.view();
         }
         if fresh || state.conversation.is_none() {
-            let main = self.agents.create_product_session(
+            let main = self.agents.create_product_session_configured(
                 "Voice conversation".into(),
                 state.settings.working_directory.clone(),
                 &state.settings.profile_id,
                 crate::orchid_control::tool_map(),
+                state.settings.models.routing.options(),
             )?;
             self.update(|state| {
                 state.conversation = Some(Conversation {

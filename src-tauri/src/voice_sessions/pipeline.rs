@@ -23,6 +23,12 @@ struct OutputInput {
     activity_ids: Option<Vec<String>>,
     topic_id: Option<String>,
 }
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RouteInput {
+    request_id: String,
+    reason: String,
+}
 
 pub(super) fn may_publish(role: Option<&str>, kind: &str) -> bool {
     role == Some("output") || (role == Some("summary") && kind == "acknowledgement")
@@ -61,11 +67,12 @@ impl VoiceSessionApplication {
         }
         let create = |title: &str| {
             self.agents
-                .create_product_session(
+                .create_product_session_configured(
                     title.into(),
                     state.settings.working_directory.clone(),
                     &state.settings.profile_id,
                     crate::orchid_control::tool_map(),
+                    state.settings.models.response.options(),
                 )
                 .map(|s| s.id.to_string())
         };
@@ -220,6 +227,22 @@ impl VoiceSessionApplication {
             json!({"reason":reason,"activityIds":input.activity_ids,"topicId":input.topic_id}),
             &[output],
         )?;
+        self.schedule_observations();
+        Ok(json!({"accepted":true,"activityId":activity.id}))
+    }
+    pub(crate) fn route_input(self: &Arc<Self>, caller: &str, args: Value) -> Result<Value, String> {
+        let c = self.require_member(caller)?;
+        if c.role(caller) != Some("output") { return Err("Only output forwards a classified reaction to the work router".into()); }
+        let input: RouteInput = serde_json::from_value(args).map_err(|e| e.to_string())?;
+        if input.reason.trim().is_empty() { return Err("reason is required".into()); }
+        let accepted = c.activity.iter().find(|a| a.kind=="accepted_input"
+            && a.data["requestId"].as_str()==Some(input.request_id.as_str())
+            && a.data["responseRoute"]=="direct_reaction").ok_or("Direct reaction request not found")?;
+        if c.activity.iter().any(|a| a.kind=="reaction_rerouted" && a.data["requestId"].as_str()==Some(input.request_id.as_str())) {
+            return Ok(json!({"accepted":true,"alreadyRouted":true}));
+        }
+        let activity = self.record_activity(caller,"reaction_rerouted",json!({"requestId":input.request_id,
+            "reason":input.reason,"acceptedInput":accepted}), &[c.main_session_id.clone()])?;
         self.schedule_observations();
         Ok(json!({"accepted":true,"activityId":activity.id}))
     }

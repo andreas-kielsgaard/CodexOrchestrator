@@ -3,6 +3,12 @@ use crate::agent_sessions::ports::InvocationContent;
 use crate::execution_configuration::{NodeProfile, SessionCreationRequest, SessionProfileResolver};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[derive(Default)]
+pub(crate) struct ProductSessionOptions {
+    pub(crate) defaults: crate::execution_configuration::RuntimeSelections,
+    pub(crate) fast_mode: Option<bool>,
+}
+
 impl AgentSessionApplication {
     /// Creates an ordinary profiled Session with explicitly selected product tools.
     pub(crate) fn create_product_session(
@@ -11,6 +17,17 @@ impl AgentSessionApplication {
         directory: Option<String>,
         profile_id: &str,
         tools: BTreeMap<String, BTreeSet<String>>,
+    ) -> Result<crate::agent_sessions::domain::AgentSession, String> {
+        self.create_product_session_configured(title, directory, profile_id, tools, ProductSessionOptions::default())
+    }
+
+    pub(crate) fn create_product_session_configured(
+        &self,
+        title: String,
+        directory: Option<String>,
+        profile_id: &str,
+        tools: BTreeMap<String, BTreeSet<String>>,
+        options: ProductSessionOptions,
     ) -> Result<crate::agent_sessions::domain::AgentSession, String> {
         let profiles = self
             .capability_profiles
@@ -33,9 +50,20 @@ impl AgentSessionApplication {
                 .or_default()
                 .extend(names.clone());
         }
-        let runtime = profiles
+        let mut runtime = profiles
             .runtime_for_binding(&capability.execution, directory.as_deref())
             .map_err(|e| e.to_string())?;
+        if let Some(fast) = options.fast_mode {
+            if capability.execution.provider != "codex" { return Err("Fast mode requires the Codex provider".into()); }
+            let route = capability.route_policies.iter_mut().find(|route| route.execution == capability.execution);
+            let base = route.as_ref().and_then(|route| route.provider_options.as_ref()).or(runtime.provider_options.as_ref());
+            let mut native = base.map(orchid_engine::providers::codex::options::CodexNativeOptions::decode)
+                .transpose().map_err(|e| e.to_string())?.unwrap_or_default();
+            native.fast_mode = Some(fast);
+            let envelope = native.encode();
+            if let Some(route) = route { route.provider_options = Some(envelope.clone()); }
+            runtime.provider_options = Some(envelope);
+        }
         let skills = self.compile_capability_skill_inputs(
             &capability,
             &capability.execution,
@@ -51,7 +79,7 @@ impl AgentSessionApplication {
                 node_profile: NodeProfile {
                     contract_version: 1,
                     allowed_capabilities: allowed,
-                    pinned_defaults: Default::default(),
+                    pinned_defaults: options.defaults,
                 },
                 agent_mcp_configuration: Default::default(),
                 session_skill_inputs: skills,
