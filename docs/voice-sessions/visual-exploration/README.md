@@ -12,6 +12,12 @@ These are built-in Image Gen concept mockups, shown inline in the conversation. 
 
 These could be complementary views of the same extension. The existing application screenshot in [reference-current-workflow.png](reference-current-workflow.png) and `src/theme/tokens.css` grounded the palette and controls.
 
+## Phone viewer
+
+`apps/orchid-android/concept-viewer` packages these three desktop mockups into **Orchid Concepts**, a separate offline application with Previous/Next, zoom/pan, Fit and Wide/Portrait controls. It preserves the desktop compositions and displays the corrections below; the depicted workflow controls are illustrations.
+
+Installed and verified on S21 `R3CRA0BAYXD` over Tailscale on 2026-10-12. Build and lint passed (0 errors; 5 informational warnings). The device probe passed navigation, rendered content, Zoom and Fit. Captured screens confirmed all three images, panning and both orientations; landscape retains the selected design and uses compact controls. Production Orchid Voice was not rebuilt or reconfigured. Local evidence: `.dev/concept-viewer-phone-tests.txt` and `.dev/concept-viewer-*.png`.
+
 ## Visual corrections before implementation
 
 - The first image incorrectly labels Digest as a Function. Digest is an Agent.

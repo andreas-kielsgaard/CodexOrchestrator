@@ -1,9 +1,11 @@
-param([switch]$Lint, [switch]$ConnectionProbe)
+param([switch]$Lint, [switch]$ConnectionProbe, [switch]$ConceptViewer)
 $ErrorActionPreference = 'Stop'
 $project = Join-Path (Split-Path $PSScriptRoot -Parent) '../apps/orchid-android'
 if (-not $env:JAVA_HOME) { $env:JAVA_HOME = (Get-ChildItem 'C:/Program Files/Eclipse Adoptium' -Directory | Sort-Object Name -Descending | Select-Object -First 1).FullName }
 if (-not $env:ANDROID_HOME) { $env:ANDROID_HOME = Join-Path $env:LOCALAPPDATA 'Android/Sdk' }
 if (-not (Test-Path (Join-Path $project 'gradlew.bat'))) { throw 'Gradle wrapper is missing' }
 $task = if ($Lint) { 'lintDebug' } elseif ($ConnectionProbe) { 'assembleDebugAndroidTest' } else { 'assembleDebug' }
+$module = if ($ConceptViewer) { ':concept-viewer:' } else { ':app:' }
+$task = $module + $task
 Push-Location $project
 try { & './gradlew.bat' $task --console=plain; if ($LASTEXITCODE) { throw 'Android build failed' } } finally { Pop-Location }

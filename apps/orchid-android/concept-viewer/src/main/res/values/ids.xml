@@ -1,0 +1,9 @@
+<resources>
+    <item name="concept_title" type="id" />
+    <item name="concept_image" type="id" />
+    <item name="previous" type="id" />
+    <item name="next" type="id" />
+    <item name="fit" type="id" />
+    <item name="zoom" type="id" />
+    <item name="wide" type="id" />
+</resources>

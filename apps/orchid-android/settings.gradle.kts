@@ -5,3 +5,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "OrchidVoice"
 include(":app")
+include(":concept-viewer")
