@@ -36,3 +36,13 @@ Status: desktop reasoning, S21 microphone capture, mobile-data connection, TTS p
 Development evidence is retained under the ignored `.dev/voice/` directory. Development app launches use explicit executable, PID, debug endpoint, and isolated storage. A copied test database is not the live controller's current state.
 
 The exploratory desktop instance was closed when the user stopped usability testing. Phone capture remains stopped. The main release executable and desktop smoke verification are recorded in [main integration](main-2026-10-07.md). No further phone usability testing was performed.
+
+## Idle lifecycle correction — 2026-10-13
+
+`ConversationService` owns session shutdown; `OrchidConnection` reports terminal connection failure. Timeout, follow-up expiry and exhausted retries now stop the service, rather than retaining a connection and CPU wake lock after recording ends. Terminal errors remain in the app. Idle phone announcements need separate delivery.
+
+Built and installed the corrected debug APK on S21 `R3CRA0BAYXD` through Tailscale. `IdleLifecycleProbe` used a phone-local mock gateway, keeping captured audio away from the task engine. It verified recording, WebSocket, wake-lock and notification cleanup after timeout; fresh activation and manual stop; idle microphone-settings cleanup; follow-up expiry; initial attempt plus three retries on HTTP 503 and missing hello; immediate HTTP 401 and incompatible-protocol shutdown. Assertions run before instrumentation exits, and original connection/timeout settings are restored.
+
+The saved real laptop connection subsequently returned an authenticated version-2 hello without microphone capture. Final system inspection found no conversation service, Orchid wake lock or active Orchid notification. Build and lint passed (0 lint errors, 15 warnings). Evidence: ignored `.dev/battery-review/`; installed APK SHA-256 `576638D9CC1E139034576BC5F9808F585DCEA808A2708443D56A8DB921C69706`.
+
+This verifies resource release, not a day-long battery comparison. Tailscale and other apps were unchanged.

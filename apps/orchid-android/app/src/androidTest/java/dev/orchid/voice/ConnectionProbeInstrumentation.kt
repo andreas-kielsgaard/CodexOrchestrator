@@ -34,6 +34,7 @@ class ConnectionProbeInstrumentation : Instrumentation() {
             if (probe == "devices") { AudioDevicesProbe.run(this, result); finish(Activity.RESULT_OK, result); return }
             if (probe == "transcripts") { DetectedInputProbe.run(targetContext, result); finish(Activity.RESULT_OK, result); return }
             if (probe == "inactivity") { InactivityProbe.run(this, result); finish(Activity.RESULT_OK, result); return }
+            if (probe == "idle-lifecycle") { IdleLifecycleProbe.run(this, result); finish(Activity.RESULT_OK, result); return }
             if (probe == "assistant") { AssistantProbe.run(this, result); finish(Activity.RESULT_OK, result); return }
             if (probe == "headset") { HeadsetProbe.run(targetContext, result, microphone, output, interrupt); finish(Activity.RESULT_OK, result); return }
             if (probe == "audio") { probeMutedSpeech(result); finish(Activity.RESULT_OK, result); return }

@@ -20,27 +20,26 @@ class ConversationService : Service() {
     private val inactivity = ListeningInactivity()
     private val interruption = AddressedSpeechInterruption()
     @Volatile private var listening = false
+    @Volatile private var ending = false
+    private var stopReason = "Stopped"
     private val checkInactivity = object : Runnable {
         override fun run() {
             if (!listening) return
             if (inactivity.remainingSeconds(SystemClock.elapsedRealtime(), settings.listeningTimeoutSeconds) == 0L) {
-                listening = false
                 val followingUp = inactivity.followingUp()
-                inactivity.stop()
-                settings.listeningStopReason = if (followingUp) "Stopped · follow-up window ended" else "Stopped · no relevant input for ${settings.listeningTimeoutSeconds} seconds"
-                capture?.close(); capture = null
-                connection?.send(JSONObject().put("type", "speech_state").put("speaking", false))
-                startForeground(1, notification(settings.listeningStopReason), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
-                status(settings.listeningStopReason)
+                finishListening(if (followingUp) "Stopped · follow-up window ended" else "Stopped · no relevant input for ${settings.listeningTimeoutSeconds} seconds")
             } else handler.postDelayed(this, 1000)
         }
     }
     override fun onCreate() { super.onCreate(); settings = ConnectionSettings(this); detectedInput = DetectedInput(settings); getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("conversation", "Voice conversation", NotificationManager.IMPORTANCE_LOW)) }
     override fun onBind(intent: Intent?) = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (ending) return START_NOT_STICKY
         when (intent?.action) {
-            "STOP" -> stopSelf()
-            "TEXT" -> { val text = intent.getStringExtra("text") ?: ""; if (connection?.send(JSONObject().put("type", "text").put("id", UUID.randomUUID().toString()).put("text", text)) != true) settings.status = "Start the connection before sending" }
+            "STOP" -> finishListening("Stopped")
+            "TEXT" -> { val text = intent.getStringExtra("text") ?: ""; if (connection?.send(JSONObject().put("type", "text").put("id", UUID.randomUUID().toString()).put("text", text)) != true) {
+                if (connection == null) finishListening("Start the connection before sending") else status("Start the connection before sending")
+            } }
             "START" -> try {
                 settings.listeningStopReason = ""
                 if (connection == null) begin() else {
@@ -53,12 +52,13 @@ class ConversationService : Service() {
                     } else { inactivity.stop(); connection?.start(); status("Connecting…") }
                 }
                 handler.removeCallbacks(checkInactivity); handler.postDelayed(checkInactivity, 1000)
-            } catch (error: Exception) { settings.status = error.message ?: "Unable to start"; stopSelf() }
+            } catch (error: Exception) { finishListening(error.message ?: "Unable to start") }
             "INPUT_SETTINGS" -> { connection?.send(settings.inputSettings()); if (connection == null) stopSelf() }
             "AUDIO_OUTPUT" -> { player?.refreshRouting(); if (connection == null) stopSelf() }
             "MICROPHONE" -> {
                 settings.microphone = intent.getStringExtra("microphone") ?: settings.microphone
                 if (listening) try { startCapture() } catch (error: Exception) { status(error.message ?: "Microphone unavailable") }
+                if (connection == null) stopSelf()
             }
         }
         return START_NOT_STICKY
@@ -71,9 +71,11 @@ class ConversationService : Service() {
         player = SpeechPlayer(this, { connection?.send(it) }, { status(it) }, { if (connection?.connected == true) status("Listening · connected") })
         cues = CuePlayer(this)
         connection = OrchidConnection(settings, { message ->
+            if (ending) return@OrchidConnection
             if (connection?.connected != true) { capture?.close(); capture = null }
             status(if (message == "Listening · connected" && !listening) settings.listeningStopReason.ifBlank { "Connected · microphone off" } else message)
         }, { value ->
+            if (ending) return@OrchidConnection
             handler.post {
                 inactivity.receive(value.optString("type"), SystemClock.elapsedRealtime())
                 if (value.optString("type") == "input_released") inactivity.delivered(SystemClock.elapsedRealtime(), value.optInt("followupSeconds", settings.followupSeconds))
@@ -112,9 +114,9 @@ class ConversationService : Service() {
                     if (interruption.accept(value.getString("id"), value.optLong("revision"), value.optBoolean("addressed"), value.optBoolean("sentenceComplete"))) player?.interrupt()
                 }
                 "error" -> status(value.optString("message"))
-                "ended" -> handler.post { stopSelf() }
+                "ended" -> finishListening("Stopped · conversation ended")
             }
-        }).also { it.start() }
+        }, onStopped = { finishListening(it) }).also { it.start() }
     }
     private fun startCapture() {
         capture?.close()
@@ -136,12 +138,21 @@ class ConversationService : Service() {
     }
     private fun foregroundTypes() = if (Build.VERSION.SDK_INT >= 30) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK else ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
     private fun status(text: String) {
+        if (ending) return
         val message = if (!listening && text.startsWith("Listening") && settings.listeningStopReason.isNotBlank()) settings.listeningStopReason else text
         settings.status = message; getSystemService(NotificationManager::class.java).notify(1, notification(message))
     }
+    private fun finishListening(reason: String) {
+        if (ending) return
+        ending = true; listening = false; inactivity.stop(); handler.removeCallbacksAndMessages(null)
+        stopReason = reason
+        settings.listeningStopReason = if (reason == "Stopped") "" else reason
+        settings.status = reason
+        stopSelf()
+    }
     override fun onDestroy() {
-        listening = false; inactivity.stop(); handler.removeCallbacksAndMessages(null)
+        ending = true; listening = false; inactivity.stop(); handler.removeCallbacksAndMessages(null)
         capture?.close(); cues?.close(); player?.close(); connection?.close(); if (wake?.isHeld == true) wake?.release()
-        settings.listeningStopReason = ""; settings.status = "Stopped"; stopForeground(STOP_FOREGROUND_REMOVE); super.onDestroy()
+        settings.status = stopReason; stopForeground(STOP_FOREGROUND_REMOVE); super.onDestroy()
     }
 }

@@ -7,7 +7,8 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 class OrchidConnection(settings: ConnectionSettings, private val status: (String) -> Unit, private val receive: (JSONObject) -> Unit,
-    private val request: () -> Request = { Request.Builder().url(settings.endpoint).header("Authorization", "Bearer ${settings.token}").build() }) {
+    private val request: () -> Request = { Request.Builder().url(settings.endpoint).header("Authorization", "Bearer ${settings.token}").build() },
+    private val onStopped: (String) -> Unit = {}) {
     private val client = OkHttpClient.Builder().connectTimeout(5, TimeUnit.SECONDS).pingInterval(10, TimeUnit.SECONDS).build()
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var active = false
@@ -26,7 +27,12 @@ class OrchidConnection(settings: ConnectionSettings, private val status: (String
                 handler.post {
                     if (!active || socket !== webSocket) return@post
                     try { val value = JSONObject(text)
-                        if (value.optString("type") == "hello") { if (value.optInt("version") != 2) { close(); status("Protocol version mismatch"); return@post }; connected = true; retries = 0; status("Listening · connected") }
+                        if (value.optString("type") == "hello") {
+                            if (value.optInt("version") != 2) {
+                                socket = null; webSocket.cancel(); stopped("Protocol version mismatch"); return@post
+                            }
+                            connected = true; retries = 0; status("Listening · connected")
+                        }
                         receive(value)
                     } catch (error: Exception) { status("Connection message error: ${error.message}") }
                 }
@@ -55,8 +61,7 @@ class OrchidConnection(settings: ConnectionSettings, private val status: (String
             handler.removeCallbacksAndMessages(null)
             if (!active) { status("Stopped"); return@post }
             if (rejected || retries == 3) {
-                active = false
-                status(if (rejected) message else "$message · stopped after 3 retries · tap Start listening")
+                stopped(if (rejected) message else "$message · stopped after 3 retries · tap Start listening")
             } else {
                 retries++
                 status("$message · retry $retries of 3")
@@ -64,6 +69,10 @@ class OrchidConnection(settings: ConnectionSettings, private val status: (String
             }
         }
     }
+    private fun stopped(message: String) {
+        active = false; connected = false; handler.removeCallbacksAndMessages(null)
+        status(message); onStopped(message)
+    }
     fun send(value: JSONObject): Boolean = connected && socket?.send(value.toString()) == true
-    fun close() { active = false; connected = false; handler.removeCallbacksAndMessages(null); socket?.close(1000, "Conversation ended"); socket = null; client.dispatcher.executorService.shutdown() }
+    fun close() { active = false; connected = false; handler.removeCallbacksAndMessages(null); socket?.cancel(); socket = null; client.connectionPool.evictAll(); client.dispatcher.executorService.shutdown() }
 }
