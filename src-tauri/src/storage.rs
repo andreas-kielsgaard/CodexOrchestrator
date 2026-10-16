@@ -2372,3 +2372,6 @@ mod session_organization_migration_tests {
         assert!(open_active_database(&path).is_ok());
     }
 }
+
+#[cfg(test)]
+mod profile_migration_tests;

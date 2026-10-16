@@ -222,10 +222,11 @@ pub(crate) async fn create_capability_profile(
 #[tauri::command]
 pub(crate) async fn update_capability_profile(
     state: State<'_, CapabilityProfileTauriState>,
+    synchronization:State<'_,crate::device_connection::DefinitionSyncState>,
     input: UpdateCapabilityProfileInput,
 ) -> Result<CapabilityProfile, String> {
     let service = state.service.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let result=tauri::async_runtime::spawn_blocking(move || {
         service
             .update_with_routes(
                 &input.capability_profile_id,
@@ -239,22 +240,27 @@ pub(crate) async fn update_capability_profile(
             .map_err(|error| error.to_string())
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())??;
+    synchronization.changed("capability_profile",&result.capability_profile_id,serde_json::to_value(&result).map_err(|e|e.to_string())?);
+    Ok(result)
 }
 
 #[tauri::command]
 pub(crate) async fn delete_capability_profile(
     state: State<'_, CapabilityProfileTauriState>,
+    synchronization:State<'_,crate::device_connection::DefinitionSyncState>,
     input: CapabilityProfileIdInput,
 ) -> Result<(), String> {
     let service = state.service.clone();
+    let id=input.capability_profile_id.clone();
     tauri::async_runtime::spawn_blocking(move || {
         service
             .delete(&input.capability_profile_id)
             .map_err(|error| error.to_string())
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())??;
+    synchronization.changed("capability_profile",&id,serde_json::Value::Null);Ok(())
 }
 
 #[cfg(test)]

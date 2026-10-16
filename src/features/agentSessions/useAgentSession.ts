@@ -352,7 +352,7 @@ export function useAgentSession(
             ]);
           if (key && key === profileRefreshKeyRef.current) return;
           profileRefreshKeyRef.current = key ?? null;
-        } else if (update.kind !== 'preparation_updated') return;
+        } else if (update.kind !== 'preparation_updated' && update.kind !== 'replica_updated') return;
         try {
           const [prepared, current] = await Promise.all([
             options.preparedExecution && options.execution?.client.loadPreparation
@@ -372,7 +372,7 @@ export function useAgentSession(
         }
         return;
       }
-      if (update.kind !== 'queue_updated' && !invocationIdsRef.current.has(update.invocationId)) {
+      if ('invocationId' in update && !invocationIdsRef.current.has(update.invocationId)) {
         return;
       }
       try {

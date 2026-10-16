@@ -2,7 +2,7 @@
 name = "orchid-engine"
 version = "0.1.0"
 edition = "2021"
-description = "Headless Orchid execution engine and SSH stdio host"
+description = "Orchid provider and workspace engine, with legacy SSH compatibility"
 
 [dependencies]
 chrono = { version = "0.4", features = ["clock", "serde"] }

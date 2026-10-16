@@ -13,6 +13,8 @@
     "build": "node scripts/build-tools.mjs app",
     "build:tauri": "node scripts/build-tools.mjs app --bundle",
     "check:rust": "node scripts/build-tools.mjs check",
+    "build:services": "node scripts/build-tools.mjs build -p orchid-services --bins",
+    "test:services": "node scripts/build-tools.mjs test -p orchid-services --profile test-fast",
     "check:rust:release": "node scripts/build-tools.mjs check --release",
     "lint": "eslint .",
     "format": "prettier --write .",

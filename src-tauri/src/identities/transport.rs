@@ -59,22 +59,27 @@ pub(crate) fn create_identity(
 #[tauri::command]
 pub(crate) fn update_identity(
     state: State<'_, IdentityTauriState>,
+    synchronization:State<'_,crate::device_connection::DefinitionSyncState>,
     input: UpdateIdentityInput,
 ) -> Result<IdentityCatalogEntry, String> {
-    state.service.update(
+    let result=state.service.update(
         input.identity_id,
         input.display_name,
         input.color,
         input.shape,
-    )
+    )?;
+    synchronization.changed("identity",result.definition.id.as_str(),serde_json::to_value(&result).map_err(|e|e.to_string())?);
+    Ok(result)
 }
 
 #[tauri::command]
 pub(crate) fn delete_identity(
     state: State<'_, IdentityTauriState>,
+    synchronization:State<'_,crate::device_connection::DefinitionSyncState>,
     input: DeleteIdentityInput,
 ) -> Result<(), String> {
-    state.service.delete(&input.identity_id)
+    state.service.delete(&input.identity_id)?;
+    synchronization.changed("identity",input.identity_id.as_str(),serde_json::Value::Null);Ok(())
 }
 
 #[cfg(test)]

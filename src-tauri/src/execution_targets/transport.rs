@@ -42,10 +42,13 @@ pub(crate) struct RuntimeQuery {
 }
 
 #[tauri::command]
-pub(crate) fn list_execution_target_devices(
+pub(crate) async fn list_execution_target_devices(
     state: State<'_, ExecutionTargetTauriState>,
 ) -> Result<Vec<ConfiguredExecutionDevice>, String> {
-    state.0.devices()
+    let service = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || service.attached_devices())
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -54,7 +57,7 @@ pub(crate) async fn list_execution_worktree_choices(
     scope: WorktreeChoiceScope,
 ) -> Result<Vec<RepositoryWorktreeChoices>, String> {
     let service = state.0.clone();
-    tauri::async_runtime::spawn_blocking(move || service.worktree_choices(&scope))
+    tauri::async_runtime::spawn_blocking(move || service.attached_worktree_choices(&scope))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -66,11 +69,12 @@ pub(crate) async fn list_session_execution_targets(
 ) -> Result<Vec<DeviceWorktreeTargets>, String> {
     let service = state.0.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        service.targets(&input.repository_id, &input.branch_ref)
+        service.attached_targets(&input.repository_id, &input.branch_ref)
     })
     .await
     .map_err(|e| e.to_string())?
 }
+
 #[tauri::command]
 pub(crate) async fn load_execution_target_runtime(
     state: State<'_, ExecutionTargetTauriState>,
@@ -90,9 +94,17 @@ pub(crate) fn list_repository_device_locations(
     state.0.locations.list()
 }
 #[tauri::command]
-pub(crate) fn save_repository_device_location(
+pub(crate) async fn save_repository_device_location(
     state: State<'_, ExecutionTargetTauriState>,
+    sessions: State<'_, crate::agent_sessions::transport::AgentSessionTauriState>,
     input: RepositoryDeviceLocation,
 ) -> Result<(), String> {
-    state.0.locations.save(input)
+    let service = state.0.clone();
+    let commands = sessions.commands()?;
+    tauri::async_runtime::spawn_blocking(move||{
+        if commands.remote.as_ref().and_then(|r|r.devices().ok()).is_some_and(|rows|rows.iter().any(|(d,_)|d.id==input.device_id)) {
+            commands.execute(&input.device_id,crate::agent_sessions::client::HostCommand{method:"device.registerRepository".into(),input:serde_json::json!({"repositoryId":input.repository_id,"path":input.repository_root})})?;
+        }
+        service.locations.save(input)
+    }).await.map_err(|e|e.to_string())?
 }

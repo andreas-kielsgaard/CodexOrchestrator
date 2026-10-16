@@ -1,4 +1,1 @@
-mod contract;
-mod handles;
-pub(crate) use contract::*;
-pub(crate) use handles::*;
+pub(crate) use orchid_core::otp_api::*;

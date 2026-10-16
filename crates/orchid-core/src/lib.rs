@@ -1,0 +1,32 @@
+//! Shared Orchid application services, independent of the desktop shell.
+pub mod agent_cli_updates;
+pub mod agent_sessions;
+pub mod background;
+pub mod composition;
+pub mod devices;
+pub mod execution_configuration;
+pub mod execution_devices;
+pub mod execution_targets;
+pub mod git_process;
+pub mod harness_engine;
+pub mod identities;
+pub mod instance;
+pub mod orchid_control;
+pub mod otp_api;
+pub mod otp_host;
+pub mod otp_packages;
+pub mod persistence;
+pub mod product_database;
+pub mod product_home;
+pub mod repository_catalog;
+pub mod repository_context;
+pub mod repository_discovery;
+pub mod runtime;
+pub mod schema;
+pub mod session_events;
+pub mod session_navigation;
+pub mod skills;
+#[cfg(test)]
+mod storage;
+pub mod synchronization;
+pub mod workflows;

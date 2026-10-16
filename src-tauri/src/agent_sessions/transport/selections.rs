@@ -46,16 +46,12 @@ pub(crate) async fn load_pinned_agent_session_profile(
     state: State<'_, super::AgentSessionTauriState>,
     input: LoadPinnedSessionProfileInput,
 ) -> Result<PinnedAgentSessionProfileDto, String> {
-    let application = state.application.clone();
+    let application = state.queries.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let pinned = application
-            .load_pinned_session_profile(LoadPinnedSessionProfileQuery {
-                session_id: input.session_id,
-            })
-            .map_err(|error| error.to_string())?;
+        let history = application.load_session(&input.session_id).map_err(|e|e.to_string())?;
         Ok(PinnedAgentSessionProfileDto {
-            session_id: pinned.session_id,
-            creation_resolution: pinned.creation_resolution,
+            session_id: input.session_id,
+            creation_resolution: history.session.session_profile.ok_or("This session has no current profile")?,
         })
     })
     .await
@@ -136,14 +132,12 @@ pub(crate) async fn load_current_agent_session_profile(
     state: State<'_, super::AgentSessionTauriState>,
     input: LoadPinnedSessionProfileInput,
 ) -> Result<PinnedAgentSessionProfileDto, String> {
-    let application = state.application.clone();
+    let application = state.queries.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let profile = application
-            .load_current_session_profile(&input.session_id)
-            .map_err(|e| e.to_string())?;
+        let profile=application.current_profile(&input.session_id).map_err(|e|e.to_string())?;
         Ok(PinnedAgentSessionProfileDto {
-            session_id: profile.session_id,
-            creation_resolution: profile.creation_resolution,
+            session_id: input.session_id,
+            creation_resolution: profile,
         })
     })
     .await

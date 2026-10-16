@@ -7,6 +7,7 @@ export interface ExecutionBindingDto {
   readonly configurationRef: string;
   readonly connection:
     | { readonly kind: 'local' }
+    | { readonly kind: 'device' }
     | { readonly kind: 'ssh'; readonly target: string; readonly hostExecutable: string };
 }
 /** The durable identity of an execution route: a device, an agent provider and its configuration. */

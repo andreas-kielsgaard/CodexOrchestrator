@@ -27,6 +27,8 @@ import { SessionQueuePanel } from './SessionQueuePanel';
 import { SessionDeviceActivityList } from './SessionDeviceActivityList';
 import { SessionTargetDialog } from './SessionTargetDialog';
 import { DeviceContinuationDialog } from './DeviceContinuationDialog';
+import { ForkConversationDialog } from './ForkConversationDialog';
+import { useSessionContinuation } from './useSessionContinuation';
 import { legacyHarnessRoleLabel } from '../../application/identities/legacyAgentIdentityAdapter';
 import type {
   SessionNavigationCommandRequest,
@@ -202,6 +204,7 @@ export function StandaloneAgentSessionScreen({
     queueEntry?: SessionQueueEntryViewDto;
   } | null>(null);
   const [deviceContinuationOpen, setDeviceContinuationOpen] = useState(false);
+  const [forkOpen, setForkOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [localSelection, setLocalSelection] = useState<SessionNavigationSelection>({
     kind: 'initial',
@@ -222,6 +225,7 @@ export function StandaloneAgentSessionScreen({
   );
   const collection = useAgentSessionCollection(client, navigationClient);
   const selectedSessionId = sessionIdOf(selection);
+  const continuation = useSessionContinuation(client, selectedSessionId);
   const draftId = selection.kind === 'draft' ? selection.draftId : undefined;
   const draftFolderTarget = selection.kind === 'draft' ? selection.folderTarget : null;
   const draftRepositoryId =
@@ -599,7 +603,7 @@ export function StandaloneAgentSessionScreen({
               )
             ? `Reasoning ${view.selection.reasoningMode} is unavailable for the selected model.`
             : undefined;
-  const sendUnavailableReason = selectionError ?? view.sendUnavailableReason;
+  const sendUnavailableReason = continuation?.requiresFork ? (continuation.reason ?? 'Fork this conversation to continue.') : selectionError ?? view.sendUnavailableReason;
   const workspaceChoice = targetDraft.selection?.workspace;
   const pending = Boolean(
     targetDraft.selection &&
@@ -634,7 +638,7 @@ export function StandaloneAgentSessionScreen({
         options={view.selection}
         capabilities={capabilities}
         workspaceLabel={targetDraft.workspaceLabel}
-        pending={pending}
+        pending={pending || Boolean(continuation?.requiresFork)}
         onProfile={targetDraft.chooseProfile}
         onDevice={() => setDeviceContinuationOpen(true)}
         onWorktree={() => setTargetPicker({ deviceId: targetDraft.deviceId ?? undefined })}
@@ -648,7 +652,7 @@ export function StandaloneAgentSessionScreen({
       steeringEntries={session.steeringQueue}
       controller={session}
       onChooseTarget={(queueEntry) =>
-        setTargetPicker({
+        !continuation?.requiresFork && setTargetPicker({
           deviceId: queueEntry.targetOperation?.request.destination.execution.deviceId,
           queueEntry,
         })
@@ -682,9 +686,9 @@ export function StandaloneAgentSessionScreen({
           composerToolbar={toolbar}
           deviceActivityPanel={deviceActivityPanel}
           queuePanel={queuePanel}
-          composerDialog={composerDialog}
+          composerDialog={<>{continuation?.fork && <p>Forked from <button type="button" onClick={() => onCreated(continuation.fork!.sourceSessionId)}>source conversation</button>. Source worktree changes were not copied.</p>}{continuation?.requiresFork && <div role="status"><p>{continuation.reason}</p>{client.forkConversation && executionTargetClient && <button type="button" onClick={() => setForkOpen(true)}>Fork to a new target</button>}</div>}{composerDialog}</>}
           targetSource={
-            executionTargetClient && branchSource && profileClient
+            executionTargetClient && branchSource && profileClient && !continuation?.requiresFork
               ? {
                   contextKey: selectionKey(selection),
                   sessionId: selectedSessionId ?? undefined,
@@ -790,6 +794,7 @@ export function StandaloneAgentSessionScreen({
           }}
         />
       )}
+      {forkOpen && selectedSessionId && executionTargetClient && <ForkConversationDialog sourceId={selectedSessionId} sessions={client} targets={executionTargetClient} onCreated={onCreated} onClose={() => setForkOpen(false)} />}
       {deviceContinuationOpen && executionTargetClient && branchSource && (
         <DeviceContinuationDialog
           client={executionTargetClient}

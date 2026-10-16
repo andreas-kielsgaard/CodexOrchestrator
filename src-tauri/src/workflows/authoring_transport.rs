@@ -95,32 +95,41 @@ pub(crate) fn create_workflow_recipe(
 #[tauri::command]
 pub(crate) fn save_workflow_recipe_draft(
     state: State<'_, WorkflowAuthoringTauriState>,
+    sync: State<'_, crate::device_connection::DefinitionSyncState>,
     input: SaveWorkflowRecipeDraftInput,
 ) -> Result<WorkflowRecipeState, String> {
-    state.service.save_draft(input.draft)
+    let saved = state.service.save_draft(input.draft)?;
+    sync.changed("workflow", &saved.draft.recipe_id, serde_json::to_value(&saved).map_err(|e|e.to_string())?);
+    Ok(saved)
 }
 
 #[tauri::command]
 pub(crate) fn copy_workflow_node_configuration(
     state: State<'_, WorkflowAuthoringTauriState>,
+    sync: State<'_, crate::device_connection::DefinitionSyncState>,
     input: CopyWorkflowNodeConfigurationInput,
 ) -> Result<WorkflowRecipeState, String> {
-    state.service.copy_node_configuration(
+    let saved = state.service.copy_node_configuration(
         &input.recipe_id,
         input.expected_revision,
         &input.source_node_id,
         &input.destination_node_id,
-    )
+    )?;
+    sync.changed("workflow", &saved.draft.recipe_id, serde_json::to_value(&saved).map_err(|e|e.to_string())?);
+    Ok(saved)
 }
 
 #[tauri::command]
 pub(crate) fn activate_workflow_recipe(
     state: State<'_, WorkflowAuthoringTauriState>,
+    sync: State<'_, crate::device_connection::DefinitionSyncState>,
     input: ActivateWorkflowRecipeInput,
 ) -> Result<WorkflowRecipeState, String> {
-    state
+    let saved = state
         .service
-        .activate_revision(&input.recipe_id, input.expected_revision)
+        .activate_revision(&input.recipe_id, input.expected_revision)?;
+    sync.changed("workflow", &saved.draft.recipe_id, serde_json::to_value(&saved).map_err(|e|e.to_string())?);
+    Ok(saved)
 }
 
 #[tauri::command]

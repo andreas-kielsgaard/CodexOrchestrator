@@ -12,6 +12,7 @@ import { OtpConfigurationPanel } from './OtpConfigurationPanel';
 import { DeviceSetupOverview, InferenceSourceOverview } from './ExecutionSetupOverview';
 import { AgentCliUpdateNotice } from './AgentCliUpdateNotice';
 import './technicalSettings.css';
+import { DeviceSynchronizationSettings } from './DeviceSynchronizationSettings';
 export function TechnicalSettingsScreen({
   nativeClient,
   claudeClient,
@@ -99,6 +100,7 @@ export function TechnicalSettingsScreen({
         </nav>
       </header>
       <div className="technical-settings__content">
+        {section === 'devices' && <DeviceSynchronizationSettings />}
         {cliUpdateClient ? <AgentCliUpdateNotice client={cliUpdateClient} /> : null}
         {section === 'devices' && executionClient ? (
           <DeviceSetupOverview

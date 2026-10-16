@@ -1,0 +1,693 @@
+//! Resolve the destination, establish native readiness, then release the accepted turn.
+use super::*;
+use crate::agent_sessions::application::delivery::context::{handoff_context, Handoff};
+use crate::agent_sessions::application::update_sink::{
+    DeviceActivityRuntimeUpdateSink, PersistedRuntimeUpdateSink,
+};
+use crate::execution_configuration::{
+    DirectUserInvocationRequest, NodeProfile, SessionCreationRequest, SessionProfileResolver,
+};
+impl AgentSessionApplication {
+    pub(super) fn run_preparation(
+        &self,
+        id: &AgentInvocationId,
+        cancel: &AtomicBool,
+    ) -> Result<(), AgentSessionApplicationError> {
+        let mut p = self
+            .repository
+            .preparation(id)
+            .map_err(AgentSessionApplicationError::repository)?
+            .ok_or_else(|| AgentSessionApplicationError::not_found("Preparation not found"))?;
+        let history = self.load_session(&p.session_id)?;
+        if p.pinned_delivery {
+            return self.run_pinned_preparation(p, cancel);
+        }
+        let session = history.session.clone();
+        // Queue order owns the target. Refresh these source facts only when the entry reaches the
+        // head so a drag across a target operation has concrete execution semantics.
+        p.source_target = session.execution_target.clone();
+        p.source_binding = session.runtime_binding.clone();
+        self.save_progress(&p)?;
+        let endpoints = self.endpoints.as_ref().ok_or_else(|| {
+            AgentSessionApplicationError::invalid("Execution endpoints unavailable")
+        })?;
+        let profiles = self.capability_profiles.as_ref().ok_or_else(|| {
+            AgentSessionApplicationError::invalid("Capability Profiles unavailable")
+        })?;
+        let targets = self.execution_target_service.as_ref().ok_or_else(|| {
+            AgentSessionApplicationError::invalid("Execution targets unavailable")
+        })?;
+        p.phase = PreparationPhase::Preparing;
+        p.error = None;
+        p.can_retry = false;
+        self.save_progress(&p)?;
+        Self::check_preparation_cancel(cancel)?;
+        let mut selection = match &p.selection {
+            Some(selection) => selection.clone(),
+            None => match &session.execution_target {
+                Some(target) => SessionExecutionSelection {
+                    capability_profile_id: target.capability_profile_id.clone(),
+                    capability_profile_revision: target.capability_profile_revision,
+                    execution: target.execution.clone(),
+                    workspace: SessionWorkspaceSelection::Existing {
+                        target: target.clone(),
+                    },
+                },
+                None => {
+                    let profile = profiles
+                        .default_profile()
+                        .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
+                    SessionExecutionSelection {
+                        capability_profile_id: profile.capability_profile_id.clone(),
+                        capability_profile_revision: profile.revision,
+                        execution: profile.execution.clone(),
+                        workspace: SessionWorkspaceSelection::Auxiliary,
+                    }
+                }
+            },
+        };
+        if let Some(profile) = &p.requested_capability_profile {
+            selection.capability_profile_id = profile.id.clone();
+            selection.capability_profile_revision = profile.revision;
+            let capability = profiles
+                .read(&profile.id)
+                .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
+            let device_id = &selection.execution.device_id;
+            let execution = capability
+                .default_route()
+                .map(|route| &route.execution)
+                .unwrap_or(&capability.execution);
+            selection.execution = if execution.device_id == *device_id {
+                execution.clone()
+            } else {
+                capability.route_policies.iter().find(|route| route.execution.device_id == *device_id)
+                    .map(|route| route.execution.clone()).ok_or_else(|| AgentSessionApplicationError::conflict("Selected Capability Profile has no route on the current queue destination"))?
+            };
+        }
+        let workspace_label = if matches!(
+            selection.workspace,
+            SessionWorkspaceSelection::Create { .. }
+        ) {
+            "Create confirmed worktree"
+        } else {
+            "Resolve working folder"
+        };
+        // The provider follows from the device and provider-reported model catalogue. Capability
+        // Profile model ranges are preferences for authoring, not a runtime allow-list.
+        if let Some(model) = p.model.as_deref() {
+            let capability = profiles
+                .read(&selection.capability_profile_id)
+                .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
+            if !capability.route_policies.is_empty() {
+                let cwd = match &selection.workspace {
+                    SessionWorkspaceSelection::Existing { target } => Some(target.path.as_str()),
+                    _ => None,
+                };
+                let route = profiles
+                    .route_exposing_model(&capability, &selection.execution.device_id, model, cwd)
+                    .map_err(|error| AgentSessionApplicationError::invalid(error.to_string()))?;
+                selection.execution = route.execution.clone();
+            }
+        }
+        selection.execution = endpoints
+            .freeze_binding(selection.execution.clone())
+            .map_err(AgentSessionApplicationError::invalid)?;
+        let binding_owner = self
+            .repository
+            .current_provider_binding_owner(&session.id)
+            .map_err(AgentSessionApplicationError::repository)?;
+        let source = if p.source_binding.external_context_id.is_some() {
+            let mut source = binding_owner
+                .as_ref()
+                .map(|owner| owner.execution.clone())
+                .or_else(|| {
+                    p.source_target
+                        .as_ref()
+                        .map(|target| target.execution.clone())
+                })
+                .unwrap_or_default();
+            if p.source_target.is_none() {
+                if let Some(preparation) = self.launch_preparation(&source.provider) {
+                    if let Some(reference) = preparation
+                        .bound_configuration_ref(&session.id)
+                        .map_err(AgentSessionApplicationError::invalid)?
+                    {
+                        source.configuration_ref = reference;
+                    }
+                }
+            }
+            Some((
+                endpoints
+                    .freeze_binding(source)
+                    .map_err(AgentSessionApplicationError::invalid)?,
+                binding_owner
+                    .as_ref()
+                    .and_then(|owner| owner.workspace.clone())
+                    .or_else(|| {
+                        p.source_target
+                            .as_ref()
+                            .map(crate::agent_sessions::domain::ProviderWorkspaceIdentity::from)
+                    }),
+            ))
+        } else {
+            None
+        };
+        let mut required = vec![
+            ("workspace", workspace_label),
+            ("configuration", "Resolve execution settings"),
+        ];
+        let provider_update_pending = !selection.execution.is_remote()
+            && self
+                .provider_update_readiness
+                .as_ref()
+                .is_some_and(|readiness| readiness.is_updating(&selection.execution.provider));
+        if provider_update_pending {
+            required.insert(1, ("provider-update", "Finish agent tool update"));
+        }
+        required.extend([
+            ("conversation", "Prepare conversation"),
+            ("delivery", "Deliver submitted prompt"),
+        ]);
+        p.steps = required
+            .into_iter()
+            .map(|(id, label)| {
+                p.steps
+                    .iter()
+                    .find(|step| step.id == id)
+                    .cloned()
+                    .unwrap_or_else(|| PreparationStep {
+                        id: id.into(),
+                        label: label.into(),
+                        status: PreparationStepStatus::Pending,
+                        error: None,
+                    })
+            })
+            .collect();
+        self.save_progress(&p)?;
+        if p.resolved_target.is_none() {
+            self.step(
+                &mut p,
+                "workspace",
+                workspace_label,
+                PreparationStepStatus::Running,
+            )?;
+        }
+        if p.resolved_target.is_none() {
+            let existing_auxiliary = session.execution_target.as_ref().filter(|target| {
+                target.repository_id.is_empty()
+                    && target.execution.device_id == selection.execution.device_id
+                    && target.execution.connection == selection.execution.connection
+            });
+            let target = if matches!(selection.workspace, SessionWorkspaceSelection::Auxiliary)
+                && existing_auxiliary.is_some()
+            {
+                let mut target = existing_auxiliary.unwrap().clone();
+                target.execution = selection.execution.clone();
+                target.capability_profile_id = selection.capability_profile_id.clone();
+                target.capability_profile_revision = selection.capability_profile_revision;
+                target
+            } else if session.execution_target.is_none()
+                && p.resolved_working_directory.is_some()
+                && !selection.execution.is_remote()
+                && matches!(selection.workspace, SessionWorkspaceSelection::Auxiliary)
+            {
+                SessionExecutionTarget {
+                    capability_profile_id: selection.capability_profile_id.clone(),
+                    capability_profile_revision: selection.capability_profile_revision,
+                    execution: selection.execution.clone(),
+                    repository_id: String::new(),
+                    branch_ref: String::new(),
+                    worktree_id: session.id.as_str().into(),
+                    path: self
+                        .prepare_working_directory(
+                            &session.id,
+                            p.resolved_working_directory.clone(),
+                        )?
+                        .ok_or_else(|| {
+                            AgentSessionApplicationError::invalid("Working folder unavailable")
+                        })?,
+                    head: None,
+                }
+            } else {
+                let key = if matches!(selection.workspace, SessionWorkspaceSelection::Auxiliary) {
+                    p.session_id.as_str()
+                } else {
+                    p.invocation_id.as_str()
+                };
+                targets
+                    .materialize_selection(&selection, key)
+                    .map_err(AgentSessionApplicationError::invalid)?
+            };
+            p.resolved_working_directory = Some(target.path.clone());
+            p.resolved_target = Some(target);
+        }
+        self.step(
+            &mut p,
+            "workspace",
+            workspace_label,
+            PreparationStepStatus::Completed,
+        )?;
+        Self::check_preparation_cancel(cancel)?;
+        if provider_update_pending {
+            self.step(
+                &mut p,
+                "provider-update",
+                "Finish agent tool update",
+                PreparationStepStatus::Running,
+            )?;
+            self.provider_update_readiness
+                .as_ref()
+                .expect("provider update readiness was checked")
+                .wait_until_ready(&selection.execution.provider)
+                .map_err(AgentSessionApplicationError::invalid)?;
+            Self::check_preparation_cancel(cancel)?;
+            self.step(
+                &mut p,
+                "provider-update",
+                "Finish agent tool update",
+                PreparationStepStatus::Completed,
+            )?;
+        }
+        let destination = p.resolved_target.as_ref().expect("materialized").clone();
+        let conversation = self.plan_conversation(&history, &p, source, &destination)?;
+        p.source_provider_binding = conversation.source_provider_binding.clone();
+        let capability = profiles
+            .read(&selection.capability_profile_id)
+            .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
+        let profile_routes = if capability.route_policies.is_empty() {
+            vec![capability.execution.clone()]
+        } else {
+            capability
+                .route_policies
+                .iter()
+                .map(|route| route.execution.clone())
+                .collect()
+        };
+        let mut in_profile = false;
+        for execution in profile_routes {
+            in_profile |= endpoints
+                .freeze_binding(execution)
+                .map_err(AgentSessionApplicationError::invalid)?
+                == destination.execution;
+        }
+        if capability.revision != selection.capability_profile_revision || !in_profile {
+            return Err(AgentSessionApplicationError::conflict(
+                "Capability Profile changed during setup",
+            ));
+        }
+        self.step(
+            &mut p,
+            "configuration",
+            "Resolve execution settings",
+            PreparationStepStatus::Running,
+        )?;
+        let runtime_profile = profiles
+            .runtime_for_binding(&destination.execution, Some(&destination.path))
+            .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
+        let session_skill_inputs = self
+            .compile_capability_skill_inputs(
+                &capability,
+                &destination.execution,
+                Some(&destination.path),
+            )
+            .map_err(AgentSessionApplicationError::invalid)?;
+        let creation = SessionProfileResolver::resolve_snapshot(
+            runtime_profile.clone(),
+            SessionCreationRequest {
+                contract_version: 1,
+                agent_mcp_configuration: Default::default(),
+                node_profile: NodeProfile {
+                    contract_version: 1,
+                    allowed_capabilities: super::super::configuration::default_node_capabilities(
+                        &capability,
+                    ),
+                    pinned_defaults: Default::default(),
+                },
+                capability_profile: capability,
+                session_skill_inputs,
+            },
+        )
+        .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
+        let pinned_skill_inputs = creation.session_profile().session_skill_inputs().to_vec();
+        let resolution = SessionProfileResolver::resolve_direct_user_snapshot(
+            runtime_profile,
+            &creation,
+            DirectUserInvocationRequest {
+                contract_version: 1,
+                model: p.model.clone(),
+                reasoning_mode: p.reasoning_mode.clone(),
+                sandbox_mode: p.sandbox_mode,
+            },
+        )
+        .map_err(|e| AgentSessionApplicationError::invalid(e.to_string()))?;
+        p.current_resolution = Some(creation);
+        p.resolution = Some(resolution.clone());
+        self.step(
+            &mut p,
+            "configuration",
+            "Resolve execution settings",
+            PreparationStepStatus::Completed,
+        )?;
+        Self::check_preparation_cancel(cancel)?;
+        let runtime = if let Some(service) = &self.execution_target_service {
+            service
+                .runtime(&destination.execution)
+                .map_err(AgentSessionApplicationError::invalid)?
+        } else {
+            endpoints
+                .runtime(&destination.execution)
+                .map_err(AgentSessionApplicationError::invalid)?
+        };
+        let requested = runtime_options(&resolution.selections);
+        let resume_context = p
+            .prepared_binding
+            .as_ref()
+            .and_then(|b| b.external_context_id.clone())
+            .or(conversation.continued.as_ref().map(|(_, id)| id.clone()));
+        let mode = if resume_context.is_some() {
+            RuntimeInvocationMode::Resume
+        } else {
+            RuntimeInvocationMode::Start
+        };
+        let preflight = runtime
+            .preflight_invocation(mode, &requested)
+            .map_err(AgentSessionApplicationError::runtime)?;
+        let selected_skills = self
+            .product_skills
+            .resolve_inputs(&pinned_skill_inputs)
+            .map_err(AgentSessionApplicationError::invalid)?;
+        let mut extension = reasoning_launch_extension(&resolution.selections).unwrap_or_default();
+        extension.skill_inputs = selected_skills;
+        extension = super::super::configuration::pinned_exposure_extension(
+            p.current_resolution.as_ref().expect("resolved creation"),
+            extension,
+            &self.product_skills,
+        )
+        .map_err(AgentSessionApplicationError::invalid)?;
+        let mut extension = Some(extension);
+        if !destination.execution.is_remote() {
+            if let Some(preparation) = self.launch_preparation(&destination.execution.provider) {
+                extension = Some(
+                    preparation
+                        .prepare_destination_launch(
+                            &destination.execution.configuration(),
+                            &p.session_id,
+                            &p.invocation_id,
+                            resume_context.is_some(),
+                            extension,
+                        )
+                        .map_err(AgentSessionApplicationError::invalid)?,
+                );
+            }
+            if let Some(authority) = self.session_harness_launch_authority.as_ref() {
+                extension = authority
+                    .prepare_resolved_launch(
+                        &p.session_id,
+                        &p.invocation_id,
+                        p.current_resolution.as_ref(),
+                        extension,
+                    )
+                    .map_err(AgentSessionApplicationError::invalid)?;
+            }
+        }
+        let invocation = self
+            .repository
+            .get_invocation(id)
+            .map_err(AgentSessionApplicationError::repository)?
+            .ok_or_else(|| AgentSessionApplicationError::not_found("Invocation not found"))?;
+        if !destination.execution.is_remote() {
+            if let Some(extension) = extension.as_mut() {
+                self.apply_skill_mentions(
+                    &destination.execution.configuration(),
+                    Some(&destination.path),
+                    &invocation.submitted_text,
+                    true,
+                    extension,
+                );
+            }
+        }
+        let caller = extension
+            .as_mut()
+            .and_then(|extension| extension.initial_prompt_prefix.take());
+        p.execution_snapshot = Some(
+            crate::agent_sessions::preparation::InvocationExecutionSnapshot {
+                target: destination.clone(),
+                working_directory: destination.path.clone(),
+                session_policy: p
+                    .current_resolution
+                    .clone()
+                    .expect("resolved creation snapshot"),
+                invocation_resolution: resolution.clone(),
+                managed_mcp_servers: extension
+                    .as_ref()
+                    .map(|extension| {
+                        extension
+                            .managed_mcp_servers
+                            .iter()
+                            .map(|server| {
+                                crate::agent_sessions::preparation::InvocationManagedMcpSnapshot {
+                                    name: server.name.clone(),
+                                    enabled_tools: server.enabled_tools.clone(),
+                                    required: server.required,
+                                }
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                invoked_skill_ids: extension
+                    .as_ref()
+                    .map(|extension| extension.invoked_skill_ids.clone())
+                    .unwrap_or_default(),
+                harness_version: session.harness_version.clone(),
+            },
+        );
+        if let Some(prefix) = &caller {
+            self.repository
+                .record_initial_prompt_prefix(&p.session_id, prefix)
+                .map_err(AgentSessionApplicationError::repository)?;
+        }
+        let initial = match conversation.handoff {
+            Handoff::Full => self
+                .repository
+                .initial_prompt_prefix(&p.session_id)
+                .map_err(AgentSessionApplicationError::repository)?,
+            _ => None,
+        };
+        let mut context = p.context.clone();
+        context.extend(handoff_context(
+            &history,
+            &p.invocation_id,
+            &conversation.handoff,
+            initial.as_ref(),
+            caller,
+        ));
+        let content = InvocationContent {
+            primary_query: invocation.submitted_text.clone(),
+            context,
+        };
+        let mut persisted_sink: Arc<dyn AgentRuntimeUpdateSink> =
+            Arc::new(super::super::queue::QueueDispatchRuntimeUpdateSink::new(
+                Arc::new(PersistedRuntimeUpdateSink::new(
+                    self.repository.clone(),
+                    self.notifier.clone(),
+                    self.clock.clone(),
+                    self.ids.clone(),
+                    self.update_lanes.clone(),
+                )),
+                self.clone(),
+            ));
+        persisted_sink = Arc::new(
+            super::super::steering_queue::SteeringRuntimeUpdateSink::new(
+                persisted_sink,
+                self.clone(),
+            ),
+        );
+        if let Some(targets) = &self.execution_target_service {
+            if destination.execution.is_remote() {
+                persisted_sink = Arc::new(DeviceActivityRuntimeUpdateSink::new(
+                    persisted_sink,
+                    targets.devices.clone(),
+                    destination.execution.device_id.clone(),
+                ));
+            }
+        }
+        let sink = Arc::new(PreparationUpdateGate {
+            inner: persisted_sink,
+            buffer: Mutex::new(Some(Vec::new())),
+        });
+        self.step(
+            &mut p,
+            "conversation",
+            "Prepare conversation",
+            PreparationStepStatus::Running,
+        )?;
+        let ready = runtime
+            .prepare_invocation(
+                RuntimeInvocationRequest { attachments: invocation.attachments.clone(), session_id: p.session_id.clone(),
+                    invocation_id: id.clone(),
+                    kind: if invocation.input_provenance == crate::agent_sessions::domain::AgentInvocationInputProvenance::Application
+                        && invocation.submitted_text == "/compact"
+                    {
+                        crate::agent_sessions::ports::RuntimeInvocationKind::Compact
+                    } else {
+                        crate::agent_sessions::ports::RuntimeInvocationKind::Turn
+                    },
+                    content,
+                    working_directory: Some(destination.path.clone()),
+                    options: preflight.effective_options.clone(),
+                    launch_extension: extension,
+                },
+                resume_context,
+                sink.clone(),
+            )
+            .map_err(AgentSessionApplicationError::runtime)?;
+        if let Err(e) = Self::check_preparation_cancel(cancel) {
+            let _ = runtime.cancel_invocation(id);
+            return Err(e);
+        }
+        p.resolved_working_directory = Some(ready.working_directory.clone());
+        let binding = AgentRuntimeBinding {
+            external_context_id: Some(ready.external_context_id),
+            runtime_version: session.runtime_binding.runtime_version,
+        };
+        p.prepared_binding = Some(binding.clone());
+        self.save_progress(&p)?;
+        if !destination.execution.is_remote() {
+            if let Some(preparation) = self.launch_preparation(&destination.execution.provider) {
+                preparation
+                    .commit_destination(&destination.execution.configuration(), &p.session_id)
+                    .map_err(AgentSessionApplicationError::invalid)?;
+            }
+        }
+        self.repository
+            .commit_prepared_binding(&p, binding, self.clock.now())
+            .map_err(AgentSessionApplicationError::repository)?;
+        self.step(
+            &mut p,
+            "conversation",
+            "Prepare conversation",
+            PreparationStepStatus::Completed,
+        )?;
+        self.repository
+            .mark_invocation_running(
+                id,
+                self.clock.now(),
+                preflight.effective_options,
+                self.clock.now(),
+            )
+            .map_err(AgentSessionApplicationError::repository)?;
+        let remote_activity = destination
+            .execution
+            .is_remote()
+            .then(|| destination.execution.device_id.clone());
+        if let (Some(targets), Some(device_id)) =
+            (&self.execution_target_service, remote_activity.as_deref())
+        {
+            targets
+                .synchronize_devices()
+                .map_err(AgentSessionApplicationError::invalid)?;
+            targets
+                .devices
+                .acquire_activity(device_id, "agent_invocation", id.as_str())
+                .map_err(AgentSessionApplicationError::invalid)?;
+        }
+        // Persist the boundary before transport write. A lost response never authorizes replay.
+        let delivery_gate = self.preparation_workers.slots.lock().map_err(|_| {
+            AgentSessionApplicationError::conflict("Preparation supervisor unavailable")
+        })?;
+        if let Err(error) = Self::check_preparation_cancel(cancel) {
+            drop(delivery_gate);
+            let _ = runtime.cancel_invocation(id);
+            self.release_invocation_activity(remote_activity.as_deref(), id);
+            return Err(error);
+        }
+        p.delivery_started = true;
+        p.phase = PreparationPhase::Ready;
+        self.step(
+            &mut p,
+            "delivery",
+            "Deliver submitted prompt",
+            PreparationStepStatus::Running,
+        )?;
+        drop(delivery_gate);
+        if let Err(error) = runtime.deliver_prepared_invocation(id) {
+            self.release_invocation_activity(remote_activity.as_deref(), id);
+            return Err(AgentSessionApplicationError::runtime(error));
+        }
+        if let Err(error) = self
+            .repository
+            .record_invocation_launch_accepted(id, self.clock.now())
+        {
+            self.release_invocation_activity(remote_activity.as_deref(), id);
+            return Err(AgentSessionApplicationError::repository(error));
+        }
+        if let Err(error) = sink.open() {
+            self.release_invocation_activity(remote_activity.as_deref(), id);
+            return Err(AgentSessionApplicationError::runtime(error));
+        }
+        self.notify_queue(&p.session_id);
+        self.step(
+            &mut p,
+            "delivery",
+            "Deliver submitted prompt",
+            PreparationStepStatus::Completed,
+        )?;
+        Ok(())
+    }
+
+    fn release_invocation_activity(&self, device_id: Option<&str>, id: &AgentInvocationId) {
+        if let (Some(targets), Some(device_id)) = (&self.execution_target_service, device_id) {
+            let _ = targets
+                .devices
+                .release_activity(device_id, "agent_invocation", id.as_str());
+        }
+    }
+}
+
+struct PreparationUpdateGate {
+    inner: Arc<dyn AgentRuntimeUpdateSink>,
+    buffer: Mutex<Option<Vec<(AgentInvocationId, RuntimeUpdate)>>>,
+}
+impl PreparationUpdateGate {
+    fn open(&self) -> Result<(), RuntimePortError> {
+        let mut state = self.buffer.lock().map_err(|_| {
+            RuntimePortError::new(
+                RuntimePortErrorKind::Unavailable,
+                "Preparation updates unavailable",
+            )
+        })?;
+        if let Some(events) = state.take() {
+            for (id, update) in events {
+                self.inner.emit_update(&id, update)?;
+            }
+        }
+        Ok(())
+    }
+}
+impl AgentRuntimeUpdateSink for PreparationUpdateGate {
+    fn emit_update(
+        &self,
+        id: &AgentInvocationId,
+        update: RuntimeUpdate,
+    ) -> Result<(), RuntimePortError> {
+        let mut state = self.buffer.lock().map_err(|_| {
+            RuntimePortError::new(
+                RuntimePortErrorKind::Unavailable,
+                "Preparation updates unavailable",
+            )
+        })?;
+        if let Some(events) = state.as_mut() {
+            events.push((id.clone(), update));
+            Ok(())
+        } else {
+            self.inner.emit_update(id, update)
+        }
+    }
+    fn report_delivery_failure(
+        &self,
+        id: &AgentInvocationId,
+        failure: RuntimeUpdateDeliveryFailure,
+    ) {
+        self.inner.report_delivery_failure(id, failure)
+    }
+}

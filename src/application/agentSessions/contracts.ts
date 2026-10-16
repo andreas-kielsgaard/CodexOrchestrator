@@ -266,6 +266,7 @@ export interface SendAgentSessionMessageResultDto {
 }
 
 export type AgentSessionUpdateDto =
+  | { kind: 'replica_updated'; sessionId: string }
   | { kind: 'preparation_updated'; sessionId: string; invocationId: string }
   | {
       kind: 'queue_updated';
@@ -302,6 +303,8 @@ export type RuntimeInteractionResponseDto =
   | { readonly kind: 'answer'; readonly answers: Readonly<Record<string, readonly string[]>> };
 
 export interface AgentSessionClient {
+  continuation?(sessionId: string): Promise<{ deviceId: string; online: boolean; requiresFork: boolean; reason: string | null; fork?: { sourceSessionId: string; sourceInvocationId: string | null; createdAt: string } | null }>;
+  forkConversation?(sourceSessionId: string, forkId: string, target: import('../executionTargets/contracts').SessionExecutionTargetDto): Promise<AgentSessionDto>;
   jevQueries?: import('./jevQueries').JevQueryClient;
   readonly historySource?: import('./liveHistory').AgentSessionHistorySource;
   resolveWorkingDirectory?(sessionId: string, directory: string): Promise<void>;

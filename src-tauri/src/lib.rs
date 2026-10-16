@@ -41,3 +41,5 @@ pub fn run() {
 pub fn run_harness_engine_sidecar_if_requested() -> bool {
     harness_engine::sidecar::run_if_requested()
 }
+mod device_connection;
+mod sync_settings;

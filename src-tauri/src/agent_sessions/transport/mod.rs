@@ -25,11 +25,25 @@ pub(crate) const AGENT_SESSION_UPDATE_EVENT: &str = "agent-session-update";
 
 pub(crate) struct AgentSessionTauriState {
     application: Arc<AgentSessionApplication>,
+    queries: crate::agent_sessions::queries::AgentSessionQueries,
+    commands: Option<Arc<crate::agent_sessions::client::AgentSessionCommandClient>>,
 }
 
 impl AgentSessionTauriState {
+    pub(crate) fn commands(&self)->Result<Arc<crate::agent_sessions::client::AgentSessionCommandClient>,String>{self.commands.clone().ok_or_else(||"Device routing is unavailable".into())}
     pub(crate) fn new(application: Arc<AgentSessionApplication>) -> Self {
-        Self { application }
+        Self { queries: application.queries(), application, commands:None }
+    }
+
+    pub(crate) fn with_devices(mut self,commands:Arc<crate::agent_sessions::client::AgentSessionCommandClient>)->Self {
+        self.queries=self.queries.with_replicas(commands.replicas.clone());
+        self.commands=Some(commands);self
+    }
+    pub(crate) fn with_replica_source(mut self,source:Arc<dyn orchid_core::synchronization::SessionReplicaSource>)->Self{self.queries=self.queries.with_replica_source(source);self}
+    fn command(&self,method:&str,input:impl serde::Serialize)->Result<impl FnOnce()->Result<serde_json::Value,String>+Send+'static,String>{
+        let request=crate::agent_sessions::client::HostCommand{method:method.into(),input:serde_json::to_value(input).map_err(|e|e.to_string())?};
+        let commands=self.commands.clone();let application=self.application.clone();
+        Ok(move||match commands {Some(client)=>client.execute_addressed(request),None=>crate::agent_sessions::client::dispatch(&application,request)})
     }
 
     pub(crate) fn application(&self) -> &AgentSessionApplication {
@@ -93,3 +107,4 @@ pub(crate) mod import;
 
 pub(crate) mod preparation;
 pub(crate) mod queue;
+pub(crate) mod continuation;

@@ -48,11 +48,20 @@ pub(crate) fn run() {
             })?;
             fs::create_dir_all(&app_data_dir)
                 .map_err(|error| format!("Unable to create app data directory: {error}"))?;
+            app.manage(orchid_core::instance::InstanceLease::acquire(&app_data_dir,"desktop")?);
             crate::worktree_review::review_runtime::import_compatible_controller_data(
                 &app_data_dir,
             )?;
             let database_path = crate::storage::active_database_path(&app_data_dir);
             let database = crate::product_database::open(&database_path)?;
+            app.manage(crate::sync_settings::SyncSettingsState {
+                root: app_data_dir.clone(),
+                replicas: orchid_core::synchronization::repository::ReplicaStore::new(database.clone()),
+            });
+            app.manage(crate::device_connection::DefinitionSyncState {
+                store: orchid_core::synchronization::definitions::DefinitionStore::new(database.clone()),
+                connection: crate::device_connection::load(&app_data_dir).ok().flatten(),
+            });
             let repository_catalog = Arc::new(crate::repository_catalog::RepositoryCatalog::new(
                 database.clone(),
             ));
@@ -148,7 +157,7 @@ pub(crate) fn run() {
                     voice: voice_notification.clone(),
                 });
             let sessions::SessionServices { application, imports, capability_profiles, execution_targets } = sessions::compose(
-                database.clone(), &database_path, native_profiles.clone(), claude_setups.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier, product_tools, otp_registry.catalogue().into_iter().filter(|package| !package.skill_roots.is_empty()).map(|package| (package.id, package.skill_roots)).collect(), cli_updates.clone(),
+                database.clone(), crate::agent_sessions::workspace::SessionWorkspaces::system(database_path.to_string_lossy().into_owned())?, native_profiles.clone(), claude_setups.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier, product_tools, otp_registry.catalogue().into_iter().filter(|package| !package.skill_roots.is_empty()).map(|package| (package.id, package.skill_roots)).collect(), cli_updates.clone(),
             )?;
             let voice = voice_sessions::compose(database.clone(), application.clone(), capability_profiles.clone(), repository_catalog.clone(), managed_mcp_upstreams.clone())?;
             *voice_notification.lock().map_err(|_| "Voice notifications unavailable")? = Some(Arc::downgrade(&voice));
@@ -205,9 +214,6 @@ pub(crate) fn run() {
                 ),
             );
             app.manage(imports);
-            app.manage(
-                crate::agent_sessions::transport::AgentSessionTauriState::new(application.clone()),
-            );
             let workflow_authoring = Arc::new(
                 crate::workflows::authoring_service::WorkflowAuthoringService::new(
                     Arc::new(
@@ -345,6 +351,15 @@ pub(crate) fn run() {
                 .set_button_context_scheduler(orchestration.clone())?;
             // All terminal observers and managed MCP upstreams are ready before recovery can notify.
             application.reconcile_startup().map_err(|error| error.to_string())?;
+            let device_commands = crate::device_connection::compose(
+                &app_data_dir, database.clone(), repository.clone(), application.clone(), app.handle().clone(),
+            )?;
+            let mut session_state = crate::agent_sessions::transport::AgentSessionTauriState::new(application.clone())
+                .with_devices(device_commands);
+            if let Some(connection) = crate::device_connection::load(&app_data_dir).ok().flatten() {
+                session_state = session_state.with_replica_source(Arc::new(orchid_services::host::RemoteHttpTransport(connection)));
+            }
+            app.manage(session_state);
             execution_devices.reconcile_activity_leases()?;
             execution_devices.start_idle_scheduler();
             transition
@@ -396,6 +411,11 @@ pub(crate) fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            crate::sync_settings::load_device_sync_settings,
+            crate::sync_settings::save_device_sync_settings,
+            crate::sync_settings::evict_cached_session_copies,
+            crate::agent_sessions::transport::continuation::agent_session_continuation,
+            crate::agent_sessions::transport::continuation::fork_agent_session,
             crate::voice_sessions::transport::voice_session_view,
             crate::voice_sessions::transport::configure_voice_session,
             crate::voice_sessions::transport::start_voice_session,

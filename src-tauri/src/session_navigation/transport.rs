@@ -18,8 +18,8 @@ pub(crate) struct SessionNavigationTauriState(pub(crate) Arc<SessionNavigationSe
 #[tauri::command]
 pub(crate) async fn preview_session_git_action(
     state: State<'_, SessionNavigationTauriState>,
-    input: super::git_actions::GitActionInput,
-) -> Result<super::git_actions::GitActionPreview, String> {
+    input: super::GitActionInput,
+) -> Result<super::GitActionPreview, String> {
     let service = state.0.clone();
     tauri::async_runtime::spawn_blocking(move || service.preview_git_action(&input))
         .await
@@ -29,8 +29,8 @@ pub(crate) async fn preview_session_git_action(
 pub(crate) async fn execute_session_git_action(
     app: tauri::AppHandle,
     state: State<'_, SessionNavigationTauriState>,
-    input: super::git_actions::GitActionInput,
-    expected: super::git_actions::GitActionPreview,
+    input: super::GitActionInput,
+    expected: super::GitActionPreview,
 ) -> Result<String, String> {
     let service = state.0.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -67,8 +67,8 @@ pub(crate) async fn inspect_session_worktree(
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SessionNavigationDto {
-    branches: Vec<super::branch_inventory::NavigationBranch>,
-    session_branches: Vec<super::branch_inventory::SessionBranch>,
+    branches: Vec<super::NavigationBranch>,
+    session_branches: Vec<super::SessionBranch>,
     summaries: Vec<AgentSessionSummaryDto>,
     repositories: Vec<NavigationRepository>,
     instances: Vec<NavigationInstance>,

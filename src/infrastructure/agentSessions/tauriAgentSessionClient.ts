@@ -42,19 +42,49 @@ export function createTauriAgentSessionClient(
 ): AgentSessionClient & AgentSessionProfileClient {
   const invokeCommand = dependencies.invoke ?? invoke;
   const listenForEvent = dependencies.listen ?? listen;
+  const pendingRequests = new Map<string, string>();
+  async function enqueue<T>(
+    command: string,
+    input: Record<string, unknown>,
+    identity: string,
+  ): Promise<T> {
+    const key = JSON.stringify([command, input]);
+    const id = pendingRequests.get(key) ?? crypto.randomUUID();
+    pendingRequests.set(key, id);
+    const result = await invokeCommand<T>(command, { input: { ...input, [identity]: id } });
+    pendingRequests.delete(key);
+    return result;
+  }
   const listeners = new Set<AgentSessionUpdateListener>();
   let bridgePromise: Promise<TauriUnlisten> | undefined;
 
   const ensureUpdateBridge = (): Promise<TauriUnlisten> => {
     if (!bridgePromise) {
-      bridgePromise = listenForEvent<AgentSessionUpdateDto>(AGENT_SESSION_UPDATE_EVENT, (event) => {
-        for (const listener of listeners) {
-          listener(event.payload);
-        }
-      }).catch((error: unknown) => {
-        bridgePromise = undefined;
-        throw error;
-      });
+      bridgePromise = Promise.allSettled([
+        listenForEvent<AgentSessionUpdateDto>(AGENT_SESSION_UPDATE_EVENT, (event) => {
+          for (const listener of listeners) listener(event.payload);
+        }),
+        listenForEvent<string[]>('agent-session-replicas-updated', (event) => {
+          for (const sessionId of event.payload) {
+            for (const listener of listeners) listener({ kind: 'replica_updated', sessionId });
+          }
+        }),
+      ])
+        .then((results) => {
+          const stops = results.flatMap((result) =>
+            result.status === 'fulfilled' ? [result.value] : [],
+          );
+          const failure = results.find((result) => result.status === 'rejected');
+          if (failure?.status === 'rejected') {
+            stops.forEach((stop) => stop());
+            throw failure.reason;
+          }
+          return () => stops.forEach((stop) => stop());
+        })
+        .catch((error: unknown) => {
+          bridgePromise = undefined;
+          throw error;
+        });
     }
     return bridgePromise;
   };
@@ -63,9 +93,13 @@ export function createTauriAgentSessionClient(
     invokeCommand<AgentSessionDetailsDto>('load_agent_session', { query });
 
   const core: AgentSessionClient & AgentSessionProfileClient = {
+    continuation: (sessionId) => invokeCommand('agent_session_continuation', { sessionId }),
+    forkConversation: (sourceSessionId, forkId, target) =>
+      invokeCommand('fork_agent_session', { sourceSessionId, forkId, target }),
     jevQueries: {
       list: (sessionId) => invokeCommand('list_jev_api_invocations', { sessionId }),
-      load: (sessionId, invocationId) => invokeCommand('load_jev_api_invocation', { sessionId, invocationId }),
+      load: (sessionId, invocationId) =>
+        invokeCommand('load_jev_api_invocation', { sessionId, invocationId }),
     },
     loadCurrentProfile: (sessionId) =>
       invokeCommand('load_current_agent_session_profile', { input: { sessionId } }),
@@ -84,9 +118,9 @@ export function createTauriAgentSessionClient(
     runTargetOperation: (sessionId, entryId) =>
       invokeCommand('run_agent_session_target_operation', { input: { sessionId, entryId } }),
     enqueueTargetOperation: (input) =>
-      invokeCommand('enqueue_agent_session_target_operation', { input }),
+      enqueue('enqueue_agent_session_target_operation', { ...input }, 'operationId'),
     enqueueCompaction: (sessionId) =>
-      invokeCommand('enqueue_agent_session_compaction', { input: { sessionId } }),
+      enqueue('enqueue_agent_session_compaction', { sessionId }, 'submissionId'),
     reorderQueue: (input) => invokeCommand('reorder_agent_session_queue', { input }),
     updateQueuedMessage: (input) => invokeCommand('update_queued_agent_session_message', { input }),
     updateTargetOperation: (input) =>

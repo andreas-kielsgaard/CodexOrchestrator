@@ -58,7 +58,7 @@ export function useSessionQueue({
     let unsubscribe: (() => void) | undefined;
     void client
       .subscribeUpdates((update) => {
-        if (update.kind === 'queue_updated' && update.sessionId === selectedIdRef.current)
+        if ((update.kind === 'queue_updated' || update.kind === 'replica_updated') && update.sessionId === selectedIdRef.current)
           void reloadQueue(update.sessionId).catch((error) => setError(errorMessage(error)));
       })
       .then((stop) => {

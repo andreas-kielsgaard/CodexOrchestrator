@@ -5,12 +5,12 @@ use crate::agent_sessions::{
     preparation::SessionPreparation,
 };
 use serde::{Deserialize, Serialize};
-#[derive(Deserialize)]
+#[derive(Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct PreparationQuery {
     session_id: AgentSessionId,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct PreparationAction {
     invocation_id: AgentInvocationId,
@@ -24,76 +24,32 @@ pub(crate) struct PreparedMessageAcknowledgement {
 #[tauri::command]
 pub(crate) async fn send_prepared_agent_session_message(
     state: State<'_, AgentSessionTauriState>,
-    navigation: State<'_, crate::session_navigation::transport::SessionNavigationTauriState>,
-    mut input: PreparedMessageInput,
-) -> Result<PreparedMessageAcknowledgement, String> {
-    let application = state.application.clone();
-    let navigation = navigation.0.clone();
-    let ack = tauri::async_runtime::spawn_blocking(move || {
-        if input.session_id.is_none()
-            && input.working_directory.is_none()
-            && input.execution_selection.as_ref().is_none_or(|selection| {
-                !selection.execution.is_remote()
-                    && matches!(
-                        selection.workspace,
-                        crate::execution_targets::domain::SessionWorkspaceSelection::Auxiliary
-                    )
-            })
-        {
-            if let Some(folder) = &input.folder_target {
-                input.working_directory = Some(navigation.working_directory_for_folder(folder)?);
-            }
-        }
-        application
-            .accept_prepared_message(input)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())??;
-    Ok(PreparedMessageAcknowledgement {
-        session_id: ack.session_id,
-        invocation_id: ack.invocation_id,
-    })
+    input: PreparedMessageInput,
+) -> Result<serde_json::Value, String> {
+    let command=state.command("send",input)?;
+    tauri::async_runtime::spawn_blocking(command).await.map_err(|e|e.to_string())?
 }
 #[tauri::command]
 pub(crate) async fn load_agent_session_preparation(
     state: State<'_, AgentSessionTauriState>,
     input: PreparationQuery,
-) -> Result<Option<SessionPreparation>, String> {
-    let application = state.application.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        application
-            .load_preparation(&input.session_id)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|error| error.to_string())?
+) -> Result<serde_json::Value, String> {
+    let command=state.command("preparation",input)?;
+    tauri::async_runtime::spawn_blocking(command).await.map_err(|e|e.to_string())?
 }
 #[tauri::command]
 pub(crate) async fn cancel_agent_session_preparation(
     state: State<'_, AgentSessionTauriState>,
     input: PreparationAction,
-) -> Result<(), String> {
-    let application = state.application.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        application
-            .cancel_preparation(&input.invocation_id)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|error| error.to_string())?
+) -> Result<serde_json::Value, String> {
+    let command=state.command("cancelPreparation",input)?;
+    tauri::async_runtime::spawn_blocking(command).await.map_err(|e|e.to_string())?
 }
 #[tauri::command]
 pub(crate) async fn retry_agent_session_preparation(
     state: State<'_, AgentSessionTauriState>,
     input: PreparationAction,
-) -> Result<(), String> {
-    let application = state.application.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        application
-            .retry_preparation(&input.invocation_id)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|error| error.to_string())?
+) -> Result<serde_json::Value, String> {
+    let command=state.command("retryPreparation",input)?;
+    tauri::async_runtime::spawn_blocking(command).await.map_err(|e|e.to_string())?
 }

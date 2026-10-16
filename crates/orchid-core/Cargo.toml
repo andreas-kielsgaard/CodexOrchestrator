@@ -1,0 +1,53 @@
+[package]
+name = "orchid-core"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+live-tests = []
+test-support = []
+
+[dependencies]
+orchid-engine = { path = "../orchid-engine" }
+chrono = { version = "0.4", features = ["clock", "serde"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+schemars = "1"
+rmcp = { version = "=2.2.0", default-features = false, features = ["server", "macros", "transport-streamable-http-server"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
+tokio-util = "0.7"
+axum = { version = "0.8", features = ["http1", "json", "query", "tokio", "ws"], default-features = false }
+tower = "0.5"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
+futures-util = "0.3"
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+pathdiff = "0.2"
+globset = "0.4"
+regex = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_Security",
+  "Win32_Security_Cryptography",
+  "Win32_Security_Credentials",
+  "Win32_Storage_FileSystem",
+  "Win32_System_JobObjects",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Threading",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+tempfile = "3"

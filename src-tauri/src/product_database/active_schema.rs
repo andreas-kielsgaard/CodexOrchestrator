@@ -4,5 +4,6 @@ use rusqlite::Connection;
 pub(super) fn initialize(connection: &Connection) -> Result<(), String> {
     crate::storage::initialize_active_database(connection)?;
     crate::orchestration::bootstrap_transition::initialize_bootstrap_transition_schema(connection)?;
-    crate::orchestration::sprint_runner_transition::storage::initialize(connection)
+    crate::orchestration::sprint_runner_transition::storage::initialize(connection)?;
+    orchid_core::schema::initialize(connection)
 }

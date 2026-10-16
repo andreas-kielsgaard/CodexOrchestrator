@@ -29,25 +29,21 @@ pub(crate) struct SkillDetails {
 #[tauri::command]
 pub(crate) async fn read_agent_session_skill(
     state: State<'_, crate::session_navigation::transport::SessionNavigationTauriState>,
+    sessions: State<'_, super::AgentSessionTauriState>,
     input: LoadQuickFeaturesInput,
     skill_id: String,
 ) -> Result<SkillDetails, String> {
-    if input
-        .execution_target
-        .as_ref()
-        .is_some_and(|target| target.execution.is_remote())
-    {
-        return Err("Skill content is unavailable for remote sessions".into());
-    }
+    let commands=sessions.commands()?;
+    let skills=sessions.application.clone();
     let application = state.0.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let catalogue = application.load_quick_features_for_configuration(
+        let catalogue = if is_remote(&input,&commands)? {skills.synchronized_skill_choices()} else {application.load_quick_features_for_configuration(
             input.session_id.as_ref(),
             input.working_directory.as_deref(),
             input.folder_target.as_ref(),
             input.execution_target.as_ref(),
             input.configuration.as_ref(),
-        )?;
+        )?};
         let skill = catalogue
             .skills
             .into_iter()
@@ -79,17 +75,14 @@ pub(crate) async fn read_agent_session_skill(
 #[tauri::command]
 pub(crate) async fn load_agent_session_quick_features(
     state: State<'_, crate::session_navigation::transport::SessionNavigationTauriState>,
+    sessions: State<'_, super::AgentSessionTauriState>,
     input: LoadQuickFeaturesInput,
 ) -> Result<RuntimeQuickFeatures, String> {
-    if input
-        .execution_target
-        .as_ref()
-        .is_some_and(|target| target.execution.is_remote())
-    {
-        return Err("Native quick-feature discovery is unavailable for remote sessions.".into());
-    }
+    let commands=sessions.commands()?;
+    let skills=sessions.application.clone();
     let application = state.0.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        if is_remote(&input,&commands)? {return Ok(skills.synchronized_skill_choices());}
         application.load_quick_features_for_configuration(
             input.session_id.as_ref(),
             input.working_directory.as_deref(),
@@ -100,4 +93,11 @@ pub(crate) async fn load_agent_session_quick_features(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+fn is_remote(input:&LoadQuickFeaturesInput,commands:&crate::agent_sessions::client::AgentSessionCommandClient)->Result<bool,String>{
+    use crate::agent_sessions::ports::AgentSessionRepository;
+    if input.execution_target.as_ref().is_some_and(|t|t.execution.is_remote()){return Ok(true);}
+    if let Some(id)=&input.session_id{return Ok(commands.repository.get_session(id).map_err(|e|e.to_string())?.is_none()||!commands.repository.owns_execution(id).map_err(|e|e.to_string())?);}
+    Ok(false)
 }

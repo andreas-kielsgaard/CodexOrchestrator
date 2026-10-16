@@ -66,60 +66,36 @@ pub(crate) async fn create_agent_session(
 pub(crate) async fn update_agent_session_harness(
     state: State<'_, AgentSessionTauriState>,
     input: UpdateAgentSessionHarnessCommandDto,
-) -> Result<AgentSessionDto, String> {
-    let application = state.application.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        application
-            .update_session_harness(input.into())
-            .map_err(|error| error.to_string())
-    })
-    .await
-    .map_err(|error| error.to_string())?
+) -> Result<serde_json::Value, String> {
+    let command=state.command("updateHarness",input)?;
+    tauri::async_runtime::spawn_blocking(command).await.map_err(|e|e.to_string())?
 }
 
 #[tauri::command]
 pub(crate) async fn update_agent_session_identity(
     state: State<'_, AgentSessionTauriState>,
     input: UpdateAgentSessionIdentityCommandDto,
-) -> Result<AgentSessionDto, String> {
-    let application = state.application.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        application
-            .update_session_identity(input.into())
-            .map_err(|error| error.to_string())
-    })
-    .await
-    .map_err(|error| error.to_string())?
+) -> Result<serde_json::Value, String> {
+    let command=state.command("updateIdentity",input)?;
+    tauri::async_runtime::spawn_blocking(command).await.map_err(|e|e.to_string())?
 }
 
 #[tauri::command]
 pub(crate) async fn rename_agent_session(
     state: State<'_, AgentSessionTauriState>,
     input: RenameAgentSessionCommandDto,
-) -> Result<AgentSessionDto, String> {
-    let application = state.application.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        application
-            .rename_session(input.into())
-            .map_err(|error| error.to_string())
-    })
-    .await
-    .map_err(|error| error.to_string())?
+) -> Result<serde_json::Value, String> {
+    let command=state.command("rename",input)?;
+    tauri::async_runtime::spawn_blocking(command).await.map_err(|e|e.to_string())?
 }
 
 #[tauri::command]
 pub(crate) async fn update_agent_session_model_override(
     state: State<'_, AgentSessionTauriState>,
     input: UpdateAgentSessionModelOverrideCommandDto,
-) -> Result<AgentSessionDto, String> {
-    let application = state.application.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        application
-            .update_session_model_override(input.into())
-            .map_err(|error| error.to_string())
-    })
-    .await
-    .map_err(|error| error.to_string())?
+) -> Result<serde_json::Value, String> {
+    let command=state.command("updateModelOverride",input)?;
+    tauri::async_runtime::spawn_blocking(command).await.map_err(|e|e.to_string())?
 }
 
 #[tauri::command]
@@ -194,13 +170,7 @@ pub(crate) async fn send_agent_session_message(
 pub(crate) async fn cancel_agent_invocation(
     state: State<'_, AgentSessionTauriState>,
     input: CancelAgentInvocationCommandDto,
-) -> Result<AgentInvocationDto, String> {
-    let application = state.application.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        application
-            .cancel_invocation(input.into())
-            .map_err(|error| error.to_string())
-    })
-    .await
-    .map_err(|error| error.to_string())?
+) -> Result<serde_json::Value, String> {
+    let command=state.command("cancel",input)?;
+    tauri::async_runtime::spawn_blocking(command).await.map_err(|e|e.to_string())?
 }

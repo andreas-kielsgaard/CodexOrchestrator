@@ -3,13 +3,13 @@ use super::dto::AgentRuntimeEventDto;
 use super::*;
 #[tauri::command]
 pub(crate) async fn load_agent_session_event_details(
-    state: State<'_, crate::session_navigation::transport::SessionNavigationTauriState>,
+    state: State<'_, AgentSessionTauriState>,
     session_id: crate::agent_sessions::domain::AgentSessionId,
     event_id: String,
 ) -> Result<AgentRuntimeEventDto, String> {
-    let application = state.0.clone();
+    let application = state.queries.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        application.read_event_details(&session_id, &event_id)
+        application.event_details(&session_id, &event_id).map_err(|e|e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -19,7 +19,7 @@ pub(crate) async fn load_agent_session_display(
     state: State<'_, AgentSessionTauriState>,
     query: LoadAgentSessionQueryDto,
 ) -> Result<AgentSessionDetailsDto, String> {
-    let application = state.application.clone();
+    let application = state.queries.clone();
     tauri::async_runtime::spawn_blocking(move || {
         application
             .load_session_display(&query.session_id)
@@ -34,7 +34,7 @@ pub(crate) async fn list_agent_sessions(
     state: State<'_, AgentSessionTauriState>,
     query: ListAgentSessionsQueryDto,
 ) -> Result<Vec<AgentSessionSummaryDto>, String> {
-    let application = state.application.clone();
+    let application = state.queries.clone();
     tauri::async_runtime::spawn_blocking(move || {
         application
             .list_sessions(query.into())
@@ -50,7 +50,7 @@ pub(crate) async fn load_agent_session(
     state: State<'_, AgentSessionTauriState>,
     query: LoadAgentSessionQueryDto,
 ) -> Result<AgentSessionDetailsDto, String> {
-    let application = state.application.clone();
+    let application = state.queries.clone();
     tauri::async_runtime::spawn_blocking(move || {
         application
             .load_session(&query.session_id)

@@ -1,0 +1,466 @@
+use crate::agent_sessions::{
+    application::{
+        project_invocation_observation, AgentInvocationObservation, AgentSessionNotification,
+        CancelAgentInvocationCommand, CreateAgentSessionCommand, RenameAgentSessionCommand,
+        SendAgentSessionMessageCommand, SendAgentSessionMessageResult,
+        UpdateAgentSessionHarnessCommand, UpdateAgentSessionIdentityCommand,
+        UpdateAgentSessionModelOverrideCommand,
+    },
+    domain::{
+        AgentInvocation, AgentInvocationId, AgentRuntimeEvent, AgentRuntimeOptions, AgentSession,
+        AgentSessionAvailability, AgentSessionId,
+    },
+    ports::{AgentSessionHistory, AgentSessionSummary, ListAgentSessionsQuery},
+};
+use crate::{harness_engine::domain::HarnessVersionRef, identities::AssignedAgentIdentity};
+use serde::{Deserialize, Serialize};
+
+pub type AgentSessionDto = AgentSession;
+pub type AgentInvocationDto = AgentInvocation;
+pub type AgentRuntimeEventDto = AgentRuntimeEvent;
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateAgentSessionCommandDto {
+    pub title: Option<String>,
+    pub working_directory: Option<String>,
+    #[serde(default)]
+    pub requested_options: AgentRuntimeOptions,
+    #[serde(default)]
+    pub harness_version: Option<HarnessVersionRef>,
+    #[serde(default)]
+    pub assigned_identity: Option<AssignedAgentIdentity>,
+}
+
+impl CreateAgentSessionCommandDto {
+    pub fn ownership(&self) -> crate::agent_sessions::application::AgentSessionOwnership {
+        crate::agent_sessions::application::AgentSessionOwnership {
+            execution_target: None,
+            harness_version: self.harness_version.clone(),
+            assigned_identity: self.assigned_identity.clone(),
+            session_profile: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdateAgentSessionHarnessCommandDto {
+    pub session_id: AgentSessionId,
+    pub harness_version: Option<HarnessVersionRef>,
+}
+
+impl From<UpdateAgentSessionHarnessCommandDto> for UpdateAgentSessionHarnessCommand {
+    fn from(value: UpdateAgentSessionHarnessCommandDto) -> Self {
+        Self {
+            session_id: value.session_id,
+            harness_version: value.harness_version,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdateAgentSessionIdentityCommandDto {
+    pub session_id: AgentSessionId,
+    pub assigned_identity: Option<AssignedAgentIdentity>,
+}
+
+impl From<UpdateAgentSessionIdentityCommandDto> for UpdateAgentSessionIdentityCommand {
+    fn from(value: UpdateAgentSessionIdentityCommandDto) -> Self {
+        Self {
+            session_id: value.session_id,
+            assigned_identity: value.assigned_identity,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RenameAgentSessionCommandDto {
+    pub session_id: AgentSessionId,
+    pub title: String,
+}
+
+impl From<RenameAgentSessionCommandDto> for RenameAgentSessionCommand {
+    fn from(value: RenameAgentSessionCommandDto) -> Self {
+        Self {
+            session_id: value.session_id,
+            title: value.title,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdateAgentSessionModelOverrideCommandDto {
+    pub session_id: AgentSessionId,
+    pub model: Option<String>,
+}
+
+impl From<UpdateAgentSessionModelOverrideCommandDto> for UpdateAgentSessionModelOverrideCommand {
+    fn from(value: UpdateAgentSessionModelOverrideCommandDto) -> Self {
+        Self {
+            session_id: value.session_id,
+            model: value.model,
+        }
+    }
+}
+
+impl From<CreateAgentSessionCommandDto> for CreateAgentSessionCommand {
+    fn from(value: CreateAgentSessionCommandDto) -> Self {
+        Self {
+            title: value.title,
+            working_directory: value.working_directory,
+            requested_options: value.requested_options,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendAgentSessionMessageCommandDto {
+    pub session_id: Option<AgentSessionId>,
+    pub submitted_text: String,
+    #[serde(default)]
+    pub attachments: Vec<crate::agent_sessions::domain::RuntimeImageAttachment>,
+    pub title: Option<String>,
+    pub working_directory: Option<String>,
+    pub requested_options: Option<AgentRuntimeOptions>,
+}
+
+impl From<SendAgentSessionMessageCommandDto> for SendAgentSessionMessageCommand {
+    fn from(value: SendAgentSessionMessageCommandDto) -> Self {
+        Self {
+            session_id: value.session_id,
+            submitted_text: value.submitted_text,
+            attachments: value.attachments,
+            title: value.title,
+            working_directory: value.working_directory,
+            requested_options: value.requested_options,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelAgentInvocationCommandDto {
+    pub invocation_id: AgentInvocationId,
+}
+
+impl From<CancelAgentInvocationCommandDto> for CancelAgentInvocationCommand {
+    fn from(value: CancelAgentInvocationCommandDto) -> Self {
+        Self {
+            invocation_id: value.invocation_id,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListAgentSessionsQueryDto {
+    pub availability: Option<AgentSessionAvailability>,
+    pub limit: Option<u32>,
+}
+
+impl From<ListAgentSessionsQueryDto> for ListAgentSessionsQuery {
+    fn from(value: ListAgentSessionsQueryDto) -> Self {
+        Self {
+            availability: value.availability,
+            limit: value.limit,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadAgentSessionQueryDto {
+    pub session_id: AgentSessionId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendAgentSessionMessageResultDto {
+    pub session_id: AgentSessionId,
+    pub invocation_id: AgentInvocationId,
+}
+
+impl From<SendAgentSessionMessageResult> for SendAgentSessionMessageResultDto {
+    fn from(value: SendAgentSessionMessageResult) -> Self {
+        Self {
+            session_id: value.session_id,
+            invocation_id: value.invocation_id,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentInvocationDetailsDto {
+    pub last_event_sequence: Option<u64>,
+    pub invocation: AgentInvocationDto,
+    pub observation: AgentInvocationObservation,
+    pub events: Vec<AgentRuntimeEventDto>,
+    pub import_provenance: Option<crate::agent_sessions::ports::ImportedTurnProvenance>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionDetailsDto {
+    pub interactions: Vec<crate::agent_sessions::application::SessionInteraction>,
+    pub session: AgentSessionDto,
+    pub invocations: Vec<AgentInvocationDetailsDto>,
+    pub timeline: crate::agent_sessions::history::SessionTimeline,
+}
+
+impl AgentSessionDetailsDto {
+    pub fn from_history(history: AgentSessionHistory) -> Self {
+        Self {
+            interactions: crate::agent_sessions::application::project_interactions(&history),
+            session: history.session,
+            timeline: history.timeline,
+            invocations: history
+                .invocations
+                .into_iter()
+                .map(|history| AgentInvocationDetailsDto {
+                    last_event_sequence: history
+                        .last_event_sequence
+                        .or_else(|| history.events.last().map(|e| e.sequence)),
+                    observation: project_invocation_observation(&history),
+                    invocation: history.invocation,
+                    events: history.events,
+                    import_provenance: history.import_provenance,
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSessionSummaryDto {
+    pub latest_completed_id: Option<String>,
+    pub completion_state: Option<String>,
+    pub pending_request_count: usize,
+    pub id: AgentSessionId,
+    pub title: String,
+    pub availability: AgentSessionAvailability,
+    pub has_active_invocation: bool,
+    pub latest_invocation_status: Option<crate::agent_sessions::domain::AgentInvocationStatus>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl From<AgentSessionSummary> for AgentSessionSummaryDto {
+    fn from(value: AgentSessionSummary) -> Self {
+        Self {
+            latest_completed_id: value.latest_completed_id,
+            completion_state: value.completion_state,
+            pending_request_count: value.pending_request_count,
+            id: value.session.id,
+            title: value.session.title,
+            availability: value.session.availability,
+            has_active_invocation: value
+                .latest_invocation_status
+                .is_some_and(|status| status.is_active()),
+            latest_invocation_status: value.latest_invocation_status,
+            created_at: value.session.created_at,
+            updated_at: value.session.updated_at,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum AgentSessionUpdateDto {
+    PreparationUpdated {
+        session_id: AgentSessionId,
+        invocation_id: AgentInvocationId,
+    },
+    QueueUpdated {
+        session_id: AgentSessionId,
+        session: crate::agent_sessions::domain::AgentSession,
+        timeline: crate::agent_sessions::history::SessionTimeline,
+        removed_invocation_ids: Vec<String>,
+    },
+    SteeringAccepted {
+        session_id: AgentSessionId,
+        invocation_id: AgentInvocationId,
+        input_id: String,
+    },
+    EventPersisted {
+        session_id: AgentSessionId,
+        invocation_id: AgentInvocationId,
+        event: AgentRuntimeEventDto,
+    },
+    InvocationTerminal {
+        session_id: AgentSessionId,
+        invocation_id: AgentInvocationId,
+        invocation: AgentInvocationDto,
+        completion_sound: bool,
+    },
+    DiagnosticRecorded {
+        session_id: AgentSessionId,
+        invocation_id: AgentInvocationId,
+        invocation: AgentInvocationDto,
+    },
+}
+
+impl From<AgentSessionNotification> for AgentSessionUpdateDto {
+    fn from(value: AgentSessionNotification) -> Self {
+        match value {
+            AgentSessionNotification::PreparationUpdated {
+                session_id,
+                invocation_id,
+            } => Self::PreparationUpdated {
+                session_id,
+                invocation_id,
+            },
+            AgentSessionNotification::QueueUpdated {
+                session_id,
+                session,
+                timeline,
+                removed_invocation_ids,
+            } => Self::QueueUpdated {
+                session_id,
+                session,
+                timeline,
+                removed_invocation_ids,
+            },
+            AgentSessionNotification::SteeringAccepted {
+                session_id,
+                invocation_id,
+                input_id,
+            } => Self::SteeringAccepted {
+                session_id,
+                invocation_id,
+                input_id,
+            },
+            AgentSessionNotification::EventPersisted { session_id, event } => {
+                Self::EventPersisted {
+                    session_id,
+                    invocation_id: event.invocation_id.clone(),
+                    event,
+                }
+            }
+            AgentSessionNotification::InvocationTerminal {
+                session_id,
+                invocation,
+            } => Self::InvocationTerminal {
+                session_id,
+                invocation_id: invocation.id.clone(),
+                invocation,
+                completion_sound: true,
+            },
+            AgentSessionNotification::DiagnosticRecorded {
+                session_id,
+                invocation,
+            } => Self::DiagnosticRecorded {
+                session_id,
+                invocation_id: invocation.id.clone(),
+                invocation,
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_sessions::{
+        domain::{
+            AgentInvocationInputProvenance, AgentInvocationStatus, AgentRuntimeBinding,
+            AgentSessionAvailability,
+        },
+        ports::{AgentInvocationHistory, AgentSessionHistory},
+    };
+    use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn model_override_transport_accepts_an_opaque_model_or_explicit_clear() {
+        let selected: UpdateAgentSessionModelOverrideCommand = serde_json::from_value::<
+            UpdateAgentSessionModelOverrideCommandDto,
+        >(serde_json::json!({
+            "sessionId": "session",
+            "model": "user-selected-model"
+        }))
+        .unwrap()
+        .into();
+        assert_eq!(selected.session_id.as_str(), "session");
+        assert_eq!(selected.model.as_deref(), Some("user-selected-model"));
+
+        let cleared: UpdateAgentSessionModelOverrideCommand = serde_json::from_value::<
+            UpdateAgentSessionModelOverrideCommandDto,
+        >(serde_json::json!({
+            "sessionId": "session",
+            "model": null
+        }))
+        .unwrap()
+        .into();
+        assert!(cleared.model.is_none());
+    }
+
+    #[test]
+    fn serializes_observation_from_durable_history_without_application_acceptance() {
+        let at = Utc.with_ymd_and_hms(2026, 8, 2, 12, 0, 0).unwrap();
+        let session_id = AgentSessionId::new("session").unwrap();
+        let invocation_id = AgentInvocationId::new("invocation").unwrap();
+        let dto = AgentSessionDetailsDto::from_history(AgentSessionHistory {
+            timeline: Default::default(),
+            session: AgentSession {
+                execution_target: None,
+                workspace_origin: None,
+                id: session_id.clone(),
+                title: "Session".into(),
+                availability: AgentSessionAvailability::Available,
+                runtime_binding: AgentRuntimeBinding {
+                    external_context_id: None,
+                    runtime_version: None,
+                },
+                working_directory: None,
+                requested_options: AgentRuntimeOptions::default(),
+                session_profile: None,
+                harness_version: None,
+                assigned_identity: None,
+                created_at: at,
+                updated_at: at,
+            },
+            invocations: vec![AgentInvocationHistory {
+                last_event_sequence: None,
+                invocation: AgentInvocation {
+                    attachments: vec![],
+                    id: invocation_id,
+                    session_id,
+                    submitted_text: "Work".into(),
+                    input_provenance: AgentInvocationInputProvenance::User,
+                    status: AgentInvocationStatus::Pending,
+                    requested_options: AgentRuntimeOptions::default(),
+                    effective_options: None,
+                    started_at: None,
+                    completed_at: None,
+                    exit_code: None,
+                    signal: None,
+                    runtime_error: None,
+                    diagnostics: vec![],
+                    created_at: at,
+                    updated_at: at,
+                },
+                launch_accepted_at: Some(at),
+                import_provenance: None,
+                events: vec![],
+            }],
+        });
+        let value = serde_json::to_value(dto).unwrap();
+        assert_eq!(
+            value["invocations"][0]["observation"]["launchAcceptedAt"],
+            "2026-08-02T12:00:00Z"
+        );
+        assert!(value["invocations"][0]["observation"]
+            .get("applicationAcceptance")
+            .is_none());
+    }
+}

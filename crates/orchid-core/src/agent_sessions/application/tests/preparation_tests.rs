@@ -1,0 +1,903 @@
+use super::*;
+use crate::agent_sessions::application::preparation::PreparedMessageInput;
+use crate::agent_sessions::application::ProviderUpdateReadiness;
+use crate::agent_sessions::domain::ExternalRuntimeContextId;
+use crate::agent_sessions::ports::{
+    InitialPromptPrefix, RuntimeInvocationReady, RuntimeManagedMcpServer,
+};
+use crate::agent_sessions::preparation::{
+    PreparationPhase, PreparationStepStatus, SessionPreparation,
+};
+use crate::execution_configuration::{
+    CapabilityProfileService, InMemoryCapabilityProfileRepository, NativeCapabilityInventory,
+};
+use crate::execution_targets::{domain::*, endpoints::ExecutionEndpoints, ExecutionTargetService};
+use std::{
+    sync::{atomic::AtomicBool, atomic::Ordering, Condvar},
+    time::Instant,
+};
+
+struct BlockingProviderUpdate {
+    active: AtomicBool,
+    changed: Condvar,
+    lock: Mutex<()>,
+}
+
+impl BlockingProviderUpdate {
+    fn new() -> Self {
+        Self {
+            active: AtomicBool::new(true),
+            changed: Condvar::new(),
+            lock: Mutex::new(()),
+        }
+    }
+
+    fn release(&self) {
+        self.active.store(false, Ordering::SeqCst);
+        self.changed.notify_all();
+    }
+}
+
+impl ProviderUpdateReadiness for BlockingProviderUpdate {
+    fn is_updating(&self, provider: &str) -> bool {
+        provider == "codex" && self.active.load(Ordering::SeqCst)
+    }
+
+    fn wait_until_ready(&self, provider: &str) -> Result<bool, String> {
+        if provider != "codex" {
+            return Ok(false);
+        }
+        let mut guard = self.lock.lock().unwrap();
+        let waited = self.active.load(Ordering::SeqCst);
+        while self.active.load(Ordering::SeqCst) {
+            guard = self.changed.wait(guard).unwrap();
+        }
+        Ok(waited)
+    }
+}
+
+#[derive(Default)]
+struct PreparedHarnessAuthority {
+    invocations: Mutex<Vec<AgentInvocationId>>,
+    resolved_profiles: Mutex<Vec<String>>,
+}
+
+impl SessionHarnessLaunchAuthority for PreparedHarnessAuthority {
+    fn prepare_launch(
+        &self,
+        _: &AgentSessionId,
+        _: &AgentInvocationId,
+        _: Option<RuntimeLaunchExtension>,
+    ) -> Result<Option<RuntimeLaunchExtension>, String> {
+        panic!("prepared delivery must provide its resolved invocation profile")
+    }
+
+    fn prepare_resolved_launch(
+        &self,
+        _: &AgentSessionId,
+        invocation_id: &AgentInvocationId,
+        profile: Option<&crate::execution_configuration::SessionCreationResolution>,
+        extension: Option<RuntimeLaunchExtension>,
+    ) -> Result<Option<RuntimeLaunchExtension>, String> {
+        self.invocations.lock().unwrap().push(invocation_id.clone());
+        self.resolved_profiles.lock().unwrap().push(
+            profile
+                .expect("prepared invocation profile")
+                .session_profile()
+                .configuration()
+                .to_string(),
+        );
+        let mut extension = extension.unwrap_or_default();
+        extension.initial_prompt_prefix = Some(InitialPromptPrefix {
+            source: "prepared-harness".into(),
+            version: 1,
+            content: "Harness context".into(),
+        });
+        extension.managed_mcp_servers.push(RuntimeManagedMcpServer {
+            name: "session_tools".into(),
+            url: "http://127.0.0.1:43123/mcp".into(),
+            bearer_token: Some("secret-session-token".into()),
+            enabled_tools: Some(vec!["record_result".into()]),
+            required: true,
+        });
+        Ok(Some(extension))
+    }
+}
+
+#[derive(Default)]
+struct BlockingPreparationRuntime {
+    state: Mutex<BlockedState>,
+    changed: Condvar,
+}
+#[derive(Default)]
+struct BlockedState {
+    stay_running: bool,
+    steering_error: Option<RuntimePortErrorKind>,
+    steering: Vec<(String, String)>,
+    requests: Vec<RuntimeInvocationRequest>,
+    outcome: Option<bool>,
+    delivered: Vec<AgentInvocationId>,
+    canceled: Vec<AgentInvocationId>,
+    sink: Option<Arc<dyn AgentRuntimeUpdateSink>>,
+}
+impl BlockingPreparationRuntime {
+    fn release(&self, succeeds: bool) {
+        self.state.lock().unwrap().outcome = Some(succeeds);
+        self.changed.notify_all();
+    }
+    fn attempts(&self) -> usize {
+        self.state.lock().unwrap().requests.len()
+    }
+}
+impl AgentRuntime for BlockingPreparationRuntime {
+    fn steer(
+        &self,
+        id: &AgentInvocationId,
+        input_id: &str,
+        text: &str,
+        _: &[crate::agent_sessions::domain::RuntimeImageAttachment],
+    ) -> Result<(), RuntimePortError> {
+        let mut state = self.state.lock().unwrap();
+        assert!(state.delivered.contains(id));
+        state.steering.push((input_id.into(), text.into()));
+        if let Some(kind) = state.steering_error {
+            Err(RuntimePortError::new(kind, "test steering failure"))
+        } else {
+            Ok(())
+        }
+    }
+    fn preflight_invocation(
+        &self,
+        _: RuntimeInvocationMode,
+        options: &AgentRuntimeOptions,
+    ) -> Result<RuntimeInvocationPreflight, RuntimePortError> {
+        Ok(RuntimeInvocationPreflight {
+            effective_options: options.clone(),
+        })
+    }
+    fn prepare_invocation(
+        &self,
+        request: RuntimeInvocationRequest,
+        external: Option<ExternalRuntimeContextId>,
+        sink: Arc<dyn AgentRuntimeUpdateSink>,
+    ) -> Result<RuntimeInvocationReady, RuntimePortError> {
+        let mut state = self.state.lock().unwrap();
+        state.requests.push(request.clone());
+        state.sink = Some(sink);
+        self.changed.notify_all();
+        while state.outcome.is_none() {
+            state = self.changed.wait(state).unwrap();
+        }
+        if !state.outcome.take().unwrap() {
+            return Err(RuntimePortError::new(
+                RuntimePortErrorKind::Unavailable,
+                "native readiness failed",
+            ));
+        }
+        // Return late successful readiness even after cancellation; application must refuse delivery.
+        Ok(RuntimeInvocationReady {
+            external_context_id: external
+                .unwrap_or_else(|| ExternalRuntimeContextId::new("native-prepared").unwrap()),
+            working_directory: request.working_directory.unwrap(),
+        })
+    }
+    fn deliver_prepared_invocation(&self, id: &AgentInvocationId) -> Result<(), RuntimePortError> {
+        let sink = {
+            let mut state = self.state.lock().unwrap();
+            state.delivered.push(id.clone());
+            if state.stay_running {
+                return Ok(());
+            }
+            state.sink.clone().unwrap()
+        };
+        sink.emit_update(
+            id,
+            RuntimeUpdate::Finished(RuntimeInvocationOutcome {
+                status: AgentInvocationTerminalStatus::Completed,
+                exit_code: None,
+                signal: None,
+                runtime_error: None,
+            }),
+        )
+    }
+    fn cancel_invocation(&self, id: &AgentInvocationId) -> Result<(), RuntimePortError> {
+        let mut state = self.state.lock().unwrap();
+        state.canceled.push(id.clone());
+        state.outcome = Some(true);
+        self.changed.notify_all();
+        Ok(())
+    }
+    fn start_invocation(
+        &self,
+        _: RuntimeInvocationRequest,
+        _: Arc<dyn AgentRuntimeUpdateSink>,
+    ) -> Result<(), RuntimePortError> {
+        panic!("Preparation must not use immediate start")
+    }
+    fn resume_invocation(
+        &self,
+        _: RuntimeInvocationRequest,
+        _: ExternalRuntimeContextId,
+        _: Arc<dyn AgentRuntimeUpdateSink>,
+    ) -> Result<(), RuntimePortError> {
+        panic!("Preparation must not use immediate resume")
+    }
+}
+
+#[test]
+fn queued_send_now_steers_once_and_removes_only_the_accepted_message() {
+    let fixture = PreparationFixture::new();
+    fixture.runtime.state.lock().unwrap().stay_running = true;
+    let active = fixture
+        .app
+        .accept_prepared_message(fixture.input("active-now"))
+        .unwrap();
+    fixture.wait(|| fixture.runtime.attempts() == 1);
+    fixture.runtime.release(true);
+    fixture.wait(|| {
+        fixture
+            .runtime
+            .state
+            .lock()
+            .unwrap()
+            .delivered
+            .contains(&active.invocation_id)
+    });
+    let queued = fixture
+        .app
+        .accept_prepared_message(fixture.input("queued-now"))
+        .unwrap();
+    assert_eq!(
+        fixture
+            .app
+            .load_preparation(&active.session_id)
+            .unwrap()
+            .unwrap()
+            .invocation_id,
+        active.invocation_id
+    );
+    let view = fixture.app.load_session_queue(&active.session_id).unwrap();
+    let entry = view.entries.iter().find(|entry| matches!(&entry.item, crate::agent_sessions::queue::SessionQueueEntryItem::Message { invocation_id } if invocation_id == &queued.invocation_id)).unwrap();
+    let edits = super::super::queue::UpdateQueuedMessageInput {
+        session_id: active.session_id.clone(),
+        entry_id: entry.id.clone(),
+        expected_revision: view.revision,
+        submitted_text: "Edited steering".into(),
+        model: None,
+        reasoning_mode: None,
+        sandbox_mode: None,
+    };
+    fixture
+        .app
+        .send_queued_message_now(&active.session_id, &entry.id, view.revision, Some(edits))
+        .unwrap();
+    assert!(fixture
+        .repository
+        .get_invocation(&queued.invocation_id)
+        .unwrap()
+        .is_none());
+    assert_eq!(fixture.runtime.state.lock().unwrap().steering.len(), 0);
+    fixture.app.steering_boundary(&active.invocation_id, false);
+    fixture.wait(|| fixture.runtime.state.lock().unwrap().steering.len() == 1);
+    assert_eq!(fixture.runtime.state.lock().unwrap().steering.len(), 1);
+    assert_eq!(
+        fixture.runtime.state.lock().unwrap().steering[0].1,
+        "Edited steering"
+    );
+    assert!(fixture
+        .app
+        .send_queued_message_now(&active.session_id, &entry.id, view.revision, None)
+        .is_err());
+    assert_eq!(fixture.runtime.state.lock().unwrap().steering.len(), 1);
+    assert_eq!(
+        fixture
+            .repository
+            .get_invocation(&active.invocation_id)
+            .unwrap()
+            .unwrap()
+            .status,
+        AgentInvocationStatus::Running
+    );
+}
+
+#[test]
+fn queued_send_now_retains_failed_steering_as_an_undelivered_interaction() {
+    for (kind, expected) in [
+        (RuntimePortErrorKind::NotActive, "rejected"),
+        (RuntimePortErrorKind::Unavailable, "uncertain"),
+    ] {
+        let fixture = PreparationFixture::new();
+        {
+            let mut state = fixture.runtime.state.lock().unwrap();
+            state.stay_running = true;
+            state.steering_error = Some(kind);
+        }
+        let active = fixture
+            .app
+            .accept_prepared_message(fixture.input("active-failure"))
+            .unwrap();
+        fixture.wait(|| fixture.runtime.attempts() == 1);
+        fixture.runtime.release(true);
+        fixture.wait(|| {
+            fixture
+                .runtime
+                .state
+                .lock()
+                .unwrap()
+                .delivered
+                .contains(&active.invocation_id)
+        });
+        let queued = fixture
+            .app
+            .accept_prepared_message(fixture.input("retained-now"))
+            .unwrap();
+        let view = fixture.app.load_session_queue(&active.session_id).unwrap();
+        let entry = fixture
+            .repository
+            .queue_entry_for_invocation(&queued.invocation_id)
+            .unwrap()
+            .unwrap();
+        fixture
+            .app
+            .send_queued_message_now(&active.session_id, &entry.id, view.revision, None)
+            .unwrap();
+        assert_eq!(fixture.runtime.state.lock().unwrap().steering.len(), 0);
+        fixture.app.steering_boundary(&active.invocation_id, false);
+        fixture.wait(|| {
+            fixture
+                .app
+                .session_interactions(&active.session_id)
+                .unwrap()
+                .iter()
+                .any(|i| i.state == expected)
+        });
+        assert!(fixture
+            .repository
+            .get_invocation(&queued.invocation_id)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            fixture
+                .app
+                .session_interactions(&active.session_id)
+                .unwrap()[0]
+                .content["text"],
+            "Frozen submitted text"
+        );
+    }
+}
+
+#[test]
+fn queued_send_now_prioritizes_an_idle_message_and_continues_preparation() {
+    let fixture = PreparationFixture::new();
+    let first = fixture
+        .app
+        .accept_prepared_message(fixture.input("blocked-first"))
+        .unwrap();
+    fixture.wait(|| fixture.runtime.attempts() == 1);
+    fixture.runtime.release(false);
+    fixture.wait(|| {
+        fixture
+            .repository
+            .queue_entry_for_invocation(&first.invocation_id)
+            .unwrap()
+            .is_some_and(|entry| {
+                entry.state == crate::agent_sessions::queue::SessionQueueEntryState::Blocked
+            })
+    });
+    let next = fixture
+        .app
+        .accept_prepared_message(fixture.input("priority-next"))
+        .unwrap();
+    let view = fixture.app.load_session_queue(&first.session_id).unwrap();
+    let entry = fixture
+        .repository
+        .queue_entry_for_invocation(&next.invocation_id)
+        .unwrap()
+        .unwrap();
+    fixture
+        .app
+        .send_queued_message_now(&first.session_id, &entry.id, view.revision, None)
+        .unwrap();
+    fixture.wait(|| fixture.runtime.attempts() == 2);
+    let view = fixture.app.load_session_queue(&first.session_id).unwrap();
+    assert_eq!(
+        view.entries
+            .iter()
+            .find(|entry| entry.state.is_unfinished())
+            .unwrap()
+            .id,
+        entry.id
+    );
+}
+struct PreparationProfileSource;
+impl ProviderConfigurationSource for PreparationProfileSource {
+    fn profile_for_configuration(
+        &self,
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<RuntimeProfileSnapshot, ProviderConfigurationSourceError> {
+        Ok(test_selected_runtime_profile())
+    }
+    fn inventory_for_configuration(
+        &self,
+        _reference: &str,
+        _cwd: Option<&str>,
+    ) -> Result<NativeCapabilityInventory, ProviderConfigurationSourceError> {
+        Ok(Default::default())
+    }
+}
+struct PreparationFixture {
+    _directory: tempfile::TempDir,
+    app: AgentSessionApplication,
+    repository: Arc<SqliteAgentSessionRepository>,
+    runtime: Arc<BlockingPreparationRuntime>,
+    old_runtime: Arc<FakeRuntime>,
+    notifier: Arc<RecordingNotifier>,
+    selection: SessionExecutionSelection,
+    session: AgentSession,
+}
+impl PreparationFixture {
+    fn new() -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        let database = Arc::new(
+            crate::persistence::ActiveDatabase::open(
+                directory.path().join("sessions.sqlite"),
+                crate::storage::initialize_active_database,
+            )
+            .unwrap(),
+        );
+        let repository = Arc::new(SqliteAgentSessionRepository::from_database(
+            database.clone(),
+        ));
+        let source = Arc::new(PreparationProfileSource);
+        let runtime = Arc::new(BlockingPreparationRuntime::default());
+        let old_runtime = Arc::new(FakeRuntime::new(RuntimeBehavior::SpawnFailure));
+        let old_execution = ExecutionBinding {
+            device_id: "old-device".into(),
+            device_name: "Previous server".into(),
+            provider: "codex".into(),
+            configuration_ref: "codex-default".into(),
+            connection: ExecutionConnection::Ssh {
+                target: "unused-test-host".into(),
+                host_executable: "/opt/orchid-host".into(),
+            },
+        };
+        let endpoints = Arc::new(
+            ExecutionEndpoints::new(
+                crate::runtime::providers::registrations::ProviderRegistrations::single(
+                    "codex",
+                    source.clone(),
+                    runtime.clone(),
+                ),
+            )
+            .with_runtime(&old_execution, old_runtime.clone()),
+        );
+        let profiles = Arc::new(
+            CapabilityProfileService::new(Arc::new(InMemoryCapabilityProfileRepository::default()))
+                .with_configuration_source(source.clone())
+                .with_endpoints(endpoints.clone()),
+        );
+        let profile = profiles
+            .create_with_defaults(
+                "laptop".into(),
+                "Laptop".into(),
+                test_selected_runtime_profile().exposure,
+                RuntimeSelections {
+                    model: Some("node-default".into()),
+                    reasoning_mode: Some("high".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let old_target = SessionExecutionTarget {
+            capability_profile_id: "previous-profile".into(),
+            capability_profile_revision: 1,
+            execution: old_execution,
+            repository_id: String::new(),
+            branch_ref: String::new(),
+            worktree_id: "old-instance".into(),
+            path: "/previous/worktree".into(),
+            head: None,
+        };
+        let destination = directory.path().join("destination");
+        std::fs::create_dir(&destination).unwrap();
+        let target = SessionExecutionTarget {
+            capability_profile_id: profile.capability_profile_id.clone(),
+            capability_profile_revision: profile.revision,
+            execution: profile.execution.clone(),
+            repository_id: String::new(),
+            branch_ref: String::new(),
+            worktree_id: "destination-instance".into(),
+            path: destination.to_string_lossy().into_owned(),
+            head: None,
+        };
+        let selection = SessionExecutionSelection {
+            capability_profile_id: profile.capability_profile_id,
+            capability_profile_revision: profile.revision,
+            execution: profile.execution,
+            workspace: SessionWorkspaceSelection::Existing { target },
+        };
+        let providers = Arc::new(DeterministicProviders::default());
+        let targets = Arc::new(ExecutionTargetService::new(
+            database,
+            endpoints.clone(),
+            profiles.clone(),
+        ));
+        let notifier = Arc::new(RecordingNotifier::new(repository.clone()));
+        let app = AgentSessionApplication::new(
+            repository.clone(),
+            runtime.clone(),
+            notifier.clone(),
+            providers.clone(),
+            providers,
+            None,
+        )
+        .with_capability_profiles(profiles)
+        .with_profile_source(source)
+        .with_execution_endpoints(endpoints)
+        .with_execution_target_service(targets);
+        let session = app
+            .create_session_with_ownership(
+                CreateAgentSessionCommand {
+                    title: Some("Prepared session".into()),
+                    working_directory: None,
+                    requested_options: Default::default(),
+                },
+                AgentSessionOwnership {
+                    execution_target: Some(old_target.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        Self {
+            _directory: directory,
+            app,
+            repository,
+            runtime,
+            old_runtime,
+            notifier,
+            selection,
+            session,
+        }
+    }
+    fn input(&self, id: &str) -> PreparedMessageInput {
+        PreparedMessageInput {
+            attachments: vec![],
+            session_id: Some(self.session.id.clone()),
+            submission_id: AgentInvocationId::new(id).unwrap(),
+            submitted_text: "Frozen submitted text".into(),
+            context: Vec::new(),
+            title: None,
+            working_directory: None,
+            execution_selection: Some(self.selection.clone()),
+            model: Some("user-only".into()),
+            reasoning_mode: Some("medium".into()),
+            sandbox_mode: None,
+            folder_target: None,
+        }
+    }
+    fn preparation(&self, id: &AgentInvocationId) -> SessionPreparation {
+        self.repository.preparation(id).unwrap().unwrap()
+    }
+    fn wait(&self, mut condition: impl FnMut() -> bool) {
+        let deadline = Instant::now() + std::time::Duration::from_secs(15);
+        while !condition() {
+            assert!(
+                Instant::now() < deadline,
+                "Preparation did not reach expected state; latest={:?}",
+                self.app.load_preparation(&self.session.id).unwrap()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+}
+impl Drop for PreparationFixture {
+    fn drop(&mut self) {
+        self.runtime.release(false);
+    }
+}
+
+#[test]
+fn prepared_ack_is_durable_while_native_setup_is_blocked_and_submission_is_frozen() {
+    let fixture = PreparationFixture::new();
+    let mut input = fixture.input("accepted");
+    let ack = fixture.app.accept_prepared_message(input.clone()).unwrap();
+    assert_eq!(
+        fixture
+            .app
+            .accept_prepared_message(input.clone())
+            .unwrap()
+            .invocation_id,
+        ack.invocation_id
+    );
+    let mut changed_target = input.clone();
+    changed_target
+        .execution_selection
+        .as_mut()
+        .unwrap()
+        .capability_profile_id = "another-profile".into();
+    assert!(fixture.app.accept_prepared_message(changed_target).is_err());
+    fixture.wait(|| fixture.runtime.attempts() == 1);
+    let invocation = fixture
+        .repository
+        .get_invocation(&ack.invocation_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(invocation.status, AgentInvocationStatus::Pending);
+    assert_eq!(invocation.submitted_text, "Frozen submitted text");
+    assert_eq!(
+        fixture
+            .app
+            .load_session(&ack.session_id)
+            .unwrap()
+            .session
+            .execution_target,
+        Some(
+            fixture
+                .preparation(&ack.invocation_id)
+                .resolved_target
+                .expect("resolved destination"),
+        )
+    );
+    assert!(fixture.runtime.state.lock().unwrap().delivered.is_empty());
+    input.submitted_text = "Next draft changed".into();
+    input.model = Some("node-default".into());
+    input.reasoning_mode = Some("high".into());
+    assert!(fixture.app.accept_prepared_message(input).is_err());
+    let requests = fixture.runtime.state.lock().unwrap().requests.clone();
+    assert_eq!(requests[0].options.model.as_deref(), Some("user-only"));
+    assert_eq!(
+        requests[0]
+            .launch_extension
+            .as_ref()
+            .unwrap()
+            .reasoning_mode
+            .as_deref(),
+        Some("medium")
+    );
+    assert_eq!(requests[0].content.primary_query, "Frozen submitted text");
+    fixture.runtime.release(true);
+    fixture.wait(|| fixture.preparation(&ack.invocation_id).delivery_started);
+    fixture.wait(|| {
+        fixture
+            .repository
+            .get_invocation(&ack.invocation_id)
+            .unwrap()
+            .unwrap()
+            .status
+            .is_terminal()
+    });
+    assert_eq!(
+        fixture.runtime.state.lock().unwrap().delivered,
+        vec![ack.invocation_id]
+    );
+}
+
+#[test]
+fn addressed_product_submission_retains_application_provenance_and_retry_identity() {
+    let fixture = PreparationFixture::new();
+    let command = crate::agent_sessions::client::HostCommand {
+        method: "sendProduct".into(),
+        input: serde_json::to_value(fixture.input("product-submission")).unwrap(),
+    };
+    let first = crate::agent_sessions::client::dispatch(&fixture.app, command.clone()).unwrap();
+    assert_eq!(
+        crate::agent_sessions::client::dispatch(&fixture.app, command).unwrap(),
+        first
+    );
+    let invocation = fixture
+        .repository
+        .get_invocation(&AgentInvocationId::new("product-submission").unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        invocation.input_provenance,
+        AgentInvocationInputProvenance::Application
+    );
+}
+
+#[test]
+fn prepared_message_waits_for_provider_update_then_continues_automatically() {
+    let mut fixture = PreparationFixture::new();
+    let update = Arc::new(BlockingProviderUpdate::new());
+    fixture.app = fixture
+        .app
+        .clone()
+        .with_provider_update_readiness(update.clone());
+
+    let ack = fixture
+        .app
+        .accept_prepared_message(fixture.input("wait-for-update"))
+        .unwrap();
+    fixture.wait(|| {
+        fixture
+            .preparation(&ack.invocation_id)
+            .steps
+            .iter()
+            .any(|step| {
+                step.id == "provider-update" && step.status == PreparationStepStatus::Running
+            })
+    });
+    assert_eq!(fixture.runtime.attempts(), 0);
+
+    update.release();
+    fixture.wait(|| fixture.runtime.attempts() == 1);
+    fixture.runtime.release(true);
+    fixture.wait(|| {
+        fixture
+            .preparation(&ack.invocation_id)
+            .steps
+            .iter()
+            .any(|step| {
+                step.id == "provider-update" && step.status == PreparationStepStatus::Completed
+            })
+    });
+}
+
+#[test]
+fn prepared_delivery_applies_the_resolved_harness_and_delivers_its_context() {
+    let mut fixture = PreparationFixture::new();
+    let authority = Arc::new(PreparedHarnessAuthority::default());
+    fixture.app = fixture
+        .app
+        .clone()
+        .with_session_harness_launch_authority(authority.clone());
+
+    let ack = fixture
+        .app
+        .accept_prepared_message(fixture.input("prepared-harness"))
+        .unwrap();
+    fixture.wait(|| fixture.runtime.attempts() == 1);
+
+    let state = fixture.runtime.state.lock().unwrap();
+    let request = &state.requests[0];
+    assert_eq!(request.content.primary_query, "Frozen submitted text");
+    assert!(serde_json::to_string(&request.content.context)
+        .unwrap()
+        .contains("Harness context"));
+    let extension = request.launch_extension.as_ref().unwrap();
+    assert!(extension.initial_prompt_prefix.is_none());
+    assert_eq!(extension.managed_mcp_servers[0].name, "session_tools");
+    drop(state);
+    assert_eq!(
+        authority.invocations.lock().unwrap().as_slice(),
+        std::slice::from_ref(&ack.invocation_id)
+    );
+    assert_eq!(authority.resolved_profiles.lock().unwrap().len(), 1);
+    fixture.runtime.release(true);
+    let expected_target = fixture
+        .preparation(&ack.invocation_id)
+        .resolved_target
+        .expect("resolved target");
+    fixture.wait(|| {
+        fixture
+            .repository
+            .invocation_execution_snapshot(&ack.invocation_id)
+            .unwrap()
+            .is_some()
+    });
+    let snapshot = fixture
+        .repository
+        .invocation_execution_snapshot(&ack.invocation_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot.target, expected_target);
+    assert_eq!(snapshot.managed_mcp_servers[0].name, "session_tools");
+    assert_eq!(
+        snapshot.managed_mcp_servers[0].enabled_tools.as_deref(),
+        Some(["record_result".to_string()].as_slice())
+    );
+    assert!(!serde_json::to_string(&snapshot)
+        .unwrap()
+        .contains("secret-session-token"));
+}
+
+#[test]
+fn native_failure_preserves_activated_destination_and_retry_reuses_resolved_workspace() {
+    let fixture = PreparationFixture::new();
+    let ack = fixture
+        .app
+        .accept_prepared_message(fixture.input("retry"))
+        .unwrap();
+    fixture.wait(|| fixture.runtime.attempts() == 1);
+    let target = fixture
+        .preparation(&ack.invocation_id)
+        .resolved_target
+        .unwrap();
+    fixture.runtime.release(false);
+    fixture.wait(|| fixture.preparation(&ack.invocation_id).phase == PreparationPhase::Failed);
+    fixture.wait(|| {
+        fixture
+            .repository
+            .get_invocation(&ack.invocation_id)
+            .unwrap()
+            .unwrap()
+            .status
+            .is_terminal()
+    });
+    assert_eq!(
+        fixture
+            .app
+            .load_session(&ack.session_id)
+            .unwrap()
+            .session
+            .execution_target,
+        Some(target.clone())
+    );
+    assert!(fixture.preparation(&ack.invocation_id).can_retry);
+    assert!(fixture.runtime.state.lock().unwrap().delivered.is_empty());
+    // The accepted destination stays fixed when the editable selection changes elsewhere.
+    fixture.runtime.state.lock().unwrap().outcome = None;
+    let deadline = Instant::now() + std::time::Duration::from_secs(15);
+    loop {
+        match fixture.app.retry_preparation(&ack.invocation_id) {
+            Ok(()) => break,
+            Err(error) => {
+                assert!(Instant::now() < deadline, "retry stayed blocked: {error}");
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+    }
+    fixture.wait(|| fixture.runtime.attempts() == 2);
+    assert_eq!(
+        fixture.preparation(&ack.invocation_id).resolved_target,
+        Some(target.clone())
+    );
+    let paths = fixture
+        .runtime
+        .state
+        .lock()
+        .unwrap()
+        .requests
+        .iter()
+        .map(|r| r.working_directory.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, vec![Some(target.path.clone()), Some(target.path)]);
+    fixture.runtime.release(true);
+    fixture.wait(|| fixture.preparation(&ack.invocation_id).delivery_started);
+    fixture.wait(|| {
+        fixture
+            .repository
+            .get_invocation(&ack.invocation_id)
+            .unwrap()
+            .unwrap()
+            .status
+            .is_terminal()
+    });
+    assert_eq!(fixture.runtime.state.lock().unwrap().delivered.len(), 1);
+}
+
+#[test]
+fn cancel_routes_to_preparing_destination_and_late_readiness_cannot_deliver() {
+    let fixture = PreparationFixture::new();
+    let ack = fixture
+        .app
+        .accept_prepared_message(fixture.input("cancel"))
+        .unwrap();
+    fixture.wait(|| fixture.runtime.attempts() == 1);
+    fixture.app.cancel_preparation(&ack.invocation_id).unwrap();
+    fixture.wait(|| fixture.preparation(&ack.invocation_id).phase == PreparationPhase::Canceled);
+    assert!(fixture.runtime.state.lock().unwrap().delivered.is_empty());
+    assert!(fixture
+        .runtime
+        .state
+        .lock()
+        .unwrap()
+        .canceled
+        .contains(&ack.invocation_id));
+    assert!(fixture.old_runtime.calls.lock().unwrap().is_empty());
+    assert_eq!(
+        fixture
+            .app
+            .load_session(&ack.session_id)
+            .unwrap()
+            .session
+            .execution_target,
+        fixture.preparation(&ack.invocation_id).resolved_target
+    );
+}
+
+mod persistence;
+
+mod target_switches;

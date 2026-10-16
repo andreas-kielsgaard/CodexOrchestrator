@@ -1,7 +1,5 @@
 use super::{
-    domain::{
-        RegisteredRepositoryView, RepositoryCatalogOverviewView, ResolvedRepoBranchWorktreeTarget,
-    },
+    RegisteredRepositoryView, RepositoryCatalogOverviewView, ResolvedRepoBranchWorktreeTarget,
     RepositoryCatalog,
 };
 use serde::Deserialize;

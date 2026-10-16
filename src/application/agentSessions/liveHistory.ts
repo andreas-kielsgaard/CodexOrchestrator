@@ -44,6 +44,7 @@ export function reduceAgentSessionHistory(
   update: AgentSessionUpdateDto,
 ): AgentSessionHistoryReduction {
   if (update.sessionId !== details.session.id) return { kind: 'unchanged', details };
+  if (update.kind === 'replica_updated') return { kind: 'reconcile' };
   if (update.kind === 'queue_updated') {
     if (!update.timeline && !update.session && !update.removedInvocationIds?.length)
       return { kind: 'unchanged', details };

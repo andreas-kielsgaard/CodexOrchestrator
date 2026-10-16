@@ -1,1 +1,1 @@
-pub(crate) use orchid_engine::git_process::*;
+pub(crate) use orchid_core::git_process::*;

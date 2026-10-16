@@ -29,7 +29,13 @@ export function useAgentSessionCollection(
       }
       try {
         const next = navigation
-          ? await navigation.load()
+          ? await Promise.all([navigation.load(), client.listSessions({ availability: 'available' })]).then(([navigation, summaries]) => ({
+              ...navigation,
+              summaries: [
+                ...navigation.summaries.map((entry) => summaries.find((summary) => summary.id === entry.id && summary.updatedAt > entry.updatedAt) ?? entry),
+                ...summaries.filter((summary) => !navigation.summaries.some((entry) => entry.id === summary.id)),
+              ],
+            }))
           : {
               ...emptySessionNavigation(),
               summaries: await client.listSessions({ availability: 'available' }),

@@ -8,6 +8,20 @@ import {
 } from './tauriAgentSessionClient';
 
 describe('Tauri Agent Session client', () => {
+  it('retries an unacknowledged queue mutation with the same identity', async () => {
+    const invoke = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('connection lost'))
+      .mockResolvedValue({});
+    const client = createTauriAgentSessionClient({ invoke });
+    await expect(client.enqueueCompaction!('session-1')).rejects.toThrow('connection lost');
+    await client.enqueueCompaction!('session-1');
+    expect(invoke.mock.calls[1]).toEqual(invoke.mock.calls[0]);
+    await client.enqueueCompaction!('session-1');
+    expect(invoke.mock.calls[2][1].input.submissionId).not.toEqual(
+      invoke.mock.calls[0][1].input.submissionId,
+    );
+  });
   it('renames a Session through the dedicated command', async () => {
     const invoke = vi.fn().mockResolvedValue(completedDetails().session);
     const client = createTauriAgentSessionClient({ invoke });
@@ -44,13 +58,13 @@ describe('Tauri Agent Session client', () => {
   });
 
   it('completes listener registration before invoking send and keeps both correlation IDs', async () => {
-    let finishListen: ((unlisten: () => void) => void) | undefined;
+    const finishListen: Array<(unlisten: () => void) => void> = [];
     const calls: string[] = [];
     const client = createTauriAgentSessionClient({
       listen: () =>
         new Promise((resolve) => {
           calls.push('listen');
-          finishListen = resolve;
+          finishListen.push(resolve);
         }),
       invoke: async <T>(command: string) => {
         calls.push(command);
@@ -60,14 +74,14 @@ describe('Tauri Agent Session client', () => {
 
     const pending = client.sendMessage({ submittedText: 'Start now' });
     await Promise.resolve();
-    expect(calls).toEqual(['listen']);
+    expect(calls).toEqual(['listen', 'listen']);
 
-    finishListen?.(() => undefined);
+    finishListen.forEach((finish) => finish(() => undefined));
     await expect(pending).resolves.toEqual({
       sessionId: 'session-1',
       invocationId: 'invocation-1',
     });
-    expect(calls).toEqual(['listen', 'send_agent_session_message']);
+    expect(calls).toEqual(['listen', 'listen', 'send_agent_session_message']);
   });
 
   it('correlates persisted updates and repairs a missed notification through explicit reload', async () => {
@@ -76,8 +90,8 @@ describe('Tauri Agent Session client', () => {
     const durable = completedDetails();
     const client = createTauriAgentSessionClient({
       listen: async (event, handler) => {
-        expect(event).toBe(AGENT_SESSION_UPDATE_EVENT);
-        eventHandler = handler as (event: { payload: AgentSessionUpdateDto }) => void;
+        if (event === AGENT_SESSION_UPDATE_EVENT)
+          eventHandler = handler as (event: { payload: AgentSessionUpdateDto }) => void;
         return () => undefined;
       },
       invoke: async <T>(command: string) => {
@@ -146,7 +160,12 @@ function completedDetails(): AgentSessionDetailsDto {
           externalContext: null,
           providerActivity: null,
           providerTerminal: null,
-          processTerminal: { status: 'completed', completedAt: timestamp, exitCode: 0, signal: null },
+          processTerminal: {
+            status: 'completed',
+            completedAt: timestamp,
+            exitCode: 0,
+            signal: null,
+          },
           mcpToolActivities: [],
         },
         events: [],

@@ -17,6 +17,8 @@ live-tests = []
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+orchid-core = { path = "../crates/orchid-core" }
+orchid-services = { path = "../crates/orchid-services" }
 orchid-engine = { path = "../crates/orchid-engine" }
 chrono = { version = "0.4", features = ["clock", "serde"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
@@ -62,8 +64,5 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
+orchid-core = { path = "../crates/orchid-core", features = ["test-support"] }
 tempfile = "3"
-
-[profile.test-fast]
-inherits = "test"
-debug = "line-tables-only"
