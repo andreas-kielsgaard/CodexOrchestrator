@@ -547,6 +547,12 @@ export function App({
     invalidate: invalidateProductNavigation,
   } = useProductNavigation(initialNavigationDestination, supportsProductDestination);
 
+  // Retain the Voice draft and investigation position across session/profile navigation.
+  const [voiceVisited, setVoiceVisited] = useState(initialApplicationSurface === 'voice-sessions');
+  useEffect(() => {
+    if (surface === 'voice-sessions') setVoiceVisited(true);
+  }, [surface]);
+
   useEffect(() => {
     if (!sessionDeepLinks) return;
 
@@ -1660,9 +1666,7 @@ export function App({
             });
           }}
         />
-      ) : surface === 'voice-sessions' && voiceSessionClient ? (
-        <VoiceSessionsScreen queryClient={agentSessionClient.jevQueries} client={voiceSessionClient} onOpenSession={(sessionId) => dispatchProductNavigation({ type: 'navigate', intent: 'push', destination: { kind: 'agent_sessions', selection: { kind: 'session', sessionId }, focusedInvocationId: null } })} />
-      ) : surface === 'workflows' &&
+      ) : surface === 'voice-sessions' && voiceSessionClient ? null : surface === 'workflows' &&
         workflowAuthoringClient &&
         executionConfigurationClient &&
         currentProductDestination.kind === 'workflow' ? (
@@ -1873,6 +1877,21 @@ export function App({
       ) : (
         harnessManagementPreviewSurface
       )}
+      {voiceVisited && voiceSessionClient && <div className="voice-workspace-host" hidden={surface !== 'voice-sessions'}>
+        <VoiceSessionsScreen
+          active={surface === 'voice-sessions'}
+          queryClient={agentSessionClient.jevQueries}
+          client={voiceSessionClient}
+          onOpenSession={(sessionId, invocationId) => dispatchProductNavigation({
+            type: 'navigate', intent: 'push', destination: {
+              kind: 'agent_sessions', selection: { kind: 'session', sessionId }, focusedInvocationId: invocationId ?? null,
+            },
+          })}
+          onOpenProfile={executionConfigurationClient ? profileId => dispatchProductNavigation({
+            type: 'navigate', intent: 'push', destination: { kind: 'capability_profiles', profileId, newProfile: false },
+          }) : undefined}
+        />
+      </div>}
     </div>
   );
 

@@ -10,6 +10,7 @@ import {
   useEdgesState,
   type Node,
   type Edge,
+  type Viewport,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
@@ -53,6 +54,9 @@ interface CanvasProps {
   labelForConnection?(edge: WorkflowGraphConnection): string;
   connectionLabel?(edge: WorkflowGraphConnection): string;
   groups?: readonly WorkflowVisualGroup[];
+  compactNavigation?: boolean;
+  initialViewport?: Viewport;
+  onViewportChange?(viewport: Viewport): void;
 }
 const nodeTypes = { orchid: WorkflowCard };
 const edgeTypes = { orchid: WorkflowConnection };
@@ -74,6 +78,7 @@ function Canvas(props: CanvasProps) {
   const [layoutError, setLayoutError] = useState('');
   const [organizing, setOrganizing] = useState(false);
   const [preview, setPreview] = useState<{ x: number; y: number }>();
+  const pendingViewport = useRef<Viewport | 'fit' | null>(null);
   const flow = useReactFlow();
   const projection = projectWorkflowGroups(
     props.nodes,
@@ -81,7 +86,10 @@ function Canvas(props: CanvasProps) {
     props.groups ?? [],
     collapsed,
   );
-  const currentInputs = JSON.stringify({ nodes: projection.nodes, connections: projection.connections });
+  const currentInputs = JSON.stringify({
+    nodes: projection.nodes,
+    connections: projection.connections,
+  });
   const latest = useRef({ props, currentInputs });
   latest.current = { props, currentInputs };
   const topology = JSON.stringify({
@@ -96,9 +104,9 @@ function Canvas(props: CanvasProps) {
     try {
       const result = await organizeWorkflow(projection.nodes, projection.connections);
       if (latest.current.currentInputs !== currentInputs) return;
+      pendingViewport.current = fit ? 'fit' : null;
       setLayout(result);
       if (persist) latest.current.props.onOrganize?.(result.positions);
-      if (fit) requestAnimationFrame(() => void flow.fitView({ padding: 0.15, duration: 180 }));
     } catch (error) {
       setLayoutError(String(error));
     } finally {
@@ -111,8 +119,8 @@ function Canvas(props: CanvasProps) {
       void organizeWorkflow(projection.nodes, projection.connections)
         .then((result) => {
           if (active) {
+            pendingViewport.current = props.initialViewport ?? 'fit';
             setLayout(result);
-            requestAnimationFrame(() => void flow.fitView({ padding: 0.15 }));
           }
         })
         .catch((error) => {
@@ -156,7 +164,14 @@ function Canvas(props: CanvasProps) {
       draggable: Boolean(props.onMove) && !props.placing && !group,
       deletable: false,
       connectable: false,
-      style: { opacity: selectedId && !connected.has(node.id) && node.id !== selectedId ? 0.5 : 1 },
+      style: {
+        opacity:
+          (selectedId || props.highlightedIds?.length) &&
+          !connected.has(node.id) &&
+          node.id !== selectedId
+            ? 0.5
+            : 1,
+      },
       data: {
         content: group ? (
           <>
@@ -228,7 +243,12 @@ function Canvas(props: CanvasProps) {
         strokeWidth: focused ? 3 : 1.5,
         strokeDasharray:
           edge.enabled === false ? '2 6' : edge.role === 'context' ? '5 5' : undefined,
-        opacity: selectedId && !focused ? 0.2 : edge.role === 'context' ? 0.55 : 1,
+        opacity:
+          (selectedId || props.highlightedIds?.length) && !focused
+            ? 0.2
+            : edge.role === 'context'
+              ? 0.55
+              : 1,
       },
       data: {
         route: layout?.routes[edge.id],
@@ -264,6 +284,25 @@ function Canvas(props: CanvasProps) {
       allLabels,
     ],
   );
+  // Fit only after React Flow has received the arranged positions, not the source coordinates.
+  useEffect(() => {
+    if (
+      !pendingViewport.current ||
+      !layout ||
+      !nodes.length ||
+      !nodes.every(
+        (node) =>
+          node.position.x === layout.positions[node.id]?.x &&
+          node.position.y === layout.positions[node.id]?.y,
+      )
+    )
+      return;
+    const viewport = pendingViewport.current;
+    pendingViewport.current = null;
+    if (viewport === 'fit')
+      void flow.fitView({ padding: 0.15, ...(props.compactNavigation ? { maxZoom: 1 } : {}) });
+    else void flow.setViewport(viewport);
+  }, [nodes, layout, flow, props.compactNavigation]);
   const matching = useMemo(
     () => props.nodes.filter((n) => search && n.name.toLowerCase().includes(search.toLowerCase())),
     [search, props.nodes],
@@ -301,69 +340,77 @@ function Canvas(props: CanvasProps) {
         }
       }}
     >
-      <div className="workflow-flow-toolbar" role="toolbar" aria-label="Graph navigation">
-        <button onClick={() => void organize(Boolean(props.onOrganize))} disabled={organizing}>
-          {organizing ? 'Organizing…' : 'Organize'}
-        </button>
-        <button onClick={() => void flow.fitView({ padding: 0.15, duration: 200 })}>
-          Fit graph
-        </button>
-        <button
-          disabled={!selectedId}
-          onClick={() =>
-            void flow.fitView({
-              nodes: nodes.filter((n) => n.id === selectedId || connected.has(n.id)),
-              padding: 0.2,
-              maxZoom: 1,
-              duration: 200,
-            })
-          }
-        >
-          Fit selection
-        </button>
-        {!!props.groups?.length && (
-          <button
-            onClick={() =>
-              setCollapsed((current) =>
-                current.size ? new Set() : new Set(props.groups?.map((group) => group.id)),
-              )
-            }
-          >
-            {collapsed.size ? 'All nodes' : 'Overview'}
+      {!props.compactNavigation && (
+        <div className="workflow-flow-toolbar" role="toolbar" aria-label="Graph navigation">
+          {!props.compactNavigation && (
+            <button onClick={() => void organize(Boolean(props.onOrganize))} disabled={organizing}>
+              {organizing ? 'Organizing…' : 'Organize'}
+            </button>
+          )}
+          <button onClick={() => void flow.fitView({ padding: 0.15, duration: 200 })}>
+            Fit graph
           </button>
-        )}
-        <label>
-          <input
-            type="checkbox"
-            checked={allLabels}
-            onChange={(e) => setAllLabels(e.target.checked)}
-          />{' '}
-          All labels
-        </label>
-        <input
-          type="search"
-          aria-label="Find node"
-          placeholder="Find node"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        {(props.groups ?? []).map((group) => (
           <button
-            key={group.id}
-            aria-pressed={collapsed.has(group.id)}
+            disabled={!selectedId}
             onClick={() =>
-              setCollapsed((current) => {
-                const next = new Set(current);
-                if (next.has(group.id)) next.delete(group.id);
-                else next.add(group.id);
-                return next;
+              void flow.fitView({
+                nodes: nodes.filter((n) => n.id === selectedId || connected.has(n.id)),
+                padding: 0.2,
+                maxZoom: 1,
+                duration: 200,
               })
             }
           >
-            {collapsed.has(group.id) ? 'Expand' : 'Collapse'} {group.name}
+            Fit selection
           </button>
-        ))}
-      </div>
+          {!!props.groups?.length && (
+            <button
+              onClick={() =>
+                setCollapsed((current) =>
+                  current.size ? new Set() : new Set(props.groups?.map((group) => group.id)),
+                )
+              }
+            >
+              {collapsed.size ? 'All nodes' : 'Overview'}
+            </button>
+          )}
+          {!props.compactNavigation && (
+            <label>
+              <input
+                type="checkbox"
+                checked={allLabels}
+                onChange={(e) => setAllLabels(e.target.checked)}
+              />{' '}
+              All labels
+            </label>
+          )}
+          {!props.compactNavigation && (
+            <input
+              type="search"
+              aria-label="Find node"
+              placeholder="Find node"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          )}
+          {(props.groups ?? []).map((group) => (
+            <button
+              key={group.id}
+              aria-pressed={collapsed.has(group.id)}
+              onClick={() =>
+                setCollapsed((current) => {
+                  const next = new Set(current);
+                  if (next.has(group.id)) next.delete(group.id);
+                  else next.add(group.id);
+                  return next;
+                })
+              }
+            >
+              {collapsed.has(group.id) ? 'Expand' : 'Collapse'} {group.name}
+            </button>
+          ))}
+        </div>
+      )}
       {matching.length > 0 && (
         <div className="workflow-flow-search">
           {matching.map((n) => (
@@ -382,7 +429,10 @@ function Canvas(props: CanvasProps) {
           edgeTypes={edgeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
-          fitView
+          fitView={!props.initialViewport && !props.autoLayout && !collapsed.size}
+          fitViewOptions={props.compactNavigation ? { padding: 0.08, maxZoom: 1 } : undefined}
+          defaultViewport={props.initialViewport}
+          onMoveEnd={(_, viewport) => props.onViewportChange?.(viewport)}
           minZoom={0.2}
           maxZoom={1.8}
           nodesConnectable={false}

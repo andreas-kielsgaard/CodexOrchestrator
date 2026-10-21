@@ -36,7 +36,7 @@ export function WorkflowCard({
     <div
       className={`workflow-flow-card${selected ? ' is-selected' : ''}${zoom < 0.6 ? ' is-overview' : ''}`}
     >
-      <div className="workflow-flow-card__drag" title="Drag to move node" />
+      {data.move && <div className="workflow-flow-card__drag" title="Drag to move node" />}
       {data.ports.map((port, i) => (
         <Handle
           key={port.id}

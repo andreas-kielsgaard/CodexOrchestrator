@@ -93,11 +93,29 @@ it('shows typed questions, separate probability/confidence and the actual retain
   );
   const question = await screen.findByRole('region', { name: 'Question relevance:sentence' });
   expect(within(question).getByText('Confidence: 35.0%')).toBeVisible();
+  fireEvent.click(within(question).getByText('Probability distribution'));
   expect(within(question).getByText('57.0%')).toBeVisible();
   expect(screen.getByText(/retained earlier relevance/)).toBeVisible();
   expect(screen.getByText('Noul 0.100')).toBeVisible();
   fireEvent.click(screen.getByRole('checkbox', { name: 'Compare previous evaluation' }));
   expect(await screen.findByText('Previous: task_context → changed')).toBeVisible();
+});
+
+it('distinguishes an absent corresponding question from a pending response', async () => {
+  const previous = detail('old');
+  delete previous.evaluation.questions['relevance:sentence'];
+  delete previous.result!.answers['relevance:sentence'];
+  const client = {
+    list: vi.fn().mockResolvedValue(rows),
+    load: vi.fn(async (_: string, id: string) => (id === 'old' ? previous : detail(id))),
+  };
+  render(<JevQueryInspector client={client} sessionId="filter" />);
+  await screen.findByRole('region', { name: 'Question relevance:sentence' });
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Compare previous evaluation' }));
+  expect(
+    await screen.findByText('Previous: No corresponding question in the previous evaluation'),
+  ).toBeVisible();
+  expect(screen.queryByText('Previous: Awaiting result')).toBeNull();
 });
 it('keeps an older query selected when new evaluations arrive', async () => {
   const client = {

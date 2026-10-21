@@ -58,32 +58,35 @@ function Answer({ answer }: { answer?: JevAnswer }) {
       ) : (
         <>
           <p>Confidence: {percent(answer.confidence)}</p>
-          <table>
-            <thead>
-              <tr>
-                <th>Option</th>
-                <th>Probability</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(answer.probabilities)
-                .sort((a, b) => b[1] - a[1])
-                .map(([key, probability]) => (
-                  <tr key={key}>
-                    <td>{key}</td>
-                    <td>
-                      <meter
-                        min={0}
-                        max={1}
-                        value={probability}
-                        aria-label={`${key} probability`}
-                      />{' '}
-                      {percent(probability)}
-                    </td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
+          <details>
+            <summary>Probability distribution</summary>
+            <table>
+              <thead>
+                <tr>
+                  <th>Option</th>
+                  <th>Probability</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(answer.probabilities)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([key, probability]) => (
+                    <tr key={key}>
+                      <td>{key}</td>
+                      <td>
+                        <meter
+                          min={0}
+                          max={1}
+                          value={probability}
+                          aria-label={`${key} probability`}
+                        />{' '}
+                        {percent(probability)}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </details>
           {answer.type === 'score' && (
             <details>
               <summary>Score legend</summary>
@@ -101,12 +104,14 @@ export function JevQueryInspector({
   applications = [],
   onShowRelease,
   questionSubject,
+  active = true,
 }: {
   client: JevQueryClient;
   sessionId: string;
   applications?: readonly AppliedJevQuery[];
   onShowRelease?(requestId: string): void;
   questionSubject?(detail: JevQueryDetail, questionId: string): string | undefined;
+  active?: boolean;
 }) {
   const [queries, setQueries] = useState<JevQuerySummary[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -125,6 +130,7 @@ export function JevQueryInspector({
     setCompare(false);
   }, [sessionId]);
   useEffect(() => {
+    if (!active) return;
     let alive = true;
     let pending = false;
     const read = async () => {
@@ -149,7 +155,7 @@ export function JevQueryInspector({
       alive = false;
       clearInterval(timer);
     };
-  }, [client, sessionId, refresh]);
+  }, [client, sessionId, refresh, active]);
   useEffect(() => {
     let alive = true;
     setDetail(null);
@@ -227,6 +233,7 @@ export function JevQueryInspector({
             <header>
               <div>
                 <h3>Evaluation</h3>
+                <p>{selectedQuery?.inputPreview}</p>
                 <small>
                   {detail.invocation.id} · {detail.invocation.status}
                 </small>
@@ -241,52 +248,6 @@ export function JevQueryInspector({
                 Compare previous evaluation
               </label>
             </header>
-            <details>
-              <summary>Exact submitted context</summary>
-              <StructuredValue value={detail.evaluation.state} />
-            </details>
-            {compare && previous && (
-              <details>
-                <summary>Previous submitted context</summary>
-                <StructuredValue value={previous.evaluation.state} />
-              </details>
-            )}
-            <div className="jev-questions">
-              {Object.entries(detail.evaluation.questions).map(([id, question]) => (
-                <section key={id} aria-label={`Question ${id}`}>
-                  <header>
-                    <h3>{id.split(':')[0]}</h3>
-                    <small>
-                      {question.type} · {id.includes(':') ? id.slice(id.indexOf(':') + 1) : id}
-                    </small>
-                  </header>
-                  {questionSubject?.(detail, id) && <p>{questionSubject(detail, id)}</p>}
-                  <div className="jev-question-columns">
-                    <div>
-                      <details>
-                        <summary>Instructions</summary>
-                        <StructuredValue value={question.instructions} />
-                      </details>
-                      <details>
-                        <summary>Criteria</summary>
-                        <StructuredValue value={question.criteria} />
-                      </details>
-                    </div>
-                    <Answer answer={detail.result?.answers[id]} />
-                  </div>
-                  {compare && previous && (
-                    <p className="jev-comparison">
-                      Previous: {answerLabel(previous.result?.answers[id])}
-                      {previous.result?.answers[id] &&
-                      answerLabel(previous.result.answers[id]) !==
-                        answerLabel(detail.result?.answers[id])
-                        ? ' → changed'
-                        : ''}
-                    </p>
-                  )}
-                </section>
-              ))}
-            </div>
             <section className="jev-applied">
               <h3>Applied decision</h3>
               {application ? (
@@ -339,11 +300,69 @@ export function JevQueryInspector({
                 </>
               ) : (
                 <p>
-                  No applied-decision evidence is available in this view. The provider result
-                  alone does not establish delivery.
+                  No applied-decision evidence is available in this view. The provider result alone
+                  does not establish delivery.
                 </p>
               )}
             </section>
+            <details>
+              <summary>Exact submitted context</summary>
+              <StructuredValue value={detail.evaluation.state} />
+            </details>
+            {compare && previous && (
+              <div className="jev-comparison">
+                <p>
+                  Compared with {new Date(previous.invocation.createdAt).toLocaleString()} ·{' '}
+                  {previous.invocation.id} · {previous.invocation.status}. Independent evaluation;
+                  matching question identities only.
+                </p>
+                <details>
+                  <summary>Previous submitted context</summary>
+                  <StructuredValue value={previous.evaluation.state} />
+                </details>
+              </div>
+            )}
+            <div className="jev-questions">
+              {Object.entries(detail.evaluation.questions).map(([id, question]) => (
+                <section key={id} aria-label={`Question ${id}`}>
+                  <header>
+                    <h3>{id.split(':')[0]}</h3>
+                    <small>
+                      {question.type} · {id.includes(':') ? id.slice(id.indexOf(':') + 1) : id}
+                    </small>
+                  </header>
+                  {questionSubject?.(detail, id) && <p>{questionSubject(detail, id)}</p>}
+                  <div className="jev-question-columns">
+                    <div>
+                      <details>
+                        <summary>Instructions</summary>
+                        <StructuredValue value={question.instructions} />
+                      </details>
+                      <details>
+                        <summary>Criteria</summary>
+                        <StructuredValue value={question.criteria} />
+                      </details>
+                    </div>
+                    <Answer answer={detail.result?.answers[id]} />
+                  </div>
+                  {compare && previous && (
+                    <p className="jev-comparison">
+                      Previous:{' '}
+                      {!previous.evaluation.questions[id]
+                        ? 'No corresponding question in the previous evaluation'
+                        : previous.result && !previous.result.answers[id]
+                          ? 'No recorded answer'
+                          : answerLabel(previous.result?.answers[id])}
+                      {previous.result?.answers[id] &&
+                      answerLabel(previous.result.answers[id]) !==
+                        answerLabel(detail.result?.answers[id])
+                        ? ' → changed'
+                        : ''}
+                    </p>
+                  )}
+                </section>
+              ))}
+            </div>
             <footer>
               <p>
                 Model:{' '}

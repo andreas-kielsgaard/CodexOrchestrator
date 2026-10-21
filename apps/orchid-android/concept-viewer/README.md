@@ -1,6 +1,6 @@
 # Orchid Concepts
 
-Offline Android viewer for the three desktop layout sketches in `docs/voice-sessions/visual-exploration`. This is a separate application (`dev.orchid.concepts`); it has no voice, assistant, network or runtime functionality.
+Offline Android viewer for desktop layout sketches and prototype screenshots in `docs/voice-sessions/visual-exploration`. This is a separate application (`dev.orchid.concepts`); it has no voice, assistant, network or runtime functionality. Screens 1–3 are concept mockups; 4–6 show the working desktop prototype.
 
 `MainActivity` owns image navigation, native zoom/pan, Fit and the Wide/Portrait switch. Gradle stages the original images as generated assets; edit the source images rather than maintaining another copy here. Captions identify known errors in the sketches.
 

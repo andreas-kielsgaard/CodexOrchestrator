@@ -9,6 +9,9 @@ These are built-in Image Gen concept mockups, shown inline in the conversation. 
 | [01-workflow-canvas.png](01-workflow-canvas.png) | Typed stages, reaction shortcut, JEV inspector and separately scoped runtime |
 | [02-live-trace.png](02-live-trace.png) | Request provenance, classification, delivery and current processing stage |
 | [03-extension-workspace.png](03-extension-workspace.png) | Extension-owned runtime, microphone/output independence and ongoing work |
+| [04-prototype-workflow.png](04-prototype-workflow.png) | Working extension graph, actual stage bindings and separate runtime controls |
+| [05-prototype-node.png](05-prototype-node.png) | Real request-buffer inspector, reaction switch and silent node notification setting |
+| [06-prototype-activity.png](06-prototype-activity.png) | Recorded routes and delivery receipts from real JEV/agent runs with simulated text |
 
 These could be complementary views of the same extension. The existing application screenshot in [reference-current-workflow.png](reference-current-workflow.png) and `src/theme/tokens.css` grounded the palette and controls.
 
@@ -17,6 +20,8 @@ These could be complementary views of the same extension. The existing applicati
 `apps/orchid-android/concept-viewer` packages these three desktop mockups into **Orchid Concepts**, a separate offline application with Previous/Next, zoom/pan, Fit and Wide/Portrait controls. It preserves the desktop compositions and displays the corrections below; the depicted workflow controls are illustrations.
 
 Installed and verified on S21 `R3CRA0BAYXD` over Tailscale on 2026-10-12. Build and lint passed (0 errors; 5 informational warnings). The device probe passed navigation, rendered content, Zoom and Fit. Captured screens confirmed all three images, panning and both orientations; landscape retains the selected design and uses compact controls. Production Orchid Voice was not rebuilt or reconfigured. Local evidence: `.dev/concept-viewer-phone-tests.txt` and `.dev/concept-viewer-*.png`.
+
+The implementation experiment is on `codex/voice-extension-workflow`. Viewer 0.2 adds screens 4–6 from that native desktop prototype; all six images, navigation, Zoom and Fit passed the S21 device probe. The original mockups remain screens 1–3. See [prototype shape and evidence](../../architecture/voice-extension-workflow-prototype.md).
 
 ## Visual corrections before implementation
 

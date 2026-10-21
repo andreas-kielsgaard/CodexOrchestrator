@@ -16,12 +16,17 @@ import android.widget.TextView;
 
 /** Offline viewer for desktop mockups, with their original proportions preserved. */
 public class MainActivity extends Activity {
-    private static final String[] FILES = {"01-workflow-canvas.png", "02-live-trace.png", "03-extension-workspace.png"};
-    private static final String[] TITLES = {"Workflow canvas", "Live interaction trace", "Voice extension workspace"};
+    private static final String[] FILES = {"01-workflow-canvas.png", "02-live-trace.png", "03-extension-workspace.png",
+        "04-prototype-workflow.png", "05-prototype-node.png", "06-prototype-activity.png"};
+    private static final String[] TITLES = {"Workflow canvas", "Live interaction trace", "Voice extension workspace",
+        "Prototype: workflow", "Prototype: node editing", "Prototype: actual activity"};
     private static final String[] NOTES = {
         "Layout sketch: Digest should be labelled Agent.",
         "Layout sketch: extra extension names are placeholders.",
-        "Layout sketch: Router delegates; Digest observes and requests output."
+        "Layout sketch: Router delegates; Digest observes and requests output.",
+        "Working desktop prototype: extension-owned graph and associated runtime.",
+        "Working prototype: editable prompts, reaction routing and node notification sound.",
+        "Actual desktop activity from simulated text requests through real JEV and agents."
     };
     private int index;
     private TextView title, note;
@@ -114,7 +119,7 @@ public class MainActivity extends Activity {
     }
     private void show(int selected) {
         index = Math.max(0, Math.min(FILES.length - 1, selected));
-        title.setText((index + 1) + " / 3 · " + TITLES[index] + (landscape ? " · " + NOTES[index] : ""));
+        title.setText((index + 1) + " / " + FILES.length + " · " + TITLES[index] + (landscape ? " · " + NOTES[index] : ""));
         note.setText(NOTES[index]);
         previous.setEnabled(index > 0);
         next.setEnabled(index < FILES.length - 1);

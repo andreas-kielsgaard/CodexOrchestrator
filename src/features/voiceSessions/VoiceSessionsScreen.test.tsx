@@ -193,9 +193,18 @@ it('shows held input, actual microphone fallback, and a failed reasoning stage',
     />,
   );
   fireEvent.click(await screen.findByRole('button', { name: 'Activity' }));
-  expect(await screen.findByText('Waiting for you to finish')).toBeVisible();
+  expect(
+    await screen.findByText('Waiting for you to finish', {
+      selector: '.voice-activity > p strong',
+    }),
+  ).toBeVisible();
+  fireEvent.click(screen.getByText('Connection and processing diagnostics'));
   expect(screen.getByText(/external requested, phone fallback/)).toBeVisible();
-  expect(screen.getByText('Pinned skill changed')).toBeVisible();
+  expect(
+    screen
+      .getAllByText(/Pinned skill changed/)
+      .some((element) => element.textContent?.includes('Pinned skill changed')),
+  ).toBe(true);
   expect(screen.getByRole('button', { name: 'output · not started' })).toBeVisible();
   expect(screen.queryByText('Waiting for input')).toBeNull();
 });

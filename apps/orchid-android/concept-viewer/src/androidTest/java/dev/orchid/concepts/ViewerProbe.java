@@ -19,15 +19,15 @@ public class ViewerProbe extends Instrumentation {
             activity = (MainActivity) startActivitySync(launch);
             MainActivity viewer = activity;
             waitForImage(viewer);
-            checkTitle(viewer, "1 / 3");
-            for (int page = 2; page <= 3; page++) {
+            checkTitle(viewer, "1 / 6");
+            for (int page = 2; page <= 6; page++) {
                 runOnMainSync(() -> viewer.findViewById(R.id.next).performClick());
                 waitForImage(viewer);
-                checkTitle(viewer, page + " / 3");
+                checkTitle(viewer, page + " / 6");
             }
             runOnMainSync(() -> viewer.findViewById(R.id.previous).performClick());
             waitForImage(viewer);
-            checkTitle(viewer, "2 / 3");
+            checkTitle(viewer, "5 / 6");
             float[] before = new float[1];
             runOnMainSync(() -> { before[0] = viewer.image.getScale(); viewer.findViewById(R.id.zoom).performClick(); });
             SystemClock.sleep(800);
@@ -36,7 +36,7 @@ public class ViewerProbe extends Instrumentation {
             waitForImage(viewer);
             SystemClock.sleep(800);
             if (Math.abs(scale(viewer) - before[0]) > 0.05f) throw new AssertionError("Fit did not restore image scale");
-            result.putString("viewer", "All three bundled concepts rendered; Next, Previous, Zoom and Fit passed");
+            result.putString("viewer", "All six concepts/prototype screens rendered; Next, Previous, Zoom and Fit passed");
             finish(Activity.RESULT_OK, result);
         } catch (Throwable error) {
             result.putString("failure", error.toString());

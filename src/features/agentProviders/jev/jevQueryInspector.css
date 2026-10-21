@@ -122,8 +122,10 @@
   width: 70px;
 }
 .jev-applied {
-  border-top: 1px solid var(--border);
-  padding-top: 16px;
+  border: 1px solid var(--border-strong);
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 16px;
 }
 .jev-comparison {
   color: var(--accent);
@@ -142,5 +144,22 @@
 @media (max-width: 1050px) {
   .jev-query-workspace {
     grid-template-columns: 230px minmax(0, 1fr);
+  }
+}
+@media (max-width: 700px) {
+  .jev-query-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .jev-query-list {
+    max-height: 260px;
+  }
+  .jev-questions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .jev-queries header {
+    flex-wrap: wrap;
+  }
+  .jev-applied {
+    overflow-x: auto;
   }
 }
