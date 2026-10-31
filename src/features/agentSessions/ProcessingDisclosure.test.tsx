@@ -58,7 +58,7 @@ it('loads full durable action data only when the action is expanded', async () =
   expect(load).toHaveBeenCalledWith(event.id);
 });
 
-it('groups completed actions around messages, keeps live command details visible, and collapses on completion', () => {
+it('groups actions around messages, keeps live command details visible, and collapses on completion', () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-10-01T12:00:05Z'));
   const tool = (
@@ -108,7 +108,8 @@ it('groups completed actions around messages, keeps live command details visible
     expect(container.querySelector('.processing-disclosure')).toHaveAttribute('open');
     expect(screen.getByText('1 action · 1 file edit')).toBeVisible();
     expect(screen.getByText('Next batch')).toBeVisible();
-    expect(screen.getByText('1 action')).toBeVisible();
+    expect(screen.getByText('2 actions')).toBeVisible();
+    expect(screen.getByText('1 Running')).toBeVisible();
     expect(screen.getByText('npm test 5')).toBeVisible();
     expect(screen.queryByText('npm test 1')).not.toBeInTheDocument();
     act(() => vi.advanceTimersByTime(61000));
@@ -135,6 +136,50 @@ it('groups completed actions around messages, keeps live command details visible
   } finally {
     vi.useRealTimers();
   }
+});
+
+it('keeps concurrent calls in one group through partial and full completion', () => {
+  const events = [1, 2, 3].map((sequence) => {
+    const event = runtimeEvent(sequence, 'tool_activity', 'command');
+    event.rawPayload = {
+      item: { id: `tool-${sequence}`, type: 'command_execution', command: `npm test ${sequence}` },
+    };
+    event.normalized!.toolActivity = {
+      kind: 'command',
+      phase: 'started',
+      itemId: `tool-${sequence}`,
+      server: null,
+      tool: null,
+      status: 'in_progress',
+      resultClassification: 'unknown',
+    };
+    return event;
+  });
+  const activity = () =>
+    projectAgentSessionTranscript(sessionDetails('running', events)).invocations[0].processing;
+  const props = { invocationId: 'batch', expanded: true, running: true, onToggle: vi.fn() };
+  const { container, rerender } = render(<ProcessingDisclosure {...props} activity={activity()} />);
+  const group = container.querySelector('.turn-operation-group')!;
+  expect(container.querySelectorAll('.turn-activity > li')).toHaveLength(1);
+  expect(group.querySelectorAll('.turn-tool-event--running')).toHaveLength(3);
+  expect(screen.getByText('3 Running')).toBeVisible();
+  events[0].normalized!.toolActivity!.phase = 'completed';
+  rerender(<ProcessingDisclosure {...props} activity={activity()} />);
+  expect(container.querySelector('.turn-operation-group')).toBe(group);
+  expect(group.querySelectorAll('.turn-tool-event')).toHaveLength(3);
+  expect(group.querySelectorAll('.turn-tool-event--running')).toHaveLength(2);
+  fireEvent.click(group.querySelector('summary')!);
+  expect(group.querySelector('details')).not.toHaveAttribute('open');
+  expect(screen.queryByText('npm test 2')).not.toBeInTheDocument();
+  fireEvent.click(group.querySelector('summary')!);
+  expect(screen.getByText('npm test 2')).toBeVisible();
+  events.forEach((event) => {
+    event.normalized!.toolActivity!.phase = 'completed';
+  });
+  rerender(<ProcessingDisclosure {...props} activity={activity()} />);
+  expect(container.querySelector('.turn-operation-group')).toBe(group);
+  expect(group.querySelectorAll('.turn-tool-event')).toHaveLength(3);
+  expect(screen.queryByText(/\d+ Running/)).not.toBeInTheDocument();
 });
 
 it('places a counted failure indicator beside the action count', () => {

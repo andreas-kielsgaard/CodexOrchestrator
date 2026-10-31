@@ -47,7 +47,15 @@ export function branchLayout(
         .map((row) => ({ ...row, branchGrouped: true })),
     }));
   return applyNavigationOrder<SessionNavigationNode>(
-    [...groups, ...rows.filter((row) => !row.branch || detached.has(`session:${row.summary.id}`))],
+    [
+      ...groups,
+      ...rows.filter(
+        (row) =>
+          !row.branch ||
+          row.branch.repositoryId !== repositoryId ||
+          detached.has(`session:${row.summary.id}`),
+      ),
+    ],
     layoutId,
     scope,
     orders,

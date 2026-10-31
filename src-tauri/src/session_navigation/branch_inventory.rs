@@ -201,6 +201,90 @@ impl BranchInventory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::execution_targets::domain::{ExecutionBinding, SessionExecutionTarget};
+
+    fn branch(reference: &str, device: &str, path: &str) -> NavigationBranch {
+        NavigationBranch {
+            id: branch_id("repo", reference),
+            repository_id: "repo".into(),
+            branch_ref: reference.into(),
+            created_at: None,
+            paths: vec![path.into()],
+            worktrees: vec![NavigationWorktree {
+                device_id: device.into(),
+                device_name: device.into(),
+                path: path.into(),
+                head: None,
+                created_at: None,
+                dirty: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn grouping_follows_checkout_changes_instead_of_the_stored_branch() {
+        let target = SessionExecutionTarget {
+            capability_profile_id: "profile".into(),
+            capability_profile_revision: 1,
+            execution: ExecutionBinding::default(),
+            repository_id: "repo".into(),
+            branch_ref: "refs/heads/old".into(),
+            worktree_id: "worktree".into(),
+            path: "C:/active".into(),
+            head: None,
+        };
+        let branches = vec![
+            branch("refs/heads/old", "local", "C:/other"),
+            branch("refs/heads/new", "remote", "C:/active"),
+            branch("refs/heads/new", "local", "C:/active"),
+        ];
+        assert_eq!(
+            current_session_branch(Some(&target), None, &branches)
+                .unwrap()
+                .branch_ref,
+            "refs/heads/new"
+        );
+        assert_eq!(
+            current_session_branch(None, Some("C:/active/"), &branches)
+                .unwrap()
+                .branch_ref,
+            "refs/heads/new"
+        );
+        assert_eq!(
+            current_session_branch(Some(&target), None, &branches[..1])
+                .unwrap()
+                .branch_ref,
+            "refs/heads/old"
+        );
+    }
+
+    #[test]
+    fn remote_grouping_is_device_scoped_and_does_not_use_the_local_directory() {
+        let mut execution = ExecutionBinding::default();
+        execution.device_id = "remote".into();
+        let target = SessionExecutionTarget {
+            capability_profile_id: "profile".into(),
+            capability_profile_revision: 1,
+            execution,
+            repository_id: "repo".into(),
+            branch_ref: "refs/heads/old".into(),
+            worktree_id: "worktree".into(),
+            path: "/active".into(),
+            head: None,
+        };
+        let branches = vec![
+            branch("refs/heads/local", "local", "/active"),
+            branch("refs/heads/new", "remote", "/active"),
+        ];
+        assert_eq!(
+            current_session_branch(Some(&target), Some("/active"), &branches)
+                .unwrap()
+                .branch_ref,
+            "refs/heads/new"
+        );
+        assert!(current_session_branch(Some(&target), Some("/active"), &branches[..1]).is_none());
+    }
+
     #[test]
     fn branch_keys_are_repository_scoped_and_stable_across_devices() {
         assert_eq!(
@@ -234,26 +318,50 @@ pub(crate) fn session_branches(
         .iter()
         .filter_map(|summary| {
             let session = &summary.session;
-            let branch = if let Some(target) = &session.execution_target {
-                let id = branch_id(&target.repository_id, &target.branch_ref);
-                branches.iter().find(|branch| branch.id == id)
-            } else {
-                branches.iter().find(|branch| {
-                    branch.paths.iter().any(|path| {
-                        path.replace('\\', "/").trim_end_matches('/')
-                            == session
-                                .working_directory
-                                .as_deref()
-                                .unwrap_or("")
-                                .replace('\\', "/")
-                                .trim_end_matches('/')
-                    })
-                })
-            }?;
+            let branch = current_session_branch(
+                session.execution_target.as_ref(),
+                session.working_directory.as_deref(),
+                branches,
+            )?;
             Some(SessionBranch {
                 session_id: session.id.as_str().into(),
                 branch_id: branch.id.clone(),
             })
         })
         .collect()
+}
+
+fn current_session_branch<'a>(
+    target: Option<&crate::execution_targets::domain::SessionExecutionTarget>,
+    directory: Option<&str>,
+    branches: &'a [NavigationBranch],
+) -> Option<&'a NavigationBranch> {
+    let device = target.map_or("local", |target| target.execution.device_id.as_str());
+    let matches_path = |path: &str| {
+        let same = |other: &str| {
+            if device == "local" {
+                crate::repository_context::PathIdentity::of(std::path::Path::new(path))
+                    == crate::repository_context::PathIdentity::of(std::path::Path::new(other))
+            } else {
+                path.trim_end_matches('/') == other.trim_end_matches('/')
+            }
+        };
+        target.is_some_and(|target| same(&target.path))
+            || (device == "local" && directory.is_some_and(same))
+    };
+    // A checkout can change branch without updating the stored execution snapshot.
+    branches
+        .iter()
+        .find(|branch| {
+            target.is_none_or(|target| branch.repository_id == target.repository_id)
+                && branch
+                    .worktrees
+                    .iter()
+                    .any(|worktree| worktree.device_id == device && matches_path(&worktree.path))
+        })
+        .or_else(|| {
+            let target = target?;
+            let id = branch_id(&target.repository_id, &target.branch_ref);
+            branches.iter().find(|branch| branch.id == id)
+        })
 }

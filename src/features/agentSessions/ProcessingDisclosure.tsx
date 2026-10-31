@@ -81,34 +81,48 @@ function ActivityGroups({
   let batch: TranscriptActivity[] = [];
   const flush = () => {
     if (batch.length)
-      rows.push(<OperationGroup key={`batch:${batch[0].id}`} items={batch} safeOnly={safeOnly} />);
+      rows.push(
+        <OperationGroup
+          key={`batch:${batch[0].id}`}
+          items={batch}
+          running={running}
+          safeOnly={safeOnly}
+        />,
+      );
     batch = [];
   };
   for (const item of activity) {
-    const ongoing =
-      running &&
-      item.kind === 'tool' &&
-      item.safeDetail?.kind === 'tool' &&
-      item.safeDetail.phase === 'started' &&
-      !item.completedAt;
-    if (item.kind === 'tool' && !ongoing) batch.push(item);
+    if (item.kind === 'tool') batch.push(item);
     else {
       flush();
-      rows.push(
-        ongoing ? (
-          <ToolActivityItem key={item.id} item={item} safeOnly={safeOnly} ongoing />
-        ) : (
-          <ActivityItem key={item.id} item={item} safeOnly={safeOnly} />
-        ),
-      );
+      rows.push(<ActivityItem key={item.id} item={item} safeOnly={safeOnly} />);
     }
   }
   flush();
   return rows;
 }
 
-function OperationGroup({ items, safeOnly }: { items: TranscriptActivity[]; safeOnly: boolean }) {
-  const [open, setOpen] = useState(false);
+function isOngoingTool(item: TranscriptActivity, running: boolean): boolean {
+  return (
+    running &&
+    item.safeDetail?.kind === 'tool' &&
+    item.safeDetail.phase === 'started' &&
+    !item.completedAt
+  );
+}
+
+function OperationGroup({
+  items,
+  running,
+  safeOnly,
+}: {
+  items: TranscriptActivity[];
+  running: boolean;
+  safeOnly: boolean;
+}) {
+  const ongoingCount = items.filter((item) => isOngoingTool(item, running)).length;
+  const [expanded, setExpanded] = useState<boolean | null>(null);
+  const open = expanded ?? ongoingCount > 0;
   let actions = 0;
   let files = 0;
   const failedCount = items.filter((item) => presentToolActivity(item, safeOnly).failed).length;
@@ -135,10 +149,13 @@ function OperationGroup({ items, safeOnly }: { items: TranscriptActivity[]; safe
         <summary
           onClick={(event) => {
             event.preventDefault();
-            setOpen(!open);
+            setExpanded(!open);
           }}
         >
           <span>{label}</span>
+          {ongoingCount > 0 && (
+            <span className="turn-tool-event__running">{ongoingCount} Running</span>
+          )}
           {failedCount > 0 && (
             <span className="turn-tool-event__failure">{failedCount} Failed</span>
           )}
@@ -149,7 +166,12 @@ function OperationGroup({ items, safeOnly }: { items: TranscriptActivity[]; safe
         {open && (
           <ol>
             {items.map((item) => (
-              <ToolActivityItem key={item.id} item={item} safeOnly={safeOnly} />
+              <ToolActivityItem
+                key={item.id}
+                item={item}
+                safeOnly={safeOnly}
+                ongoing={isOngoingTool(item, running)}
+              />
             ))}
           </ol>
         )}

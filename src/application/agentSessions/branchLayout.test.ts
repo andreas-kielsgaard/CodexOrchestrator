@@ -52,3 +52,48 @@ it('persists detached conversations between branch groups and preserves their af
   expect(rows[1]).toMatchObject({ branch: { id: 'branch:new' } });
   expect(rows[2]).toMatchObject({ children: [] });
 });
+
+it('moves conversations with branch affinity while retaining explicit detachment', () => {
+  const initial = data();
+  const changed = {
+    ...initial,
+    sessionBranches: initial.sessionBranches.map((item) => ({ ...item, branchId: 'branch:new' })),
+  };
+  const grouped = contents(buildSessionNavigation(changed));
+  expect(grouped[0]).toMatchObject({
+    children: [{ summary: { id: 'session-1' } }, { summary: { id: 'session-2' } }],
+  });
+  const detached = contents(
+    buildSessionNavigation({
+      ...changed,
+      orders: [
+        {
+          scope: { kind: 'session_layout', folderId: 'repo:repo-a:sessions' },
+          orderedIds: ['branch:old', 'session:session-1', 'branch:new'],
+        },
+      ],
+    }),
+  );
+  expect(detached[1]).toMatchObject({
+    kind: 'session',
+    summary: { id: 'session-1' },
+    branch: { id: 'branch:new' },
+  });
+  expect(detached[2]).toMatchObject({ children: [{ summary: { id: 'session-2' } }] });
+});
+
+it('preserves explicit placement in another repository after a branch switch', () => {
+  const initial = data();
+  const model = buildSessionNavigation({
+    ...initial,
+    organization: initial.organization.map((item) =>
+      item.sessionId === 'session-1'
+        ? { ...item, placement: { kind: 'repository', repositoryId: 'repo-b' } }
+        : item,
+    ),
+  });
+  const folder = navigationFolders(model).find(
+    (item) => item.node.id === 'repo:repo-b:sessions',
+  )!.node;
+  expect(folder.children).toMatchObject([{ kind: 'session', summary: { id: 'session-1' } }]);
+});
