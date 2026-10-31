@@ -18,6 +18,8 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 orchid-engine = { path = "../crates/orchid-engine" }
+fs2 = "0.4"
+orchid-coordinator = { path = "../crates/orchid-coordinator" }
 chrono = { version = "0.4", features = ["clock", "serde"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
@@ -28,7 +30,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 rmcp = { version = "=2.2.0", default-features = false, features = ["server", "macros", "transport-streamable-http-server"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "process"] }
 tokio-util = "0.7"
 axum = { version = "0.8", features = ["http1", "json", "tokio"], default-features = false }
 tower = "0.5"

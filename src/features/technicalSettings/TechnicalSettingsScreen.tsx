@@ -2,20 +2,18 @@ import { useState } from 'react';
 import type { ExecutionConfigurationClient } from '../../application/executionConfiguration';
 import type { NativeProfileClient } from '../../infrastructure/agentProviders/codex/profiles/nativeProfileClient';
 import type { OtpCatalogueReader, OtpInstallationClient } from '../../application/otp';
-import type { ExecutionTargetClient } from '../../application/executionTargets/contracts';
 import type { ClaudeSetupClient } from '../../infrastructure/agentProviders/claude/claudeSetupClient';
 import type { TechnicalSettingsSection } from '../../application/productNavigation';
 import type { AgentCliUpdateClient } from '../../application/agentCliUpdates';
 import { availableProviderSettings } from '../agentProviders/registrations';
 import { OtpConfigurationPanel } from './OtpConfigurationPanel';
-import { DeviceSetupOverview, InferenceSourceOverview } from './ExecutionSetupOverview';
+import { HarnessSetupOverview, InferenceSourceOverview } from './ExecutionSetupOverview';
 import { AgentCliUpdateNotice } from './AgentCliUpdateNotice';
 import './technicalSettings.css';
 export function TechnicalSettingsScreen({
   nativeClient,
   claudeClient,
   executionClient,
-  deviceClient,
   readOtpCatalogue,
   otpInstallations,
   section: controlledSection,
@@ -27,7 +25,6 @@ export function TechnicalSettingsScreen({
   readonly nativeClient: NativeProfileClient;
   readonly claudeClient?: ClaudeSetupClient;
   readonly executionClient?: ExecutionConfigurationClient;
-  readonly deviceClient?: ExecutionTargetClient;
   readonly readOtpCatalogue?: OtpCatalogueReader;
   readonly otpInstallations?: OtpInstallationClient;
   readonly section?: TechnicalSettingsSection;
@@ -61,7 +58,7 @@ export function TechnicalSettingsScreen({
               aria-pressed={section === 'devices'}
               onClick={() => setSection('devices')}
             >
-              Devices
+              Agent setups
             </button>
           )}
           {executionClient && (
@@ -97,9 +94,8 @@ export function TechnicalSettingsScreen({
       <div className="technical-settings__content">
         {cliUpdateClient ? <AgentCliUpdateNotice client={cliUpdateClient} /> : null}
         {section === 'devices' && executionClient ? (
-          <DeviceSetupOverview
+          <HarnessSetupOverview
             executionClient={executionClient}
-            deviceClient={deviceClient}
             providers={providerSettings.map((registration) => registration.provider)}
             onConfigureProvider={(provider) => {
               const registration = providerSettings.find((entry) => entry.provider === provider);

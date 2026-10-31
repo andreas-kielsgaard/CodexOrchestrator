@@ -1,5 +1,7 @@
 # Device, Harness, Inference, and Composer Drafts
 
+Update 2026-10-04: [Runtime Coordinator first slice](runtime-coordinator-first-slice-shape.md) introduces device power controls and local/external coordinator hosting. Device controls move to its top-level tab; provider and inference setup remain in Technical Settings. The broader shared catalogue and network enrollment below remain deferred.
+
 Status: implementation shape, 2026-09-20. The local usability slice is implemented: composer
 draft recovery, Agent Sessions return location, local Codex harness/source projection, profile
 route selection, and the app-server protocol fix. The Coordinator, Device Agent, and shared

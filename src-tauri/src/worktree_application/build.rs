@@ -56,7 +56,7 @@ pub(super) fn build(
             "Application storage resolves inside the worktree.",
         ));
     }
-    let tool = build_tool::materialize()?;
+    let tool = source_build_tool(&worktree)?;
     let input = attempt.join("request.json");
     let reply = attempt.join("result.json");
     let log_path = attempt.join("build.log");
@@ -186,6 +186,51 @@ fn external(path: &Path) -> PathBuf {
         return PathBuf::from(format!(r"\\{}", unc));
     }
     PathBuf::from(text.strip_prefix(r"\\?\").unwrap_or(&text))
+}
+fn source_build_tool(worktree: &Path) -> Result<PathBuf, WorktreeApplicationError> {
+    let tool = match worktree.join("scripts/build-tools.mjs").canonicalize() {
+        Ok(tool) => tool,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return build_tool::materialize()
+        }
+        Err(_) => {
+            return Err(error(
+                "toolchain_unavailable",
+                "The source build entry point is unavailable.",
+            ))
+        }
+    };
+    if !tool.is_file() || !tool.starts_with(worktree) {
+        return Err(error(
+            "invalid_request",
+            "The build entry point must be a file inside the selected source checkout.",
+        ));
+    }
+    Ok(external(&tool))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selected_source_owns_the_build_entry_point() {
+        let root = tempfile::tempdir().unwrap();
+        for name in ["older", "coordinator"] {
+            let source = root.path().join(name);
+            fs::create_dir_all(source.join("scripts")).unwrap();
+            fs::write(source.join("scripts/build-tools.mjs"), name).unwrap();
+            let tool = source_build_tool(&source.canonicalize().unwrap()).unwrap();
+            assert_eq!(fs::read_to_string(tool).unwrap(), name);
+        }
+    }
+
+    #[test]
+    fn revisions_before_the_source_recipe_use_the_shipped_builder() {
+        let source = tempfile::tempdir().unwrap();
+        let tool = source_build_tool(&source.path().canonicalize().unwrap()).unwrap();
+        assert_eq!(tool, build_tool::materialize().unwrap());
+    }
 }
 fn unavailable() -> WorktreeApplicationError {
     error(

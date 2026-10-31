@@ -29,7 +29,7 @@ pub(crate) fn run() {
                 crate::worktree_review::review_runtime::REVIEW_INSTANCE_LABEL_ENV,
             ) {
                 if let (Some(window), Some(label)) = (app.get_webview_window("main"), label.to_str()) {
-                    let _ = window.set_title(&format!("Codex Orchestrator — {label}"));
+                    let _ = window.set_title(&format!("Codex Orchestrator â€” {label}"));
                 }
             }
             let app_data_dir = crate::runtime::instance::app_data_dir(|| {
@@ -148,6 +148,7 @@ pub(crate) fn run() {
             }
             execution_targets.synchronize_devices()?;
             let execution_devices = execution_targets.devices.clone();
+            app.manage(crate::runtime_coordinator::transport::RuntimeCoordinatorState(Arc::new(crate::runtime_coordinator::RuntimeCoordinator::new(app_data_dir.join("runtime-coordinator"), database.clone(), execution_devices.clone())?)));
             app.manage(crate::execution_devices::ExecutionDeviceTauriState(
                 execution_targets.devices.clone(),
             ));
@@ -433,6 +434,14 @@ pub(crate) fn run() {
             crate::execution_targets::transport::load_execution_target_runtime,
             crate::execution_targets::transport::list_repository_device_locations,
             crate::execution_targets::transport::save_repository_device_location,
+            crate::runtime_coordinator::transport::runtime_coordinator_overview,
+            crate::runtime_coordinator::transport::runtime_coordinator_settings,
+            crate::runtime_coordinator::transport::runtime_coordinator_docker_settings,
+            crate::runtime_coordinator::transport::runtime_coordinator_connect,
+            crate::runtime_coordinator::transport::runtime_coordinator_register,
+            crate::runtime_coordinator::transport::runtime_coordinator_refresh,
+            crate::runtime_coordinator::transport::runtime_coordinator_rename,
+            crate::runtime_coordinator::transport::runtime_coordinator_power,
             crate::execution_devices::list_execution_devices,
             crate::execution_devices::save_execution_device,
             crate::execution_devices::start_execution_device,

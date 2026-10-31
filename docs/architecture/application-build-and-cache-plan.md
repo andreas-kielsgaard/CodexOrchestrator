@@ -2,6 +2,8 @@
 
 Status: implemented and validated on refinement/application-build-cache. See the [validation record](../validation/application-build-cache/README.md).
 
+2026-10-04 correction: current source revisions own their build recipe and runtime publication. Worktree Review invokes their `scripts/build-tools.mjs`, rather than the host's embedded copy. The shipped recipe remains for historical revisions predating that entry point. This prevents an older host recipe from omitting new runtime dependencies such as the coordinator.
+
 Baseline: main `28ad076`, inspected 2026-09-14. Concurrent Agent Session and documentation edits are outside this work. Recheck affected files before implementation.
 
 ## Agreed outcome

@@ -1,3 +1,5 @@
+import { RuntimeCoordinatorScreen } from '../features/runtimeCoordinator/RuntimeCoordinatorScreen';
+import type { RuntimeCoordinatorClient, DeviceSetupDraft } from '../application/runtimeCoordinator/contracts';
 import type { AgentSessionImportClient } from '../application/agentSessions/importContracts';
 
 import type { SessionNavigationAgentAccess } from '../application/agentSessions/agentAccess';
@@ -203,6 +205,7 @@ export interface AppProps {
 
   readonly executionConfigurationClient?: ExecutionConfigurationClient;
 
+  readonly runtimeCoordinatorClient?: RuntimeCoordinatorClient;
   readonly executionTargetClient?: ExecutionTargetClient;
 
   readonly branchSource?: RepositoryBranchSource;
@@ -331,6 +334,7 @@ export function App({
   executionConfigurationClient,
 
   executionTargetClient,
+  runtimeCoordinatorClient,
 
   branchSource,
 
@@ -403,6 +407,7 @@ export function App({
   initialSurface = 'epics',
 }: AppProps) {
   useCompletionNotificationSound(completionNotificationSource, completionSound);
+  const [coordinatorDraft, setCoordinatorDraft] = useState<DeviceSetupDraft | null>(null);
   const buildActivitySnapshot = useSyncExternalStore(
     worktreeReviewBuildActivitySource?.subscribe ?? emptySubscribe,
     worktreeReviewBuildActivitySource?.getSnapshot ?? emptyBuildActivitySnapshot,
@@ -413,6 +418,7 @@ export function App({
     (initialSurface === 'capability-profiles' && !executionConfigurationClient) ||
     (initialSurface === 'harness-inspector' && !harnessManagementPreviewSurface) ||
     (initialSurface === 'file-review' && !fileReviewSource) ||
+    (initialSurface === 'runtime-coordinator' && !runtimeCoordinatorClient) ||
     (initialSurface === 'worktree-review' && (!worktreeReviewClient || !repositoryCatalogClient))
       ? 'epics'
       : initialSurface;
@@ -478,6 +484,8 @@ export function App({
         case 'capability_profiles':
           return Boolean(executionConfigurationClient);
 
+        case 'runtime_coordinator':
+          return Boolean(runtimeCoordinatorClient);
         case 'technical_settings':
           return Boolean(nativeProfileClient);
 
@@ -498,13 +506,15 @@ export function App({
       productDecisionClient,
       executionConfigurationClient,
       nativeProfileClient,
-
+      runtimeCoordinatorClient,
       workflowAuthoringClient,
     ],
   );
 
   const initialNavigationDestination: ProductNavigationDestination =
-    initialApplicationSurface === 'agent-sessions'
+    initialApplicationSurface === 'runtime-coordinator'
+      ? { kind: 'runtime_coordinator', location: { view: 'list' } }
+      : initialApplicationSurface === 'agent-sessions'
       ? { kind: 'agent_sessions', selection: { kind: 'initial' }, focusedInvocationId: null }
       : initialApplicationSurface === 'workflows'
         ? { kind: 'workflow', workflowTypeId: null, workflowInstanceId: null }
@@ -1466,6 +1476,24 @@ export function App({
             </button>
           ) : null}
 
+          {runtimeCoordinatorClient && (
+            <button
+              type="button"
+              className={surface === 'runtime-coordinator' ? 'active' : undefined}
+              aria-current={surface === 'runtime-coordinator' ? 'page' : undefined}
+              onClick={() => {
+                const remembered = [productNavigation.current, ...productNavigation.history.slice().reverse()]
+                  .find((entry) => entry.destination.kind === 'runtime_coordinator')?.destination;
+                dispatchProductNavigation({
+                  type: 'navigate',
+                  intent: 'push',
+                  destination: remembered?.kind === 'runtime_coordinator'
+                    ? remembered
+                    : { kind: 'runtime_coordinator', location: { view: 'list' } },
+                });
+              }}
+            >Runtime Coordinator</button>
+          )}
           {nativeProfileClient && (
             <button
               className={surface === 'native-settings' ? 'active' : undefined}
@@ -1515,7 +1543,20 @@ export function App({
         />
       </div>
 
-      {surface === 'product-decision-publish' &&
+      {surface === 'runtime-coordinator' && runtimeCoordinatorClient && currentProductDestination.kind === 'runtime_coordinator' ? (
+        <RuntimeCoordinatorScreen
+          client={runtimeCoordinatorClient}
+          executionClient={executionTargetClient}
+          location={currentProductDestination.location}
+          draft={coordinatorDraft}
+          changeDraft={setCoordinatorDraft}
+          navigate={(location) => dispatchProductNavigation({
+            type: 'navigate',
+            intent: 'push',
+            destination: { kind: 'runtime_coordinator', location },
+          })}
+        />
+      ) : surface === 'product-decision-publish' &&
       currentProductDestination.kind === 'product_decision_publish' ? (
         <ProductDecisionPublishPlaceholder destination={currentProductDestination} />
       ) : surface === 'epics' && orchestrationRoute === 'plan-builder' ? (
@@ -1819,7 +1860,6 @@ export function App({
           otpInstallations={otpInstallationClient}
 
           executionClient={executionConfigurationClient}
-          deviceClient={executionTargetClient}
           section={
             currentProductDestination.kind === 'technical_settings'
               ? currentProductDestination.section

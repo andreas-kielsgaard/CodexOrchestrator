@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 65;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 66;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 #[cfg(test)]
@@ -605,11 +605,11 @@ fn active_schema_is_present(connection: &Connection) -> Result<bool, String> {
     let attention_present: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_session_attention')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
     let execution_device_schema_is_present = connection
         .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('execution_devices','execution_device_activity_leases')",
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('execution_devices','execution_device_activity_leases','runtime_coordinator_device_bindings')",
             [],
             |row| row.get::<_, i64>(0),
         )
-        .map(|table_count| table_count == 2)
+        .map(|table_count| table_count == 3)
         .map_err(|error| format!("Unable to inspect execution device schema: {error}"))?;
     let native_profile_schema_is_present = connection
         .query_row(
@@ -893,6 +893,7 @@ mod tests {
                 "accepted_work_unit_integrations",
                 "agent_session_address_clock",
                 "agent_session_addresses",
+                "agent_session_attention",
                 "agent_session_current_execution",
                 "agent_session_file_changes",
                 "agent_session_history_positions",
@@ -993,6 +994,7 @@ mod tests {
                 "registered_repositories",
                 "registered_repository_disclosures",
                 "repository_device_locations",
+                "runtime_coordinator_device_bindings",
                 "session_event_deliveries",
                 "session_event_groups",
                 "session_harness_bindings",

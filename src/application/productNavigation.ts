@@ -1,3 +1,4 @@
+import type { CoordinatorLocation } from './runtimeCoordinator/contracts';
 import {
   selectionKey,
   sessionIdOf,
@@ -11,6 +12,7 @@ import type { ProductDecisionEvidenceDestination } from './productDecisions';
 
 /** Product-owned destinations only; this is deliberately not a command vocabulary. */
 export type ProductNavigationDestination =
+  | { readonly kind: 'runtime_coordinator'; readonly location: CoordinatorLocation }
   | {
       readonly kind: 'orchestration';
       readonly location: AgentSessionProductLocation | null;
@@ -218,20 +220,21 @@ export function productNavigationReducer(
       };
     case 'enter_agent_sessions_directly': {
       const alreadyInAgentSessions = state.current.destination.kind === 'agent_sessions';
-      const remembered =
-        alreadyInAgentSessions
-          ? state.current.destination
-          : state.history
-              .slice()
-              .reverse()
-              .find(
-                (entry): entry is ProductNavigationEntry & {
-                  readonly destination: Extract<
-                    ProductNavigationDestination,
-                    { readonly kind: 'agent_sessions' }
-                  >;
-                } => entry.destination.kind === 'agent_sessions',
-              )?.destination;
+      const remembered = alreadyInAgentSessions
+        ? state.current.destination
+        : state.history
+            .slice()
+            .reverse()
+            .find(
+              (
+                entry,
+              ): entry is ProductNavigationEntry & {
+                readonly destination: Extract<
+                  ProductNavigationDestination,
+                  { readonly kind: 'agent_sessions' }
+                >;
+              } => entry.destination.kind === 'agent_sessions',
+            )?.destination;
       const destination: ProductNavigationDestination = {
         kind: 'agent_sessions',
         selection: remembered?.selection ?? { kind: 'initial' },
@@ -388,6 +391,16 @@ export function isProductNavigationDestination(
         typeof value.newProfile === 'boolean' &&
         !(value.newProfile && value.profileId !== null)
       );
+    case 'runtime_coordinator':
+      return (
+        hasOnlyKeys(value, ['kind', 'location']) &&
+        isRecord(value.location) &&
+        (['list', 'setup', 'settings'].includes(String(value.location.view))
+          ? hasOnlyKeys(value.location, ['view'])
+          : ['device', 'legacy'].includes(String(value.location.view)) &&
+            hasOnlyKeys(value.location, ['view', 'deviceId']) &&
+            isIdentifier(value.location.deviceId))
+      );
     case 'technical_settings':
       return (
         hasOnlyKeys(value, ['kind', 'section', 'selectedCodexProfileId']) &&
@@ -494,6 +507,13 @@ export function sameProductNavigationDestination(
         right.kind === 'capability_profiles' &&
         left.profileId === right.profileId &&
         left.newProfile === right.newProfile
+      );
+    case 'runtime_coordinator':
+      return (
+        right.kind === 'runtime_coordinator' &&
+        left.location.view === right.location.view &&
+        (!('deviceId' in left.location) ||
+          ('deviceId' in right.location && left.location.deviceId === right.location.deviceId))
       );
     case 'technical_settings':
       return (

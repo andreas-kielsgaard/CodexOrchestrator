@@ -1,0 +1,163 @@
+.runtime-coordinator {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 28px 32px;
+  color: var(--text-primary);
+}
+.coordinator-page-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+.runtime-coordinator h1 {
+  font-size: 24px;
+  margin: 0 0 8px;
+}
+.runtime-coordinator h2 {
+  font-size: 21px;
+  margin: 0 0 12px;
+}
+.runtime-coordinator p,
+.runtime-coordinator small,
+.runtime-coordinator dt {
+  color: var(--text-secondary);
+}
+.runtime-coordinator p {
+  line-height: 1.6;
+}
+.runtime-coordinator button {
+  border: 1px solid var(--control-border);
+  background: var(--surface);
+  color: inherit;
+  border-radius: 6px;
+  padding: 9px 14px;
+  cursor: pointer;
+}
+.runtime-coordinator button:hover {
+  background: var(--surface-selected);
+}
+.runtime-coordinator button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.coordinator-device-list {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.runtime-coordinator .coordinator-device-row {
+  display: grid;
+  grid-template-columns: 1fr auto 16px;
+  gap: 28px;
+  width: 100%;
+  text-align: left;
+  padding: 20px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+}
+.coordinator-device-row:last-child {
+  border-bottom: 0;
+}
+.coordinator-device-row strong,
+.coordinator-device-row small {
+  display: block;
+}
+.coordinator-device-row small {
+  margin-top: 6px;
+  font-size: 12px;
+}
+.coordinator-note {
+  padding: 14px 16px;
+  border-left: 3px solid var(--control-border);
+  background: var(--surface);
+}
+.coordinator-form,
+.coordinator-detail {
+  max-width: 800px;
+}
+.coordinator-form fieldset {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  margin: 20px 0;
+}
+.coordinator-form legend {
+  padding: 0 8px;
+  font-weight: 600;
+}
+.coordinator-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 16px 0;
+}
+.coordinator-form input,
+.coordinator-form select {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--control-border);
+  border-radius: 5px;
+  padding: 10px;
+  background: var(--surface);
+  color: inherit;
+}
+.coordinator-form .coordinator-radio {
+  flex-direction: row;
+  align-items: center;
+}
+.coordinator-radio input {
+  width: auto;
+}
+.coordinator-form footer,
+.coordinator-actions {
+  display: flex;
+  gap: 10px;
+  margin: 24px 0;
+}
+.runtime-coordinator .coordinator-back {
+  margin-bottom: 24px;
+  padding-left: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+}
+.coordinator-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.coordinator-status-grid dt {
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.coordinator-status-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.coordinator-operation,
+.coordinator-error {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 20px 0;
+}
+.coordinator-error button {
+  margin-left: 16px;
+}
+@media (max-width: 800px) {
+  .runtime-coordinator {
+    padding: 20px;
+  }
+  .coordinator-status-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .coordinator-device-row {
+    gap: 12px;
+  }
+}

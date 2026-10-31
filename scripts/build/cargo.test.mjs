@@ -162,6 +162,18 @@ test('CLI cache options remain distinct from profiles and test arguments', () =>
   assert.throws(() => parseArguments(['test', '--manifest-path', 'elsewhere']), /owns/);
 });
 
+test('publication retains the coordinator beside the desktop independently of compiler output', (t) => {
+  const { root } = fixture(t);
+  const app = path.join(root, 'app.exe');
+  const coordinator = path.join(root, 'orchid-coordinator.exe');
+  fs.writeFileSync(app, 'desktop');
+  fs.writeFileSync(coordinator, 'coordinator');
+  const output = path.join(root, 'retained');
+  publishApplication(app, output, false, { profile: 'release' }, coordinator);
+  fs.unlinkSync(coordinator);
+  assert.equal(fs.readFileSync(path.join(output, 'orchid-coordinator.exe'), 'utf8'), 'coordinator');
+});
+
 test('clear-cache refuses an arbitrary explicit directory', (t) => {
   const { root, worktree } = fixture(t);
   assert.throws(

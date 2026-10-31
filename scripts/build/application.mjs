@@ -1,3 +1,4 @@
+import { buildCoordinator } from './coordinator.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,13 +17,14 @@ export function frontendConfigPath(worktree, frontend) {
   return relative.split(path.sep).join('/');
 }
 
-export function publishApplication(source, output, debugging, receipt) {
+export function publishApplication(source, output, debugging, receipt, coordinator) {
   if (fs.existsSync(output))
     throw new BuildError('The application output already exists.', 'output_unavailable');
   const staging = `${output}.staging`;
   fs.mkdirSync(staging);
   try {
     fs.copyFileSync(source, path.join(staging, path.basename(source)));
+    if (coordinator) fs.copyFileSync(coordinator, path.join(staging, path.basename(coordinator)));
     if (debugging) {
       const symbols = path.join(
         path.dirname(source),
@@ -203,7 +205,18 @@ export async function buildApplication(request) {
     );
     const context = path.join(layout.ownerRoot, 'cargo-context.json');
     fs.writeFileSync(context, JSON.stringify({ layout, selection }));
+    let coordinator;
+    if (fs.existsSync(path.join(worktree, 'crates/orchid-coordinator/Cargo.toml'))) {
+      console.log('@@ORCHID_STAGE:coordinator');
+      coordinator = await buildCoordinator(
+        layout,
+        selection,
+        profile,
+        path.join(attemptRoot, 'sidecar'),
+      );
+    }
     const config = applicationBuildConfig(request, worktree, frontend);
+    if (coordinator) config.bundle.externalBin = [coordinator.externalBin];
     const env = {
       ...process.env,
       CARGO_TARGET_DIR: layout.target,
@@ -246,7 +259,7 @@ export async function buildApplication(request) {
       applicationSchemaVersion: applicationSchemaVersion(worktree),
     };
     console.log('@@ORCHID_STAGE:publication');
-    publishApplication(source, output, profile === 'debug', result);
+    publishApplication(source, output, profile === 'debug', result, coordinator?.binary);
     console.log(`Application ready: ${executablePath}\nLaunch is a separate action.`);
     return result;
   } finally {

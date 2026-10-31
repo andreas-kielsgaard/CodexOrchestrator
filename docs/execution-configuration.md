@@ -100,7 +100,7 @@ The agent-provider migration pass (`feature/claude-support`, 25 September 2026) 
 
 ## Provider setups and routes across providers
 
-**Setups.** Each provider lists its setups on a device: a native folder, the CLI executable, and whether it is signed in. **Technical Settings → Devices** shows every provider's setups together, and each provider has its own setup section (**Codex profiles**, **Claude setups**). Remote devices list no setups yet.
+**Setups.** Each provider lists its setups on a device: a native folder, the CLI executable, and whether it is signed in. **Technical Settings → Agent setups** shows every provider's setups together, and each provider has its own setup section (**Codex profiles**, **Claude setups**). Device lifecycle controls live in **Runtime Coordinator**. Remote devices list no setups yet.
 
 **Routes.** A Capability Profile route names a device, a provider and one of that provider's setups. A profile can have routes to both providers. It has at most one route per provider per device, and a model ID belongs to one route per device, so the device and the chosen model decide which provider runs a prompt. Choosing a model from another route records a target change to that route before the next prompt.
 

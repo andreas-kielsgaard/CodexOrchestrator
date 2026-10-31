@@ -1,0 +1,17 @@
+services:
+  coordinator:
+    build:
+      context: ../..
+      dockerfile: deploy/runtime-coordinator/Dockerfile
+    ports:
+      - "127.0.0.1:41800:41800"
+    volumes:
+      - coordinator-data:/data
+    secrets:
+      - coordinator_token
+    restart: unless-stopped
+secrets:
+  coordinator_token:
+    file: ${ORCHID_COORDINATOR_TOKEN_FILE:?Set the path to the coordinator access-token file}
+volumes:
+  coordinator-data:

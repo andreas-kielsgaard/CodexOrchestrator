@@ -12,6 +12,10 @@ const FILES: &[(&str, &str)] = &[
         include_str!("../../../scripts/build/application.mjs"),
     ),
     (
+        "build/coordinator.mjs",
+        include_str!("../../../scripts/build/coordinator.mjs"),
+    ),
+    (
         "build/cargo.mjs",
         include_str!("../../../scripts/build/cargo.mjs"),
     ),
@@ -66,5 +70,18 @@ mod tests {
                 *text
             );
         }
+        let tool = first.parent().unwrap().join("build/application.mjs");
+        let output = std::process::Command::new("node")
+            .arg("--input-type=module")
+            .arg("-e")
+            .arg("await import((await import('node:url')).pathToFileURL(process.argv[1]))")
+            .arg(tool)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

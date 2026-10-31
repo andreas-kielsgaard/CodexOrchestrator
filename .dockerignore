@@ -1,0 +1,7 @@
+**
+!crates/
+!crates/orchid-coordinator/
+!crates/orchid-coordinator/Cargo.toml
+!crates/orchid-coordinator/Cargo.lock
+!crates/orchid-coordinator/src/
+!crates/orchid-coordinator/src/**

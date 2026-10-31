@@ -1,5 +1,8 @@
 # Codex parity, reversible navigation, managed devices, and MCP annotations
 
+Update 2026-10-04: [Runtime Coordinator first slice](runtime-coordinator-first-slice-shape.md) moves device controls to Runtime Coordinator. Linked Hetzner devices use explicit Start/Stop and skip automatic start and idle shutdown; legacy command-managed devices retain the behavior described below.
+
+
 Status: implemented on `refinement/usability`, based on checkpoint `e74116f`.
 
 ## Target and boundaries

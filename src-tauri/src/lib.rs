@@ -11,6 +11,7 @@ mod otp_api;
 mod otp_host;
 mod otp_packages;
 mod product_home;
+mod runtime_coordinator;
 // The semantic save command is intentionally dormant until the later MCP adapter owns its input.
 #[allow(dead_code)]
 mod orchestration;

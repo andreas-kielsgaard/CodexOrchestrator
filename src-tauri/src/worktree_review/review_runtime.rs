@@ -131,6 +131,9 @@ fn merge_compatible_tables(connection: &Connection, source: &Path) -> Result<(),
             })
             .map_err(|error| format!("Review database tables could not be inspected: {error}"))?;
         for table in tables {
+            if table == "runtime_coordinator_device_bindings" {
+                continue;
+            }
             if !source_table_exists(connection, &table)? {
                 continue;
             }
@@ -432,7 +435,20 @@ fn mirror_entry(
     }
     if name.to_ascii_lowercase().ends_with(".sqlite") {
         if copy_databases {
-            snapshot_sqlite(source, &destination)
+            snapshot_sqlite(source, &destination)?;
+            if name == crate::storage::ACTIVE_DATABASE_FILE_NAME {
+                let connection = Connection::open(&destination).map_err(|e| e.to_string())?;
+                let has_bindings: bool = connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='runtime_coordinator_device_bindings')",
+                    [], |row| row.get(0),
+                ).map_err(|e| e.to_string())?;
+                if has_bindings {
+                    connection
+                        .execute("DELETE FROM runtime_coordinator_device_bindings", [])
+                        .map_err(|e| e.to_string())?;
+                }
+            }
+            Ok(())
         } else {
             Ok(())
         }
@@ -458,6 +474,7 @@ fn snapshot_sqlite(source: &Path, destination: &Path) -> Result<(), String> {
 fn excluded_root_entry(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     lower == "worktree-review"
+        || lower == "runtime-coordinator"
         || lower == "ebwebview"
         || lower == "native-codex-profile-probes"
         || lower == "agent-session-navigation.json"
@@ -556,6 +573,7 @@ mod tests {
     fn excludes_live_and_recursive_appdata() {
         for name in [
             "worktree-review",
+            "runtime-coordinator",
             "EBWebView",
             "agent-session-navigation.json",
             "data.sqlite-wal",
@@ -565,6 +583,57 @@ mod tests {
         }
         assert!(!excluded_root_entry("orchestration-materials"));
         assert!(!excluded_root_entry("codex-orchestrator-active-v3.sqlite"));
+    }
+
+    #[test]
+    fn review_seed_does_not_copy_coordinator_state_or_bindings() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let coordinator = source.path().join("runtime-coordinator");
+        fs::create_dir_all(&coordinator).unwrap();
+        fs::write(coordinator.join("connection.json"), "controller endpoint").unwrap();
+        fs::write(coordinator.join("ready.json"), "live process").unwrap();
+        let database = Connection::open(
+            source
+                .path()
+                .join(crate::storage::ACTIVE_DATABASE_FILE_NAME),
+        )
+        .unwrap();
+        database.execute_batch("CREATE TABLE runtime_coordinator_device_bindings(device TEXT); INSERT INTO runtime_coordinator_device_bindings VALUES('controller-worker'); CREATE TABLE preserved(value TEXT); INSERT INTO preserved VALUES('keep');").unwrap();
+        mirror_app_data(source.path(), target.path(), true).unwrap();
+        assert!(!target.path().join("runtime-coordinator").exists());
+        let copied = Connection::open(
+            target
+                .path()
+                .join(crate::storage::ACTIVE_DATABASE_FILE_NAME),
+        )
+        .unwrap();
+        assert_eq!(
+            copied
+                .query_row(
+                    "SELECT COUNT(*) FROM runtime_coordinator_device_bindings",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            copied
+                .query_row("SELECT value FROM preserved", [], |r| r.get::<_, String>(0))
+                .unwrap(),
+            "keep"
+        );
+        assert_eq!(
+            database
+                .query_row(
+                    "SELECT COUNT(*) FROM runtime_coordinator_device_bindings",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            1
+        );
     }
 
     #[test]
@@ -714,6 +783,9 @@ mod tests {
             .path()
             .join(crate::storage::ACTIVE_DATABASE_FILE_NAME);
         let source_connection = crate::storage::open_active_database(&source_database).unwrap();
+        source_connection.execute(
+            "INSERT INTO runtime_coordinator_device_bindings VALUES('controller','server','worker')", [],
+        ).unwrap();
         source_connection
             .execute(
                 "INSERT INTO claude_setups(id,folder,executable,created_at) VALUES('claude-test','C:/claude','claude','2026-09-29T00:00:00Z')",
@@ -746,6 +818,16 @@ mod tests {
         import_compatible_controller_data(&app_data).unwrap();
 
         let imported = Connection::open(crate::storage::active_database_path(&app_data)).unwrap();
+        assert_eq!(
+            imported
+                .query_row(
+                    "SELECT COUNT(*) FROM runtime_coordinator_device_bindings",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
         assert_eq!(
             imported
                 .query_row(

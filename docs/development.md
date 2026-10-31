@@ -41,7 +41,7 @@ A native executable build does not establish installer behavior, provider compat
 
 ## Build outputs and compiler caches
 
-Application commands and Worktree Review use the same tool in `scripts/build-tools.mjs`. `npm run build` typechecks, builds the embedded frontend, compiles Tauri, and copies the executable into an independent application directory. Normal builds use release mode; `--debug` selects Tauri debugging mode and retains the application's PDB. The command prints the executable path and never launches it.
+Application commands and Worktree Review use the selected source checkout's `scripts/build-tools.mjs`. Worktree Review owns capture, build requests, retained storage and launch; the source revision owns compilation and the runtime files it publishes. Historical revisions predating that entry point use the shipped builder. `npm run build` typechecks, builds the embedded frontend, compiles Tauri, and copies the desktop and coordinator executables into an independent application directory. Normal builds use release mode; `--debug` selects Tauri debugging mode and retains the application's PDB. The command prints the executable path and never launches it.
 
 ```powershell
 npm run build

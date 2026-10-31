@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { ExecutionConfigurationClient } from '../../application/executionConfiguration';
-import { DeviceSetupOverview, InferenceSourceOverview } from './ExecutionSetupOverview';
+import { HarnessSetupOverview, InferenceSourceOverview } from './ExecutionSetupOverview';
 
 const executionClient = {
   listProviderSetups: async () => [
@@ -21,7 +21,7 @@ const executionClient = {
 describe('Execution setup overview', () => {
   it('shows provider setups under the device and keeps the account device-local', async () => {
     render(
-      <DeviceSetupOverview
+      <HarnessSetupOverview
         executionClient={executionClient}
         providers={['codex']}
         onConfigureProvider={() => undefined}

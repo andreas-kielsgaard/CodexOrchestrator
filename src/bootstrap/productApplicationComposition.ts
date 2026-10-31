@@ -1,3 +1,4 @@
+import { tauriRuntimeCoordinatorClient } from '../infrastructure/runtimeCoordinator/tauriRuntimeCoordinatorClient';
 import { tauriAgentSessionImportClient } from '../infrastructure/agentSessions/tauriAgentSessionImportClient';
 import { tauriSessionNavigationAgent } from '../infrastructure/agentSessions/tauriSessionNavigationAgent';
 import { tauriSessionNavigationClient } from '../infrastructure/agentSessions/tauriSessionNavigationClient';
@@ -63,6 +64,7 @@ export function createProductApplicationComposition(): AppProps {
     draftCloseGuard: tauriDraftCloseGuard,
     executionConfigurationClient: tauriExecutionConfigurationClient,
     executionTargetClient: tauriExecutionTargetClient,
+    runtimeCoordinatorClient: tauriRuntimeCoordinatorClient,
     branchSource: worktreeReviewBranchSource(tauriWorktreeReview),
     identityManagementClient: tauriIdentityManagementClient,
     agentSessionProfileClient: tauriAgentSessionClient,

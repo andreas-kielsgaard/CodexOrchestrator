@@ -17,6 +17,7 @@ export type ApplicationSurface =
   | 'harness-inspector'
   | 'file-review'
   | 'worktree-review'
+  | 'runtime-coordinator'
   | 'native-settings'
   | 'product-decision-publish';
 
@@ -39,6 +40,8 @@ export function surfaceForDestination(
       return 'file-review';
     case 'worktree_review':
       return 'worktree-review';
+    case 'runtime_coordinator':
+      return 'runtime-coordinator';
     case 'technical_settings':
       return 'native-settings';
     case 'product_decision_publish':
@@ -53,10 +56,8 @@ export function useProductNavigation(
 ) {
   const epoch = useRef(0);
   const [state, reduce] = useReducer(
-    (
-      current: ReturnType<typeof createProductNavigation>,
-      action: ProductNavigationAction,
-    ) => productNavigationReducer(current, action, supports),
+    (current: ReturnType<typeof createProductNavigation>, action: ProductNavigationAction) =>
+      productNavigationReducer(current, action, supports),
     createProductNavigation(initialDestination),
   );
   const dispatch = useCallback((action: ProductNavigationAction) => {
