@@ -23,6 +23,7 @@ use std::{
     thread,
 };
 use tokio_util::sync::CancellationToken;
+mod response;
 
 pub(crate) struct JobAgentMcpProvisioner {
     registry: Arc<OtpRegistry>,
@@ -246,6 +247,10 @@ impl JobAgentFacadeState {
             .post(&upstream.url)
             .bearer_auth(&upstream.bearer_token)
             .header(header::CONTENT_TYPE.as_str(), "application/json")
+            .header(
+                header::ACCEPT.as_str(),
+                "application/json, text/event-stream",
+            )
             .json(&json!({
                 "jsonrpc": "2.0", "id": "orchid-job-agent-facade", "method": "initialize",
                 "params": {"protocolVersion": "2025-06-18", "capabilities": {},
@@ -262,10 +267,18 @@ impl JobAgentFacadeState {
             .get("mcp-session-id")
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
+        let initialized_result = response::read_rpc(response, "orchid-job-agent-facade").await?;
+        if initialized_result.get("error").is_some() {
+            return Err("Job Agent MCP rejected initialization for this tool call.".into());
+        }
         let mut initialized = client
             .post(&upstream.url)
             .bearer_auth(&upstream.bearer_token)
             .header(header::CONTENT_TYPE.as_str(), "application/json")
+            .header(
+                header::ACCEPT.as_str(),
+                "application/json, text/event-stream",
+            )
             .json(&json!({"jsonrpc":"2.0","method":"notifications/initialized"}));
         if let Some(session_id) = &session_id {
             initialized = initialized.header("mcp-session-id", session_id);
@@ -295,6 +308,10 @@ impl JobAgentFacadeState {
             .post(&upstream.url)
             .bearer_auth(&upstream.bearer_token)
             .header(header::CONTENT_TYPE.as_str(), "application/json")
+            .header(
+                header::ACCEPT.as_str(),
+                "application/json, text/event-stream",
+            )
             .json(&json!({
                 "jsonrpc":"2.0", "id":"orchid-job-agent-call", "method":"tools/call",
                 "params":{"name":name,"arguments":arguments}
@@ -309,10 +326,7 @@ impl JobAgentFacadeState {
         if !response.status().is_success() {
             return Err("Job Agent MCP rejected this tool call.".into());
         }
-        response
-            .json::<Value>()
-            .await
-            .map_err(|_| "Job Agent MCP returned an unreadable result.".to_string())
+        response::read_rpc(response, "orchid-job-agent-call").await
     }
 }
 
@@ -373,10 +387,7 @@ where
         Some("notifications/initialized") => text(StatusCode::ACCEPTED, ""),
         Some("tools/list") => response(json!({
             "jsonrpc":"2.0", "id":id,
-            "result":{"tools": state.tools.values().map(|tool| json!({
-                "name":tool.id,"title":tool.name,"description":tool.description,
-                "inputSchema":tool.input_schema,"annotations":tool.annotations
-            })).collect::<Vec<_>>()}
+            "result":{"tools": state.tools.values().map(mcp_tool).collect::<Vec<_>>()}
         })),
         Some("tools/call") => {
             let Some(name) = value.pointer("/params/name").and_then(Value::as_str) else {
@@ -401,6 +412,21 @@ where
         }
         _ => rpc_error(id, "Unsupported MCP method".into()),
     }
+}
+
+fn mcp_tool(tool: &AgentMcpToolDescriptor) -> Value {
+    let mut value = json!({
+        "name":tool.id,"title":tool.name,"description":tool.description,
+        "inputSchema":tool.input_schema,"annotations":tool.annotations
+    });
+    // Source schemas are catalogue summaries; only curation has audited runtime schemas.
+    if tool.capability == "curation" {
+        value["outputSchema"] = tool.output_schema.clone();
+    }
+    if !tool.meta.is_empty() {
+        value["_meta"] = json!(tool.meta);
+    }
+    value
 }
 
 fn response(value: Value) -> Response<Body> {
@@ -525,6 +551,11 @@ struct JobAgentHostOwner {
 impl ManagedMcpUpstreamOwner for JobAgentHostOwner {
     fn stop(mut self: Box<Self>) {
         self.stdin.take();
+        // stdin EOF asks the host to remove its temporary exports before exiting.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while matches!(self.child.try_wait(), Ok(None)) && std::time::Instant::now() < deadline {
+            thread::sleep(std::time::Duration::from_millis(20));
+        }
         if self.child.try_wait().ok().flatten().is_none() {
             let _ = self.child.kill();
         }
@@ -535,6 +566,7 @@ impl ManagedMcpUpstreamOwner for JobAgentHostOwner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod live_curation;
     use crate::execution_configuration::{
         CapabilityProfile, CapabilitySet, NodeProfile, RuntimeProfileSnapshot, RuntimeSelections,
         SessionCreationRequest, SessionProfileResolver,
@@ -556,6 +588,7 @@ mod tests {
                     expected_behavior: "Reads source summaries.".into(),
                     recommended_usage: "Use for source discovery.".into(),
                     required_grants: vec![],
+                    meta: Default::default(),
                     annotations: crate::otp_api::tool_annotations(
                         "Get source catalog",
                         true,
@@ -571,6 +604,83 @@ mod tests {
             grants: vec![],
             backend: Mutex::new(None),
         })
+    }
+
+    #[test]
+    fn curation_discovery_exposes_schemas_and_namespaced_metadata() {
+        let registry = OtpRegistry::import(&["job_agent"]).unwrap();
+        let (_, server) = registry.agent_mcp_server("job_agent").unwrap();
+        let mut export = server
+            .tools
+            .into_iter()
+            .find(|tool| tool.id == "export_curation_dataset")
+            .unwrap();
+        export
+            .meta
+            .insert("example.org/future".into(), json!({"value":1}));
+        let discovery = mcp_tool(&export);
+        assert_eq!(
+            discovery["_meta"]["com.orchid/resultHandling"]["disposition"],
+            "artifact-required"
+        );
+        assert_eq!(discovery["_meta"]["example.org/future"]["value"], 1);
+        assert_eq!(discovery["outputSchema"], export.output_schema);
+        assert_eq!(discovery["annotations"]["readOnlyHint"], false);
+        let source = mcp_tool(state().tools.get("get_source_catalog").unwrap());
+        assert!(source.get("_meta").is_none());
+        assert!(source.get("outputSchema").is_none());
+    }
+
+    struct TestOwner;
+    impl ManagedMcpUpstreamOwner for TestOwner {
+        fn stop(self: Box<Self>) {}
+    }
+
+    #[tokio::test]
+    async fn backend_call_preserves_artifacts_metadata_and_domain_errors() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let expected = json!({"jsonrpc":"2.0","id":"orchid-job-agent-call","result":{
+            "content":[{"type":"resource_link","name":"jobs.jsonl","uri":"file:///test/jobs.jsonl"}],
+            "structuredContent":{"ok":false,"error":{"code":"invalid_curation_result","path":"/items"}},
+            "_meta":{"com.orchid/resultStats":{"records":1},"example.org/future":true}
+        }});
+        let upstream_result = expected.clone();
+        let task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            http1::Builder::new()
+                .serve_connection(
+                    TokioIo::new(stream),
+                    service_fn(move |_| {
+                        let value = upstream_result.clone();
+                        async move { Ok::<_, Infallible>(response(value)) }
+                    }),
+                )
+                .await
+                .unwrap();
+        });
+        let state = state();
+        *state.backend.lock().unwrap() = Some(JobAgentBackend {
+            upstream: ManagedMcpUpstreamDescriptor {
+                name: "job_agent".into(),
+                url: format!("http://{address}/mcp"),
+                bearer_token: "test".into(),
+                workflow_tool_name: None,
+                workflow_prepare_url: None,
+                caller_context: false,
+            },
+            owner: Box::new(TestOwner),
+            session_id: Some("test-session".into()),
+        });
+        let result = handle_facade(Request::builder()
+            .header(header::AUTHORIZATION, "Bearer facade-test")
+            .body(Body::from(json!({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"get_source_catalog","arguments":{}}}).to_string())).unwrap(),
+            state, "facade-test").await;
+        let body = result.into_body().collect().await.unwrap().to_bytes();
+        let result: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(result["result"], expected["result"]);
+        assert_eq!(result["id"], 7);
+        task.abort();
     }
 
     fn selected_tool_profile() -> SessionCreationResolution {

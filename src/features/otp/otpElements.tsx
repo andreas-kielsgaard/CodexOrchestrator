@@ -158,7 +158,8 @@ function EndpointDetails({
         <p>{endpoint.recommendedUsage}</p>
       </DetailSection>
       <SchemaSection title="Input fields" schema={endpoint.inputSchema} />
-      <SchemaSection title="Successful response" schema={endpoint.outputSchema} />
+      <SchemaSection title="Response fields" schema={endpoint.outputSchema} />
+      <ResultHandling metadata={endpoint.meta?.['com.orchid/resultHandling']} />
       <DetailSection title="Integration">
         <p>
           Available through configured agent sessions using {server.name}. It is not a direct
@@ -166,6 +167,33 @@ function EndpointDetails({
         </p>
       </DetailSection>
     </div>
+  );
+}
+
+function ResultHandling({ metadata }: { readonly metadata: unknown }) {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const handling = metadata as Record<string, unknown>;
+  const disposition = {
+    inline: 'Results are returned inline.',
+    'artifact-preferred': 'Artifact processing is preferred.',
+    'artifact-required': 'Results require artifact processing.',
+  }[String(handling.disposition)];
+  const contentTypes = Array.isArray(handling.contentTypes)
+    ? handling.contentTypes.filter((item): item is string => typeof item === 'string')
+    : [];
+  if (!disposition) return null;
+  return (
+    <DetailSection title="Result handling">
+      <p>{disposition}</p>
+      {handling.modelIngestion === 'avoid' ? (
+        <p>
+          Process the linked files with local scripts. Bring only selected evidence and bounded
+          results into the conversation.
+        </p>
+      ) : null}
+      {contentTypes.length ? <p>Content types: {contentTypes.join(', ')}.</p> : null}
+      {handling.cardinality === 'many' ? <p>The result can contain many records.</p> : null}
+    </DetailSection>
   );
 }
 

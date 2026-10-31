@@ -4,6 +4,11 @@
       {
         "capabilityGroups": [
           {
+            "description": "Export job evidence for local analysis and save validated advisory curations.",
+            "id": "curation",
+            "name": "Curation"
+          },
+          {
             "description": "Read source context and save reviewable suggestions without changing the registry.",
             "id": "source_discovery",
             "name": "Source discovery"
@@ -1305,17 +1310,362 @@
             },
             "recommendedUsage": "Use during the source session status stage when the node's instructions need this result.",
             "requiredGrants": []
+          },
+          {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": false,
+              "openWorldHint": false,
+              "readOnlyHint": false,
+              "title": "Export curation dataset"
+            },
+            "capability": "curation",
+            "description": "Export complete saved job evidence after structural filtering. Process the files with local scripts; do not ingest jobs.jsonl or profile.json wholesale into model context.",
+            "expectedBehavior": "Creates a host-owned temporary export and returns compact metadata and resource links. It applies only structural filters; the consuming agent decides semantic relevance.",
+            "id": "export_curation_dataset",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "application_statuses": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": ["array", "null"]
+                },
+                "evidence_levels": {
+                  "items": {
+                    "enum": ["package", "index_only"]
+                  },
+                  "type": ["array", "null"]
+                },
+                "job_refs": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": ["array", "null"]
+                },
+                "observed_from": {
+                  "type": "string"
+                },
+                "observed_to": {
+                  "type": "string"
+                },
+                "posting_statuses": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": ["array", "null"]
+                },
+                "source_ids": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": ["array", "null"]
+                }
+              },
+              "type": "object"
+            },
+            "meta": {
+              "com.orchid/resultHandling": {
+                "cardinality": "many",
+                "contentTypes": ["application/x-ndjson", "application/json"],
+                "disposition": "artifact-required",
+                "modelIngestion": "avoid"
+              }
+            },
+            "name": "Export curation dataset",
+            "outputSchema": {
+              "else": {
+                "required": ["error"]
+              },
+              "if": {
+                "properties": {
+                  "ok": {
+                    "const": true
+                  }
+                }
+              },
+              "properties": {
+                "byte_count": {
+                  "type": "integer"
+                },
+                "candidate_count": {
+                  "type": "integer"
+                },
+                "error": {
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "issue_code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code", "message"],
+                  "type": "object"
+                },
+                "export_id": {
+                  "type": "string"
+                },
+                "files": {
+                  "items": {
+                    "properties": {
+                      "media_type": {
+                        "type": "string"
+                      },
+                      "mutable": {
+                        "type": "boolean"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "role": {
+                        "type": "string"
+                      },
+                      "sha256": {
+                        "type": "string"
+                      },
+                      "size": {
+                        "type": "integer"
+                      },
+                      "uri": {
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "filters": {
+                  "type": "object"
+                },
+                "lifetime": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "result_uri": {
+                  "type": "string"
+                },
+                "schema_version": {
+                  "const": 1
+                }
+              },
+              "required": ["schema_version", "ok"],
+              "then": {
+                "required": [
+                  "message",
+                  "export_id",
+                  "candidate_count",
+                  "byte_count",
+                  "filters",
+                  "lifetime",
+                  "result_uri",
+                  "files"
+                ]
+              },
+              "type": "object"
+            },
+            "recommendedUsage": "Use a local session whose writable workspace contains the Job Agent export directory. Stream the files with local scripts and reveal only bounded derived evidence. Exports last for the MCP host lifetime and are local to that host; remote file access is not provided.",
+            "requiredGrants": []
+          },
+          {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": false,
+              "openWorldHint": false,
+              "readOnlyHint": false,
+              "title": "Create curation"
+            },
+            "capability": "curation",
+            "description": "Validate the fixed curation-result.json in a prior export and persist an advisory curation.",
+            "expectedBehavior": "Verifies the export and validates the result before saving it. Does not change application statuses or deterministic scores. Validation failures save nothing and include error details.",
+            "id": "create_curation",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "export_id": {
+                  "type": "string"
+                }
+              },
+              "required": ["export_id"],
+              "type": "object"
+            },
+            "name": "Create curation",
+            "outputSchema": {
+              "else": {
+                "required": ["error"]
+              },
+              "if": {
+                "properties": {
+                  "ok": {
+                    "const": true
+                  }
+                }
+              },
+              "properties": {
+                "curated_count": {
+                  "type": "integer"
+                },
+                "curation_id": {
+                  "type": "string"
+                },
+                "error": {
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "issue_code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code", "message"],
+                  "type": "object"
+                },
+                "export_id": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "schema_version": {
+                  "const": 1
+                },
+                "screened_count": {
+                  "type": "integer"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "view_url": {
+                  "type": "string"
+                }
+              },
+              "required": ["schema_version", "ok"],
+              "then": {
+                "required": [
+                  "message",
+                  "curation_id",
+                  "export_id",
+                  "title",
+                  "screened_count",
+                  "curated_count",
+                  "summary",
+                  "view_url"
+                ]
+              },
+              "type": "object"
+            },
+            "recommendedUsage": "Write curation-result.json at the export's result_uri using its result schema and exact job refs. On a validation error, edit that file and retry with the same export_id while the same MCP host is alive.",
+            "requiredGrants": []
+          },
+          {
+            "annotations": {
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false,
+              "readOnlyHint": true,
+              "title": "Get curation"
+            },
+            "capability": "curation",
+            "description": "Read a saved advisory curation by ID.",
+            "expectedBehavior": "Reads a durable saved curation, or returns curation_not_found. Reading does not modify jobs or source configuration.",
+            "id": "get_curation",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "curation_id": {
+                  "type": "string"
+                }
+              },
+              "required": ["curation_id"],
+              "type": "object"
+            },
+            "name": "Get curation",
+            "outputSchema": {
+              "else": {
+                "required": ["error"]
+              },
+              "if": {
+                "properties": {
+                  "ok": {
+                    "const": true
+                  }
+                }
+              },
+              "properties": {
+                "curation": {
+                  "type": "object"
+                },
+                "error": {
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "issue_code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["code", "message"],
+                  "type": "object"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "ok": {
+                  "type": "boolean"
+                },
+                "schema_version": {
+                  "const": 1
+                }
+              },
+              "required": ["schema_version", "ok"],
+              "then": {
+                "required": ["message", "curation"]
+              },
+              "type": "object"
+            },
+            "recommendedUsage": "Use the curation_id returned by Create curation to inspect the saved result. The saved curation survives temporary export cleanup.",
+            "requiredGrants": []
           }
         ]
       }
     ],
     "contractVersion": 1,
-    "description": "Provides a capability-scoped Job Agent MCP service for discovering sources, building recipes, and preparing controlled source execution.",
+    "description": "Provides a capability-scoped Job Agent MCP service for discovering sources, building recipes, preparing controlled source execution, and exporting job evidence for validated advisory curations.",
     "id": "job_agent",
     "name": "Job Agent",
     "requestedHandles": [],
     "skillRoots": [],
-    "summary": "Guarded local source setup operations for configured agent sessions.",
+    "summary": "Local source setup and artifact-backed job curation for configured agent sessions.",
     "tools": []
   },
   {

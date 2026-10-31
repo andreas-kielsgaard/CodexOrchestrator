@@ -1,6 +1,8 @@
 use crate::otp_api::*;
 use serde_json::{json, Map, Value};
 
+mod curation;
+
 pub(crate) struct JobAgentPackage;
 
 struct CapabilityGroup {
@@ -9,6 +11,12 @@ struct CapabilityGroup {
     description: &'static str,
 }
 const CAPABILITY_GROUPS: &[CapabilityGroup] = &[
+    CapabilityGroup {
+        id: "curation",
+        name: "Curation",
+        description:
+            "Export job evidence for local analysis and save validated advisory curations.",
+    },
     CapabilityGroup {
         id: "source_discovery",
         name: "Source discovery",
@@ -160,7 +168,8 @@ fn endpoints() -> Vec<AgentMcpToolDescriptor> {
         recommended_usage: format!("Use during the {} stage when the node's instructions need this result.", CAPABILITY_GROUPS.iter().find(|group| group.id == endpoint.capability).map(|group| group.name.to_lowercase()).unwrap_or_else(|| endpoint.capability.replace('_', " "))),
         required_grants: vec![],
         annotations: endpoint_annotations(endpoint),
-    }).collect()
+        meta: Map::new(),
+    }).chain(curation::endpoints()).collect()
 }
 
 fn endpoint_annotations(endpoint: &Endpoint) -> rmcp::model::ToolAnnotations {
@@ -184,6 +193,7 @@ pub(crate) fn grants_for_tools(
     let known_tools = ENDPOINTS
         .iter()
         .map(|endpoint| endpoint.id)
+        .chain(curation::TOOL_IDS.iter().copied())
         .collect::<std::collections::BTreeSet<_>>();
     if let Some(unknown) = selected_tools
         .iter()
@@ -207,7 +217,7 @@ pub(crate) fn grants_for_tools(
 impl OtpPackage for JobAgentPackage {
     fn descriptor(&self) -> PackageDescriptor {
         PackageDescriptor {
-            id: "job_agent".into(), name: "Job Agent".into(), summary: "Guarded local source setup operations for configured agent sessions.".into(), description: "Provides a capability-scoped Job Agent MCP service for discovering sources, building recipes, and preparing controlled source execution.".into(), contract_version: 1, requested_handles: vec![], tools: vec![],
+            id: "job_agent".into(), name: "Job Agent".into(), summary: "Local source setup and artifact-backed job curation for configured agent sessions.".into(), description: "Provides a capability-scoped Job Agent MCP service for discovering sources, building recipes, preparing controlled source execution, and exporting job evidence for validated advisory curations.".into(), contract_version: 1, requested_handles: vec![], tools: vec![],
             agent_mcp_servers: vec![AgentMcpServerDescriptor {
                 server_name: "job_agent".into(), name: "Job Agent MCP".into(), description: "A local MCP service delivered only to configured agent sessions, with capability-scoped endpoints.".into(),
                 capability_groups: CAPABILITY_GROUPS.iter().map(|group| AgentMcpCapabilityGroupDescriptor { id: group.id.into(), name: group.name.into(), description: group.description.into() }).collect(),
@@ -244,6 +254,15 @@ mod tests {
                 ("recipe_authoring".into(), "approve_recipe".into()),
             ]
         );
+    }
+
+    #[test]
+    fn curation_selection_needs_no_source_transition_grants() {
+        let selected = curation::TOOL_IDS
+            .iter()
+            .map(|id| (*id).to_string())
+            .collect();
+        assert!(grants_for_tools(&selected).unwrap().is_empty());
     }
     #[test]
     fn catalogue_references_existing_groups_and_grants() {

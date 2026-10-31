@@ -98,6 +98,8 @@ pub(crate) struct AgentMcpToolDescriptor {
     pub recommended_usage: String,
     pub required_grants: Vec<String>,
     pub annotations: ToolAnnotations,
+    #[serde(skip_serializing_if = "serde_json::Map::is_empty")]
+    pub meta: serde_json::Map<String, Value>,
 }
 
 pub(crate) fn tool_annotations(

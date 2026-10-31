@@ -1,6 +1,6 @@
 # Job Agent OTP artifact-backed curation
 
-Status: proposed. Implementation has not started.
+Status: implemented and locally validated. See `job-agent-otp-curation-validation.md` for evidence and the baseline sandbox-policy limitation.
 
 ## Target
 
@@ -37,7 +37,7 @@ Edit `src-tauri/src/otp_api/contract.rs`:
 
 Edit `src/application/otp/contracts.ts` to carry metadata and the existing optional MCP annotation fields. Update descriptor constructors and fixtures affected by the Rust field addition. Preserve existing packages with empty metadata.
 
-Use existing `serde_json`, `rmcp` annotations, and MCP content representations. No new dependency or alternate artifact protocol is needed.
+Use existing `serde_json`, `rmcp` annotations, and MCP content representations. The real-host check required a direct dependency on the already-transitive `sse-stream` parser: Job Agent's current HTTP transport returns SSE. No alternate artifact protocol is needed.
 
 ### 2. Add the curation package definitions
 
@@ -114,7 +114,11 @@ Through the actual agent/runtime path:
 
 Capture cleanup failures before deciding on changes: `JobAgentHostOwner::stop` currently closes stdin and may immediately kill the child. If this prevents Job Agent's normal cleanup, adjust this owner to allow bounded graceful termination before forced shutdown, using the product's existing process-lifecycle utilities.
 
+The real-host check reproduced scratch surviving immediate termination. The owner now closes stdin and allows three seconds for natural exit before killing. Existing supervisor utilities own supervised processes rather than this adapter's `Child`; the bounded wait stays in this owner without introducing a separate supervisor.
+
 The proof establishes the local same-workspace flow. Arbitrary session workspaces and remote execution require a separate artifact-access design. Keep this limitation explicit in endpoint usage; do not silently widen access or start the backend at launch just to obtain `artifactRoot`.
+
+Current main exposes only `danger-full-access` for native Codex sessions as a temporary product policy. The isolated app proof therefore uses that existing policy and a registered synthetic workspace. It proves the local artifact flow, but not workspace-write isolation. Sandbox policy remains outside this slice.
 
 ## Validation
 

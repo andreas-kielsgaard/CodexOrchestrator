@@ -61,3 +61,32 @@ it('toggles every endpoint exposed by an MCP server as one group', async () => {
 
   expect(change).toHaveBeenCalledWith(values);
 });
+
+it('offers the artifact-backed curation tools under Job Agent', async () => {
+  const user = userEvent.setup();
+  const change = vi.fn();
+  const pkg = otpCatalogue.find((item) => item.id === 'job_agent')!;
+  const server = pkg.agentMcpServers[0];
+  const tools = server.tools.filter((tool) => tool.capability === 'curation');
+  render(
+    <OtpMcpToolsPicker
+      packages={[pkg]}
+      catalog={{
+        availability: 'available',
+        options: tools.map((tool) => ({
+          value: key(server.serverName, tool.id),
+          label: tool.name,
+        })),
+      }}
+      values={[]}
+      onChange={change}
+    />,
+  );
+  await user.click(screen.getByRole('button', { name: 'Set MCP tools' }));
+  expect(screen.getByRole('button', { name: 'Curation' })).toBeVisible();
+  await user.click(screen.getByRole('button', { name: 'Export curation dataset' }));
+  expect(screen.getByText('Results require artifact processing.')).toBeVisible();
+  await user.click(screen.getByRole('checkbox', { name: 'Include Export curation dataset' }));
+  await user.click(screen.getByRole('button', { name: 'Apply selection' }));
+  expect(change).toHaveBeenCalledWith([key('job_agent', 'export_curation_dataset')]);
+});

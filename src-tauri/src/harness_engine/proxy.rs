@@ -764,7 +764,7 @@ mod tests {
     fn selected_tool_filter_preserves_upstream_annotations_and_omissions() {
         let input = Bytes::from(
             json!({"jsonrpc":"2.0","id":1,"result":{"tools":[
-                {"name":"annotated","annotations":{"readOnlyHint":true,"openWorldHint":false},"x-provider":{"parallelClass":"safe"}},
+                {"name":"annotated","annotations":{"readOnlyHint":true,"openWorldHint":false},"x-provider":{"parallelClass":"safe"},"_meta":{"com.orchid/resultHandling":{"disposition":"artifact-required"}}},
                 {"name":"unannotated"},
                 {"name":"blocked","annotations":{"destructiveHint":true}}
             ]}}).to_string(),
@@ -778,6 +778,10 @@ mod tests {
         assert_eq!(tools[0]["annotations"]["readOnlyHint"], true);
         assert_eq!(tools[0]["annotations"]["openWorldHint"], false);
         assert_eq!(tools[0]["x-provider"]["parallelClass"], "safe");
+        assert_eq!(
+            tools[0]["_meta"]["com.orchid/resultHandling"]["disposition"],
+            "artifact-required"
+        );
         assert!(tools[1].get("annotations").is_none());
     }
 
@@ -938,7 +942,12 @@ mod tests {
                                     let name =
                                         request["params"]["name"].as_str().unwrap().to_string();
                                     state.calls.lock().unwrap().push(name.clone());
-                                    json!({"jsonrpc":"2.0","id":id,"result":{"content":[{"type":"text","text":format!("called {name}")}],"isError":false}})
+                                    json!({"jsonrpc":"2.0","id":id,"result":{
+                                        "content":[{"type":"text","text":format!("called {name}")},
+                                            {"type":"resource_link","name":"jobs.jsonl","uri":"file:///test/jobs.jsonl"}],
+                                        "structuredContent":{"ok":true,"export_id":"export-test"},
+                                        "_meta":{"com.orchid/resultStats":{"records":1}},"isError":false
+                                    }})
                                 }
                                 _ => json!({"jsonrpc":"2.0","id":id,"result":{}}),
                             };
@@ -1271,6 +1280,18 @@ mod tests {
 
         let allowed = rpc(&url, json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"allowed","arguments":{}}})).await;
         assert_eq!(allowed["result"]["isError"], false);
+        assert_eq!(
+            allowed["result"]["content"][1]["uri"],
+            "file:///test/jobs.jsonl"
+        );
+        assert_eq!(
+            allowed["result"]["structuredContent"]["export_id"],
+            "export-test"
+        );
+        assert_eq!(
+            allowed["result"]["_meta"]["com.orchid/resultStats"]["records"],
+            1
+        );
         assert_eq!(state.calls.lock().unwrap().as_slice(), ["allowed"]);
         assert!(state
             .authorizations

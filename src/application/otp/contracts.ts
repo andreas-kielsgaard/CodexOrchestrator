@@ -45,6 +45,14 @@ export interface OtpAgentMcpToolDto {
   readonly expectedBehavior: string;
   readonly recommendedUsage: string;
   readonly requiredGrants: readonly string[];
+  readonly annotations?: {
+    readonly title?: string;
+    readonly readOnlyHint?: boolean;
+    readonly destructiveHint?: boolean;
+    readonly idempotentHint?: boolean;
+    readonly openWorldHint?: boolean;
+  };
+  readonly meta?: Readonly<Record<string, unknown>>;
 }
 export interface OtpAgentMcpCapabilityGroupDto {
   readonly id: string;
