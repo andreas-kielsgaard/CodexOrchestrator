@@ -209,6 +209,7 @@ class MainActivity : Activity() {
             catch (error: Exception) { Toast.makeText(this, error.message, Toast.LENGTH_LONG).show() }
         }
         content.addView(card)
+        action(content, "Debugging connection") { startActivity(Intent(this, DebugConnectionActivity::class.java)) }
         section(content, "listening-timeout", "Listening timeout", true) { body ->
             addText(body, "Stop the microphone after this many seconds without input accepted as relevant by JEV. Replies remain available. Start listening or use your assistant shortcut to resume.", color = PhoneTheme.secondary)
             val timeout = EditText(this).apply { setSingleLine(); inputType = InputType.TYPE_CLASS_NUMBER; setText(settings.listeningTimeoutSeconds.toString()); hint = "Seconds"; contentDescription = "Listening timeout in seconds"; setTextColor(PhoneTheme.primary) }

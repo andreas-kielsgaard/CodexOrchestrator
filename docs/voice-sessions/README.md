@@ -13,6 +13,16 @@ An exploratory handsfree companion for Orchid. JEV filters speech before persist
 
 Android builds require Java 17 or later and Android SDK 36. The wrapper pins Gradle 9.6.1 and the project uses Android Gradle Plugin 9.2.0. `scripts/android/build.ps1` discovers the installed Adoptium JDK and default Android SDK, respecting explicit `JAVA_HOME` and `ANDROID_HOME`.
 
+## Manual phone debugging
+
+Open **Settings → Debugging connection** in Orchid Voice. While authenticated ADB is available, grant the one-time permission shown on that screen: `adb shell pm grant dev.orchid.voice android.permission.WRITE_SECURE_SETTINGS`. Orchid also requests Nearby Wi-Fi permission (location on Android 10–12).
+
+Keep Tailscale connected, turn the phone's Mobile Hotspot off, and press **Start debugging connection**. Keep Orchid visible. It reuses TCP 5555 if available; otherwise it discovers Android's TLS debugging endpoint and, without a joined Wi-Fi network, requests a temporary local hotspot and attempts the experimental debugging-setting workaround for up to two minutes. A setting value alone is never reported as success. The screen shows an endpoint only after finding a local listener; the computer must authenticate with `adb connect <endpoint>` to verify debugging access. Pair through Android developer options if necessary.
+
+Closing or cancelling the screen releases Orchid's temporary hotspot and stops the attempt. After authenticating, `adb -s <endpoint> tcpip 5555` can establish the separate TCP listener for continued Tailscale/mobile-data access. This feature has no Tasker or Shizuku dependency and does not run automatically. Mobile-only startup is device-dependent and may fail on stock firmware.
+
+S21 validation, 2026-10-10: permission setup and existing TCP 5555 discovery passed. With Wi-Fi disconnected and a separate TCP 5556 transport retained for inspection, Orchid created its local hotspot successfully, but Android rejected wireless debugging without a joined network. The attempt timed out after two minutes with no TLS listener. Cancellation released the hotspot while the authenticated TCP connection remained usable. Mobile-only bootstrap is therefore **not working on this S21**; TLS discovery after startup and recovery after reboot remain unverified.
+
 For an authenticated connection and installed offline-voice check without microphone access, build with `powershell -File scripts/android/build.ps1 -ConnectionProbe`, install the generated Android test APK, and run `adb -s <verified-transport> shell am instrument -w dev.orchid.voice.test/dev.orchid.voice.ConnectionProbeInstrumentation`. The desktop gateway must already be enabled. This check uses the app's saved setup and does not verify recording or playback.
 
 Add `-e reconnect true` to test the actual Android connection client's recovery. After the connected status appears, interrupt the desktop process, restart it. An enabled gateway resumes automatically; explicitly stopping the connection keeps it stopped on later launches. The probe waits up to 40 seconds for each loss/recovery stage and closes its connection afterward; it does not open the microphone.
