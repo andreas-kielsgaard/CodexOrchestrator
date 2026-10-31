@@ -28,6 +28,7 @@ class ConnectionProbeInstrumentation : Instrumentation() {
         val result = Bundle()
         val client = OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).build()
         try {
+            if (probe == "workflow") { WorkflowProbe.run(this, result, endpointOverride); finish(Activity.RESULT_OK, result); return }
             if (probe == "interruption") { InterruptionProbe.run(result); finish(Activity.RESULT_OK, result); return }
             if (probe == "retries") { ConnectionRetryProbe.run(this, result); finish(Activity.RESULT_OK, result); return }
             if (probe == "takeover") { ConnectionTakeoverProbe.run(this, result); finish(Activity.RESULT_OK, result); return }

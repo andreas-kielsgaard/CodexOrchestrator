@@ -126,6 +126,13 @@ export function WorkflowInstanceView({
   const canLoadEvents = true;
   const loadAttempt = (eventGroup: SessionEventResultDto) => {
     setEventResult(eventGroup);
+    if (queryClient)
+      void queryClient
+        .loadRecordedEvent(eventGroup.group.eventGroupId)
+        .then((current) => {
+          if (current) setEventResult(current);
+        })
+        .catch((error: unknown) => setError(String(error)));
   };
 
   return (
@@ -178,7 +185,10 @@ export function WorkflowInstanceView({
             const node = nodeById(details, graphNode.id)!;
             const nodeSessions = sessionsForNode(details.sessions, graphNode.id);
             const nodeAttempts = attemptsForNode(details.attempts, graphNode.id);
-            const identity = identities.find((candidate) => candidate.id === node.agentIdentityId);
+            const identity =
+              node.kind === 'capability'
+                ? undefined
+                : identities.find((candidate) => candidate.id === node.agentIdentityId);
             return (
               <>
                 <span className="workflow-node__badges">
@@ -233,10 +243,16 @@ export function WorkflowInstanceView({
                 node={selectedNode}
                 entry={details.instance.recipe.entryNodeIds.includes(selectedNode.nodeId)}
                 details={details}
-                capabilityProfile={capabilityProfiles.get(selectedNode.capabilityProfileId)}
-                identity={identities.find(
-                  (candidate) => candidate.id === selectedNode.agentIdentityId,
-                )}
+                capabilityProfile={
+                  selectedNode.kind === 'capability'
+                    ? undefined
+                    : capabilityProfiles.get(selectedNode.capabilityProfileId)
+                }
+                identity={
+                  selectedNode.kind === 'capability'
+                    ? undefined
+                    : identities.find((candidate) => candidate.id === selectedNode.agentIdentityId)
+                }
                 attempts={attemptsForNode(details.attempts, selectedNode.nodeId)}
                 eventResult={eventResult}
                 canLoadEvents={canLoadEvents}
@@ -337,6 +353,43 @@ function NodeInspector({
   onSend(): void;
 }) {
   const sessions = sessionsForNode(details.sessions, node.nodeId);
+  if (node.kind === 'capability') {
+    return (
+      <div className="workflow-instance-view__node-inspector">
+        <h2>{node.name}</h2>
+        <p>
+          {node.capability.package} · {node.capability.tool}
+        </p>
+        {attempts.map((attempt) => (
+          <details key={attempt.id}>
+            <summary>
+              {attemptStatus(attempt)} · {new Date(attempt.createdAt).toLocaleString()}
+            </summary>
+            {attempt.error && <p role="alert">{attempt.error}</p>}
+            <pre>
+              {JSON.stringify(
+                {
+                  input: attempt.payload,
+                  outputs: attempt.emittedOutputs ?? [],
+                  message: attempt.message,
+                },
+                null,
+                2,
+              )}
+            </pre>
+          </details>
+        ))}
+        <AttemptList
+          attempts={attempts}
+          canLoadEvents={canLoadEvents}
+          onLoadAttempt={onLoadAttempt}
+        />
+        {eventResult ? (
+          <EventGroupInspector group={eventResult.group} deliveries={eventResult.deliveries} />
+        ) : null}
+      </div>
+    );
+  }
   return (
     <div className="workflow-instance-view__node-inspector">
       <header>

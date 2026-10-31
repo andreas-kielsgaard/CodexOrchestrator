@@ -12,6 +12,7 @@ use crate::{
 use std::sync::Arc;
 
 pub struct WorkflowExecutionService {
+    pub capability_runtimes: super::capabilities::CapabilityRuntimes,
     pub authoring: Arc<WorkflowAuthoringService>,
     pub registry: Arc<OtpRegistry>,
     pub session_events: Arc<SessionEventApplication>,
@@ -30,6 +31,7 @@ impl WorkflowExecutionService {
         sessions: Arc<dyn AgentSessionRepository>,
     ) -> Self {
         Self {
+            capability_runtimes: Default::default(),
             registry: authoring.registry.clone(),
             authoring,
             session_events,
@@ -81,6 +83,17 @@ impl WorkflowExecutionService {
         }
         Ok(result)
     }
+    /// Compile all connections independently of an entry selected for a user request.
+    pub fn compile_graph(&self, instance_id: &str) -> Result<WorkflowCompiledPlan, String> {
+        let instance = self.instances.load(instance_id)?;
+        WorkflowCompiler::compile(
+            instance
+                .recipe
+                .runtime_compilation_input(instance_id, &instance.target.worktree.path)?,
+            &self.registry,
+        )
+    }
+
     pub fn compile_instance(
         &self,
         instance_id: &str,

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { WorkflowAuthoringNodeDto } from '../../application/workflowAuthoring';
 import type { OtpCapabilityRefDto, OtpPackageDto } from '../../application/otp';
 import { GroupedElementPicker } from '../../components/otp/GroupedElementPicker';
 import { OtpElementDetails } from '../otp/otpElements';
@@ -10,18 +11,20 @@ export function WorkflowDestinationActionPicker({
   action,
   configuration,
   packages,
+  node,
   onChange,
 }: {
   readonly action: OtpCapabilityRefDto;
   readonly configuration: Readonly<Record<string, unknown>>;
   readonly packages: readonly OtpPackageDto[];
+  readonly node?: WorkflowAuthoringNodeDto;
   readonly onChange: (
     action: OtpCapabilityRefDto,
     configuration: Readonly<Record<string, unknown>>,
   ) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const actions = offeredActions(packages);
+  const actions = offeredActions(packages, node);
   const selected = actions.find((item) => capabilityKey(item.ref) === capabilityKey(action));
   return (
     <>

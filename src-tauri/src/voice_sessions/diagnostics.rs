@@ -60,52 +60,32 @@ impl VoiceSessionApplication {
     pub(crate) fn capture_report(&self, mut capture: PhoneCapture) -> Result<(), String> {
         capture.level = capture.level.clamp(0.0, 1.0);
         capture.updated_at = chrono::Utc::now().to_rfc3339();
-        self.state
-            .lock()
-            .map_err(|_| "Voice state unavailable")?
-            .capture = Some(capture);
-        Ok(())
+        self.transient(|s| s.capture = Some(capture))
     }
     pub(crate) fn audio_received(&self) -> Result<(), String> {
-        let mut state = self.state.lock().map_err(|_| "Voice state unavailable")?;
-        state.audio_progress.received += 1;
-        state.audio_progress.last_received_at = Some(chrono::Utc::now().to_rfc3339());
-        state.audio_progress.error = None;
-        Ok(())
+        self.transient(|s| {
+            s.audio_progress.received += 1;
+            s.audio_progress.last_received_at = Some(chrono::Utc::now().to_rfc3339());
+            s.audio_progress.error = None;
+        })
     }
     pub(crate) fn audio_transcribed(&self, result: Result<&str, &str>) -> Result<(), String> {
-        let mut state = self.state.lock().map_err(|_| "Voice state unavailable")?;
-        match result {
+        self.transient(|s| match result {
             Ok(text) => {
-                state.audio_progress.transcribed += 1;
-                state.audio_progress.last_transcript = Some(text.into());
-                state.audio_progress.last_transcribed_at = Some(chrono::Utc::now().to_rfc3339());
-                state.audio_progress.error = None;
+                s.audio_progress.transcribed += 1;
+                s.audio_progress.last_transcript = Some(text.into());
+                s.audio_progress.last_transcribed_at = Some(chrono::Utc::now().to_rfc3339());
+                s.audio_progress.error = None;
             }
-            Err(error) => state.audio_progress.error = Some(error.into()),
-        }
-        Ok(())
+            Err(error) => s.audio_progress.error = Some(error.into()),
+        })
     }
     pub(crate) fn diagnostics(&self) -> Result<Value, String> {
         let state = self.snapshot()?;
         let (title, detail) = input_status(&state);
         let mut stages = vec![];
         if let Some(c) = &state.conversation {
-            let mut ids = vec![("router", c.main_session_id.clone())];
-            if let Some(p) = &c.pipeline {
-                ids.extend([
-                    ("summary", p.summary.clone()),
-                    ("digest", p.digest.clone()),
-                    ("output", p.output.clone()),
-                ]);
-            }
-            ids.extend(
-                c.delegations
-                    .iter()
-                    .map(|d| ("worker", d.session_id.clone())),
-            );
-            ids.sort();
-            ids.dedup();
+            let ids = self.workflow_session_labels(c)?;
             for (role, id) in ids {
                 let history = self
                     .agents

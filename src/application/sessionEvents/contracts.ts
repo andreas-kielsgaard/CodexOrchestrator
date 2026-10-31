@@ -154,7 +154,12 @@ export interface EventGroupRecordDto {
 }
 
 export type DeliveryOutcomeDto =
-  | { readonly kind: 'dispatched'; readonly invocation: ReferenceIdentityDto }
+  | {
+      readonly kind: 'dispatched';
+      readonly invocation: ReferenceIdentityDto;
+      readonly inputId?: string | null;
+      readonly state?: string | null;
+    }
   | { readonly kind: 'failed'; readonly message: string };
 
 export interface EventDeliveryRecordDto {

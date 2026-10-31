@@ -60,6 +60,7 @@ pub(super) fn invoke(
     };
     let receipt = host.emit(context, output, payload)?;
     Ok(ToolResult {
+        emitted_outputs: vec![],
         text: format!(
             "Workflow output dispatched {} prompt delivery(s) and requested {} cancellation(s).",
             receipt.deliveries, receipt.stops

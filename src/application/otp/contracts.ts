@@ -30,6 +30,7 @@ export interface OtpToolDto {
   readonly recommendedUsage: string;
   readonly entrypoint:
     | { readonly kind: 'mcp'; readonly inputSchema: Readonly<Record<string, unknown>> }
+    | { readonly kind: 'service_event' }
     | { readonly kind: 'session_event'; readonly event: 'invocation_terminal' }
     | { readonly kind: 'action'; readonly usesPrompt: boolean };
   readonly outputs: readonly OtpOutputDto[];
@@ -67,7 +68,15 @@ export interface OtpAgentMcpServerDto {
   readonly grants: readonly OtpAgentMcpGrantDto[];
   readonly configuration: readonly OtpConfigurationFieldDto[];
 }
+export interface OtpNodeCapabilityDto {
+  readonly id: string;
+  readonly name: string;
+  readonly configurationSchema: Readonly<Record<string, unknown>>;
+  readonly actions: readonly OtpCapabilityRefDto[];
+  readonly outputs: readonly OtpOutputRefDto[];
+}
 export interface OtpPackageDto {
+  readonly nodeCapabilities?: readonly OtpNodeCapabilityDto[];
   readonly id: string;
   readonly name: string;
   readonly summary: string;

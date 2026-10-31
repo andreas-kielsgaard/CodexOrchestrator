@@ -27,12 +27,31 @@ impl WorkflowExecutionService {
             .nodes
             .iter()
             .find(|node| node.node_id == address.subject.id())
-            .map(|node| node.notifications.turn_completion_sound)
+            .and_then(|node| {
+                node.agent()
+                    .ok()
+                    .map(|agent| agent.notifications.turn_completion_sound)
+            })
     }
     pub fn on_agent_notification(
         &self,
         notification: &AgentSessionNotification,
     ) -> Result<(), String> {
+        let changed_session = match notification {
+            AgentSessionNotification::EventPersisted { session_id, .. }
+            | AgentSessionNotification::InvocationTerminal { session_id, .. } => Some(session_id),
+            _ => None,
+        };
+        if let Some(session) = changed_session {
+            self.session_events.reconcile_steering(
+                &crate::session_events::ReferenceIdentity::new(
+                    "orchestrator.agent_sessions",
+                    "session",
+                    session.as_str(),
+                )
+                .map_err(|e| e.to_string())?,
+            )?;
+        }
         let AgentSessionNotification::InvocationTerminal {
             session_id,
             invocation,
@@ -61,6 +80,54 @@ impl WorkflowExecutionService {
             return Ok(());
         }
         let (instance, source) = self.otp_source(session_id.as_str(), invocation.id.as_str())?;
+        for mut attempt in self.instances.attempts(&instance.id)? {
+            let mut changed = false;
+            for (ordinal, group) in attempt.event_groups.iter_mut().enumerate() {
+                if !group
+                    .deliveries
+                    .iter()
+                    .any(|d| d.target_session.id() == session_id.as_str())
+                {
+                    continue;
+                }
+                let Some(request) = attempt.session_requests.get(ordinal) else {
+                    continue;
+                };
+                let allow = self
+                    .capability_runtimes
+                    .allow_delivery_retry(&attempt.context, request)?;
+                if let Some(updated) = self
+                    .session_events
+                    .retry_expired_delivery(&group.group.event_group_id, allow)?
+                {
+                    self.capability_runtimes.delivered(
+                        &attempt.context,
+                        &attempt.id,
+                        ordinal,
+                        request,
+                        &updated,
+                    )?;
+                    *group = updated;
+                    changed = true;
+                } else if let Some(updated) = self
+                    .session_events
+                    .recorded_result(&group.group.event_group_id)?
+                {
+                    self.capability_runtimes.delivered(
+                        &attempt.context,
+                        &attempt.id,
+                        ordinal,
+                        request,
+                        &updated,
+                    )?;
+                    *group = updated;
+                    changed = true;
+                }
+            }
+            if changed {
+                self.instances.update_attempt(&attempt)?;
+            }
+        }
         let history = self
             .sessions
             .load_session_history(session_id)
@@ -73,7 +140,7 @@ impl WorkflowExecutionService {
             .and_then(|i| i.final_reply())
             .unwrap_or_default()
             .to_owned();
-        let plan = self.compile_instance(&instance.id, None)?;
+        let plan = self.compile_graph(&instance.id)?;
         let consumers = plan
             .connections
             .iter()

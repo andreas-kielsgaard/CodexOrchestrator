@@ -1,15 +1,19 @@
 use serde::{Deserialize, Serialize};
 
 pub(crate) const DEFAULT_INSTRUCTIONS: &str =
-    include_str!("../../../resources/voice-sessions/instructions.md");
-pub(crate) const INPUT_INSTRUCTIONS: &str =
-    include_str!("../../../resources/voice-sessions/input-instructions.md");
-pub(crate) const SUMMARY_INSTRUCTIONS: &str =
-    include_str!("../../../resources/voice-sessions/summary-instructions.md");
-pub(crate) const DIGEST_INSTRUCTIONS: &str =
-    include_str!("../../../resources/voice-sessions/digest-instructions.md");
-pub(crate) const OUTPUT_INSTRUCTIONS: &str =
-    include_str!("../../../resources/voice-sessions/output-instructions.md");
+    include_str!("../../../crates/orchid-core/src/otp_packages/voice/prompts/instructions.md");
+pub(crate) const INPUT_INSTRUCTIONS: &str = include_str!(
+    "../../../crates/orchid-core/src/otp_packages/voice/prompts/input-instructions.md"
+);
+pub(crate) const SUMMARY_INSTRUCTIONS: &str = include_str!(
+    "../../../crates/orchid-core/src/otp_packages/voice/prompts/summary-instructions.md"
+);
+pub(crate) const DIGEST_INSTRUCTIONS: &str = include_str!(
+    "../../../crates/orchid-core/src/otp_packages/voice/prompts/digest-instructions.md"
+);
+pub(crate) const OUTPUT_INSTRUCTIONS: &str = include_str!(
+    "../../../crates/orchid-core/src/otp_packages/voice/prompts/output-instructions.md"
+);
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -27,22 +31,22 @@ pub(crate) struct VoicePrompts {
 impl Default for VoicePrompts {
     fn default() -> Self {
         Self {
-            relevance: include_str!("../../../resources/voice-sessions/relevance-instructions.md")
+            relevance: include_str!("../../../crates/orchid-core/src/otp_packages/voice/prompts/relevance-instructions.md")
                 .into(),
             completion: include_str!(
-                "../../../resources/voice-sessions/completion-instructions.md"
+                "../../../crates/orchid-core/src/otp_packages/voice/prompts/completion-instructions.md"
             )
             .into(),
             continuation: include_str!(
-                "../../../resources/voice-sessions/continuation-instructions.md"
+                "../../../crates/orchid-core/src/otp_packages/voice/prompts/continuation-instructions.md"
             )
             .into(),
             summary: SUMMARY_INSTRUCTIONS.into(),
-            reaction: include_str!("../../../resources/voice-sessions/reaction-instructions.md").into(),
+            reaction: include_str!("../../../crates/orchid-core/src/otp_packages/voice/prompts/reaction-instructions.md").into(),
             router: INPUT_INSTRUCTIONS.into(),
             digest: DIGEST_INSTRUCTIONS.into(),
             output: OUTPUT_INSTRUCTIONS.into(),
-            tools: include_str!("../../../resources/voice-sessions/tool-instructions.md").into(),
+            tools: include_str!("../../../crates/orchid-core/src/otp_packages/voice/prompts/tool-instructions.md").into(),
         }
     }
 }
@@ -79,6 +83,8 @@ impl Default for VoiceSettings {
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct VoiceState {
+    #[serde(default)]
+    pub(crate) default_design_id: Option<String>,
     pub(crate) settings: VoiceSettings,
     pub(crate) conversation: Option<Conversation>,
     #[serde(default)]
@@ -132,6 +138,10 @@ pub(crate) struct AudioProgress {
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Conversation {
+    #[serde(default)]
+    pub(crate) workflow_instance_id: Option<String>,
+    #[serde(default)]
+    pub(crate) evaluation_sessions: std::collections::BTreeMap<String, String>,
     pub(crate) id: String,
     pub(crate) main_session_id: String,
     pub(crate) delegations: Vec<Delegation>,
@@ -215,6 +225,10 @@ impl Conversation {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Delegation {
+    #[serde(default)]
+    pub(crate) destination_node_id: String,
+    #[serde(default)]
+    pub(crate) request_key: String,
     #[serde(default)]
     pub(crate) id: String,
     #[serde(default)]

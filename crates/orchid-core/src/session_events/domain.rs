@@ -375,6 +375,8 @@ impl SessionEventDefinition {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionEventCommand {
+    #[serde(default)]
+    pub delivery_mode: SessionDeliveryMode,
     pub event_group_id: ReferenceIdentity,
     pub definition_ref: ReferenceIdentity,
     pub trigger: SessionEventTrigger,
@@ -385,6 +387,14 @@ pub struct SessionEventCommand {
     pub target: TargetSelection,
     pub created_by_session: Option<ReferenceIdentity>,
     pub direct_user_options: Option<DirectUserInvocationOptions>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionDeliveryMode {
+    #[default]
+    Queue,
+    SteerActiveOtherwiseQueue,
 }
 
 impl SessionEventCommand {
@@ -491,8 +501,16 @@ pub struct EventGroupRecord {
     rename_all_fields = "camelCase"
 )]
 pub enum DeliveryOutcome {
-    Dispatched { invocation: ReferenceIdentity },
-    Failed { message: String },
+    Dispatched {
+        invocation: ReferenceIdentity,
+        #[serde(default)]
+        input_id: Option<String>,
+        #[serde(default)]
+        state: Option<String>,
+    },
+    Failed {
+        message: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

@@ -29,6 +29,7 @@ pub struct WorkflowCompiledNode {
 }
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub enum WorkflowSessionCreation {
+    Capability(super::authoring::WorkflowCapabilityNode),
     ResolvedInput(SessionCreationRequest),
     AtBirth(SessionCreationIntent),
 }

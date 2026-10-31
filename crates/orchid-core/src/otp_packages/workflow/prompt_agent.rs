@@ -80,6 +80,8 @@ impl SessionFilter {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Configuration {
+    #[serde(default)]
+    delivery_mode: crate::session_events::SessionDeliveryMode,
     #[serde(default = "select")]
     mode: String,
     #[serde(default = "first")]
@@ -138,6 +140,12 @@ pub(super) fn validate(value: &Value) -> Result<(), String> {
 
 pub(super) fn fields() -> Vec<ConfigurationField> {
     [
+        (
+            "deliveryMode",
+            "Delivery",
+            vec!["queue", "steer_active_otherwise_queue"],
+            "queue",
+        ),
         ("mode", "Session mode", vec!["select", "new"], "select"),
         (
             "cardinality",
@@ -164,7 +172,7 @@ pub(super) fn fields() -> Vec<ConfigurationField> {
         label: label.into(),
         choices: choices.into_iter().map(str::to_string).collect(),
         default_value: default.into(),
-        when: (key != "mode").then(|| ("mode".into(), "select".into())),
+        when: (key != "mode" && key != "deliveryMode").then(|| ("mode".into(), "select".into())),
     })
     .collect()
 }
@@ -177,6 +185,7 @@ pub(super) fn invoke(
     let ToolInput::Action {
         configuration,
         inputs,
+        ..
     } = input
     else {
         return Err("Prompt agent requires action input".into());
@@ -235,11 +244,13 @@ pub(super) fn invoke(
         }
     };
     Ok(ToolResult {
+        emitted_outputs: vec![],
         text: String::new(),
         stop_requests: vec![],
         session_requests: targets
             .into_iter()
             .map(|target| SessionRequest {
+                delivery_mode: c.delivery_mode,
                 node_id: node_id.into(),
                 target,
                 prompt: prompt.clone(),

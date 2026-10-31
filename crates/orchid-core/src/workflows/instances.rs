@@ -34,6 +34,10 @@ pub struct RecipeInstance {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowEventAttempt {
+    #[serde(default)]
+    pub completed_at: Option<String>,
+    #[serde(default)]
+    pub emitted_outputs: Vec<crate::otp_api::CapabilityEmission>,
     pub id: String,
     pub instance_id: String,
     pub definition_ref: ReferenceIdentity,
@@ -345,15 +349,20 @@ mod tests {
                 name: "Author".into(),
                 position_x: 20.0,
                 position_y: 20.0,
-                capability_profile_id: "capability-default".into(),
-                node_profile: crate::execution_configuration::NodeProfile {
-                    contract_version: crate::execution_configuration::NODE_PROFILE_CONTRACT_VERSION,
-                    allowed_capabilities: Default::default(),
-                    pinned_defaults: Default::default(),
-                },
-                initial_prompt: None,
-                agent_identity_id: None,
-                notifications: Default::default(),
+                binding: crate::workflows::authoring::WorkflowNodeBinding::Agent(
+                    crate::workflows::authoring::WorkflowAgentNode {
+                        capability_profile_id: "capability-default".into(),
+                        node_profile: crate::execution_configuration::NodeProfile {
+                            contract_version:
+                                crate::execution_configuration::NODE_PROFILE_CONTRACT_VERSION,
+                            allowed_capabilities: Default::default(),
+                            pinned_defaults: Default::default(),
+                        },
+                        initial_prompt: None,
+                        agent_identity_id: None,
+                        notifications: Default::default(),
+                    },
+                ),
             }],
             connections: Vec::new(),
         }

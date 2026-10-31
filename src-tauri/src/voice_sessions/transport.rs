@@ -20,11 +20,17 @@ pub(crate) fn configure_voice_session(
 pub(crate) async fn start_voice_session(
     state: tauri::State<'_, VoiceSessionTauriState>,
     fresh: bool,
+    instance_id: Option<String>,
 ) -> Result<Value, String> {
     let app = state.0.clone();
-    tauri::async_runtime::spawn_blocking(move || app.start(fresh))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(id) = instance_id {
+            app.select_instance(&id)?;
+        }
+        app.start(fresh)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 pub(crate) async fn stop_voice_session(

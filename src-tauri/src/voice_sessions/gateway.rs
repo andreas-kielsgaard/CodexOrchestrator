@@ -83,6 +83,7 @@ pub(crate) fn start(
                     .route("/phone", get(upgrade))
                     .route("/sessions", get(session_list))
                     .route("/status", get(live_status))
+                    .route("/workflow", get(workflow_view))
                     .route("/sessions/{id}", get(session_history))
                     .with_state(state);
                 let _ = axum::serve(listener, router)
@@ -125,6 +126,12 @@ async fn live_status(State(state): State<GatewayState>, headers: HeaderMap) -> R
     }
     history_response(tokio::task::spawn_blocking(move || state.app.diagnostics()).await)
 }
+async fn workflow_view(State(state): State<GatewayState>, headers: HeaderMap) -> Response {
+    if !authorized(&headers, &state.token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    history_response(tokio::task::spawn_blocking(move || state.app.phone_workflow()).await)
+}
 async fn session_history(
     State(state): State<GatewayState>,
     headers: HeaderMap,
@@ -157,8 +164,13 @@ async fn connection(socket: WebSocket, state: GatewayState) {
     use std::time::{Duration, Instant};
     let connection_cancel = state.cancel.child_token();
     let Ok(connection_id) = state.phones.open(connection_cancel.clone(), || {
-        state.app.update(|s| { s.phone_connected = true; Ok(()) })
-    }) else { return; };
+        state.app.update(|s| {
+            s.phone_connected = true;
+            Ok(())
+        })
+    }) else {
+        return;
+    };
     let (mut sink, mut source) = socket.split();
     let mut events = state.app.events.subscribe();
     let conversation = state.app.snapshot().ok().and_then(|s| s.conversation);
@@ -300,16 +312,18 @@ async fn connection(socket: WebSocket, state: GatewayState) {
     }
     connection_cancel.cancel();
     decoder.abort();
-    let _ = state.phones.close(connection_id, || state.app.update(|s| {
-        s.phone_connected = false;
-        s.speaking = false;
-        s.pending_audio = 0;
-        s.capture = None;
-        if let Some(c) = &mut s.conversation {
-            c.input_buffer.complete = false;
-        }
-        Ok(())
-    }));
+    let _ = state.phones.close(connection_id, || {
+        state.app.update(|s| {
+            s.phone_connected = false;
+            s.speaking = false;
+            s.pending_audio = 0;
+            s.capture = None;
+            if let Some(c) = &mut s.conversation {
+                c.input_buffer.complete = false;
+            }
+            Ok(())
+        })
+    });
     let _ = sink.close().await;
 }
 

@@ -27,8 +27,7 @@ pub fn export_definitions(
         .collect()
 }
 pub fn validate_definition(id: &str, value: &serde_json::Value) -> Result<(), String> {
-    let state: WorkflowRecipeState =
-        serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+    let state = super::recipe_migrations::decode_recipe_state(value.clone())?;
     state.draft.validate_storable()?;
     if state.draft.recipe_id != id {
         return Err("Workflow identity mismatch".into());
@@ -42,8 +41,7 @@ pub fn validate_definition(id: &str, value: &serde_json::Value) -> Result<(), St
     Ok(())
 }
 pub fn import_definition(db: &Connection, value: &serde_json::Value) -> Result<(), String> {
-    let state: WorkflowRecipeState =
-        serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+    let state = super::recipe_migrations::decode_recipe_state(value.clone())?;
     validate_definition(&state.draft.recipe_id, value)?;
     db.execute("INSERT INTO workflow_recipe_authoring VALUES(?1,?2,?3,?4,?5) ON CONFLICT(recipe_id) DO UPDATE SET draft_json=excluded.draft_json,active_json=excluded.active_json,updated_at=excluded.updated_at",params![state.draft.recipe_id,encode_draft(&state.draft)?,state.active.as_ref().map(encode_draft).transpose()?,state.created_at,state.updated_at]).map(|_|()).map_err(|e|e.to_string())
 }
@@ -322,18 +320,41 @@ mod tests {
                 name: "Reviewer".into(),
                 position_x: 0.0,
                 position_y: 0.0,
-                capability_profile_id: "capability-default".into(),
-                node_profile: NodeProfile {
-                    contract_version: 1,
-                    allowed_capabilities: CapabilitySet::default(),
-                    pinned_defaults: RuntimeSelections::default(),
-                },
-                initial_prompt: None,
-                agent_identity_id: None,
-                notifications: Default::default(),
+                binding: crate::workflows::authoring::WorkflowNodeBinding::Agent(
+                    crate::workflows::authoring::WorkflowAgentNode {
+                        capability_profile_id: "capability-default".into(),
+                        node_profile: NodeProfile {
+                            contract_version: 1,
+                            allowed_capabilities: CapabilitySet::default(),
+                            pinned_defaults: RuntimeSelections::default(),
+                        },
+                        initial_prompt: None,
+                        agent_identity_id: None,
+                        notifications: Default::default(),
+                    },
+                ),
             }],
             connections: Vec::new(),
         }
+    }
+
+    #[test]
+    fn synchronized_legacy_definition_migrates_before_validation_and_import() {
+        let repository = SqliteWorkflowAuthoringRepository::in_memory();
+        let state = repository.create(&draft("legacy", 1)).unwrap();
+        let mut value = serde_json::to_value(state).unwrap();
+        value["draft"]["contractVersion"] = serde_json::json!(3);
+        value["draft"]["nodes"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("kind");
+        validate_definition("legacy", &value).unwrap();
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(WORKFLOW_AUTHORING_SCHEMA).unwrap();
+        import_definition(&db, &value).unwrap();
+        let loaded = load_state(&db, "legacy").unwrap().unwrap();
+        assert_eq!(loaded.draft.contract_version, 4);
+        assert!(loaded.draft.nodes[0].agent().is_ok());
     }
 
     #[test]

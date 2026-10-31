@@ -13,3 +13,7 @@ pub mod instances;
 pub mod prompt_content;
 
 pub mod session_navigation;
+
+pub mod recipe_migrations;
+
+pub mod capabilities;

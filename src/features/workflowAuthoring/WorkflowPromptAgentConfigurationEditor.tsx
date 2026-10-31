@@ -66,6 +66,18 @@ export function WorkflowPromptAgentConfigurationEditor({
   return (
     <div className="workflow-prompt-agent-configuration">
       <label className="session-event-editor__field">
+        Delivery
+        <select
+          value={current('deliveryMode', 'queue')}
+          onChange={(event) => commit({ deliveryMode: event.currentTarget.value })}
+        >
+          <option value="queue">Queue a turn</option>
+          <option value="steer_active_otherwise_queue">
+            Steer an active turn, otherwise queue
+          </option>
+        </select>
+      </label>
+      <label className="session-event-editor__field">
         Session mode
         <select value={mode} onChange={(event) => commit({ mode: event.currentTarget.value })}>
           <option value="select">Continue a session</option>

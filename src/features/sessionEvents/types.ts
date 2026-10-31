@@ -128,7 +128,12 @@ export type EventGroupOutcome =
   'delivered' | 'partially_delivered' | 'delivery_failed' | 'no_target' | 'noop';
 
 export type DeliveryOutcome =
-  | { readonly kind: 'dispatched'; readonly invocation: ReferenceIdentity }
+  | {
+      readonly kind: 'dispatched';
+      readonly invocation: ReferenceIdentity;
+      readonly inputId?: string | null;
+      readonly state?: string | null;
+    }
   | { readonly kind: 'failed'; readonly message: string };
 
 export interface EventGroupRecord {

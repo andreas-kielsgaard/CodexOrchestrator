@@ -20,8 +20,10 @@ export function WorkflowConnectionEditor({
   readonly packages: readonly OtpPackageDto[];
   readonly onChange: (connection: WorkflowAuthoringConnectionDto) => void;
 }) {
-  const outputs = offeredOutputs(packages);
-  const actions = offeredActions(packages);
+  const source = nodes.find((node) => node.nodeId === connection.sourceNodeId);
+  const destination = nodes.find((node) => node.nodeId === connection.destinationNodeId);
+  const outputs = offeredOutputs(packages, source);
+  const actions = offeredActions(packages, destination);
   const selectedOutput = outputs.find(
     (item) => outputKey(item.ref) === outputKey(connection.trigger),
   );
@@ -84,7 +86,12 @@ export function WorkflowConnectionEditor({
         description="An output from the selected source node starts this connection."
         className="execution-configuration__section"
       >
-        <WorkflowTriggerPicker connection={connection} packages={packages} onChange={onChange} />
+        <WorkflowTriggerPicker
+          connection={connection}
+          packages={packages}
+          node={source}
+          onChange={onChange}
+        />
         {selectedOutput && (
           <p>
             Offered fields:{' '}
@@ -121,6 +128,7 @@ export function WorkflowConnectionEditor({
         )}
       <CollapsibleSection title="Destination action" className="execution-configuration__section">
         <WorkflowDestinationActionPicker
+          node={destination}
           action={connection.action}
           configuration={connection.configuration}
           packages={packages}

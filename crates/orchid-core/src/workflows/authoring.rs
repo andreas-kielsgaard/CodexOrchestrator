@@ -14,198 +14,10 @@ use crate::{
     session_events::ReferenceIdentity,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const WORKFLOW_RECIPE_CONTRACT_VERSION: u32 = 3;
-
-/// Reads persisted recipes into the current contract. The next save persists V3.
-pub fn decode_recipe_value(value: Value) -> Result<WorkflowRecipeDraft, String> {
-    let value = match value.get("contractVersion").and_then(Value::as_u64) {
-        Some(1) => migrate_v1_recipe(value)?,
-        Some(2) => migrate_v2_recipe(value)?,
-        Some(version) if version == WORKFLOW_RECIPE_CONTRACT_VERSION as u64 => value,
-        Some(version) => {
-            return Err(format!(
-                "Workflow recipe contract version {version} is unsupported"
-            ))
-        }
-        None => return Err("Workflow recipe has no contractVersion".into()),
-    };
-    let draft: WorkflowRecipeDraft = serde_json::from_value(value)
-        .map_err(|error| format!("Unable to decode Workflow recipe: {error}"))?;
-    draft.validate_storable()?;
-    Ok(draft)
-}
-
-fn migrate_v1_recipe(mut value: Value) -> Result<Value, String> {
-    let recipe = value
-        .as_object_mut()
-        .ok_or("Workflow recipe must be an object")?;
-    recipe.insert("contractVersion".into(), json!(2));
-    recipe.insert(
-        "entryAction".into(),
-        json!({"package":"workflow","tool":"prompt_agent"}),
-    );
-    recipe.insert("entryConfiguration".into(), json!({}));
-    for node in required_array_mut(recipe, "nodes")? {
-        node.as_object_mut()
-            .ok_or("Workflow node must be an object")?
-            .entry("agentMcpConfiguration")
-            .or_insert_with(|| json!({}));
-    }
-    let connections = required_array_mut(recipe, "connections")?;
-    for connection in connections {
-        migrate_v1_connection(connection)?;
-    }
-    migrate_v2_recipe(value)
-}
-
-fn migrate_v2_recipe(mut value: Value) -> Result<Value, String> {
-    let recipe = value
-        .as_object_mut()
-        .ok_or("Workflow recipe must be an object")?;
-    recipe.insert(
-        "contractVersion".into(),
-        json!(WORKFLOW_RECIPE_CONTRACT_VERSION),
-    );
-    let entry_nodes = recipe
-        .remove("startingNodeId")
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .into_iter()
-        .map(Value::String)
-        .collect();
-    recipe.insert("entryNodeIds".into(), Value::Array(entry_nodes));
-    recipe.remove("entryAction");
-    recipe.remove("entryConfiguration");
-    for node in required_array_mut(recipe, "nodes")? {
-        node.as_object_mut()
-            .ok_or("Workflow node must be an object")?
-            .remove("agentMcpConfiguration");
-    }
-    Ok(value)
-}
-
-fn required_array_mut<'a>(
-    object: &'a mut Map<String, Value>,
-    key: &str,
-) -> Result<&'a mut Vec<Value>, String> {
-    object
-        .get_mut(key)
-        .and_then(Value::as_array_mut)
-        .ok_or_else(|| format!("Workflow recipe {key} must be an array"))
-}
-
-fn migrate_v1_connection(value: &mut Value) -> Result<(), String> {
-    let connection = value
-        .as_object_mut()
-        .ok_or("Workflow connection must be an object")?;
-    let trigger = connection
-        .remove("trigger")
-        .ok_or("Workflow connection has no trigger")?;
-    let target = connection.remove("target").unwrap_or_else(|| json!({}));
-    let prompt_inputs = connection
-        .remove("promptInputs")
-        .and_then(|value| value.as_array().cloned())
-        .unwrap_or_default()
-        .into_iter()
-        .map(migrate_v1_prompt_input)
-        .collect::<Result<Vec<_>, _>>()?;
-    connection.insert("trigger".into(), migrate_v1_trigger(trigger)?);
-    connection.insert(
-        "action".into(),
-        json!({"package":"workflow","tool":"prompt_agent"}),
-    );
-    connection.insert("configuration".into(), v1_target_configuration(&target));
-    connection.insert("promptInputs".into(), Value::Array(prompt_inputs));
-    Ok(())
-}
-
-fn migrate_v1_trigger(value: Value) -> Result<Value, String> {
-    let trigger = value
-        .as_object()
-        .ok_or("Workflow trigger must be an object")?;
-    let kind = trigger
-        .get("kind")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let tool = match kind {
-        "invocation_completed" => "on_invocation_completed",
-        "mcp_call" => match trigger
-            .get("tool")
-            .and_then(|tool| tool.get("id"))
-            .and_then(Value::as_str)
-        {
-            Some("handoff_to_agent") => "handoff_to_agent",
-            Some("trigger_workflow_continuation") => "trigger_workflow_continuation",
-            Some(tool) => return Err(format!("Cannot migrate Workflow MCP trigger `{tool}`")),
-            None => return Err("Cannot migrate Workflow MCP trigger without a tool id".into()),
-        },
-        "application_event" | "event_group_completed" => {
-            return Err(format!(
-                "Cannot migrate Workflow trigger kind `{kind}` to an OTP output"
-            ))
-        }
-        _ => {
-            return Err(format!(
-                "Cannot migrate unknown Workflow trigger kind `{kind}`"
-            ))
-        }
-    };
-    let output = match tool {
-        "on_invocation_completed" => "completed",
-        "handoff_to_agent" => "handoff",
-        "trigger_workflow_continuation" => "continuation",
-        _ => unreachable!(),
-    };
-    Ok(json!({"capability":{"package":"workflow","tool":tool},"output":output}))
-}
-
-fn migrate_v1_prompt_input(value: Value) -> Result<Value, String> {
-    let input = value
-        .as_object()
-        .ok_or("Workflow prompt input must be an object")?;
-    let kind = input
-        .get("kind")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    match kind {
-        "invocation_output" => Ok(json!({"kind":"output_field","field":"output"})),
-        "mcp_argument" => Ok(json!({
-            "kind":"output_field",
-            "field": input.get("name").and_then(Value::as_str).unwrap_or_default(),
-        })),
-        "application_event_field" => Ok(json!({
-            "kind":"output_field",
-            "field": input.get("field").and_then(Value::as_str).unwrap_or_default(),
-        })),
-        "referenced_content" => Ok(json!({
-            "kind":"file_content",
-            "path": input.get("reference").and_then(|reference| reference.get("id")).and_then(Value::as_str).unwrap_or_default(),
-        })),
-        _ => Err(format!(
-            "Cannot migrate Workflow prompt input kind `{kind}`"
-        )),
-    }
-}
-
-fn v1_target_configuration(target: &Value) -> Value {
-    let source = target.as_object();
-    let value = |key: &str, fallback: &str| {
-        source
-            .and_then(|target| target.get(key))
-            .and_then(Value::as_str)
-            .unwrap_or(fallback)
-            .to_string()
-    };
-    json!({
-        "mode":"select",
-        "cardinality":value("cardinality", "first"),
-        "ordering":value("ordering", "newest"),
-        "running":value("running", "any"),
-        "missing":value("missing", "create"),
-    })
-}
+pub use super::recipe_migrations::{decode_recipe_value, WORKFLOW_RECIPE_CONTRACT_VERSION};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -220,18 +32,58 @@ pub struct WorkflowRecipeDraft {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkflowAuthoringNode {
     pub node_id: String,
     pub name: String,
     pub position_x: f64,
     pub position_y: f64,
+    #[serde(flatten)]
+    pub binding: WorkflowNodeBinding,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorkflowNodeBinding {
+    Agent(WorkflowAgentNode),
+    Capability(WorkflowCapabilityNode),
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowAgentNode {
     pub capability_profile_id: String,
     pub node_profile: NodeProfile,
     pub initial_prompt: Option<String>,
     pub agent_identity_id: Option<String>,
     #[serde(default)]
     pub notifications: crate::agent_sessions::notifications::NodeNotifications,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkflowCapabilityNode {
+    pub capability: CapabilityRef,
+    pub configuration: Value,
+}
+
+impl WorkflowAuthoringNode {
+    pub fn agent(&self) -> Result<&WorkflowAgentNode, String> {
+        match &self.binding {
+            WorkflowNodeBinding::Agent(agent) => Ok(agent),
+            WorkflowNodeBinding::Capability(_) => {
+                Err(format!("Node {} is not an agent", self.node_id))
+            }
+        }
+    }
+    pub fn agent_mut(&mut self) -> Result<&mut WorkflowAgentNode, String> {
+        match &mut self.binding {
+            WorkflowNodeBinding::Agent(agent) => Ok(agent),
+            WorkflowNodeBinding::Capability(_) => {
+                Err(format!("Node {} is not an agent", self.node_id))
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -323,6 +175,12 @@ impl WorkflowRecipeDraft {
                     "Workflow entry node `{entry_node}` is absent from the recipe"
                 ));
             }
+            if self.nodes.iter().any(|node| {
+                &node.node_id == entry_node
+                    && matches!(node.binding, WorkflowNodeBinding::Capability(_))
+            }) {
+                return Err("User-request entry nodes must be agents; capability nodes receive service events".into());
+            }
         }
 
         let mut connection_ids = BTreeSet::new();
@@ -385,28 +243,38 @@ impl WorkflowRecipeDraft {
             .nodes
             .iter()
             .map(|node| {
+                if let WorkflowNodeBinding::Capability(capability) = &node.binding {
+                    return Ok(WorkflowCompiledNode {
+                        reference: WorkflowNodeReference::new(node.node_id.clone())
+                            .map_err(|e| e.to_string())?,
+                        initial_prompt: None,
+                        assigned_identity: None,
+                        session_creation: WorkflowSessionCreation::Capability(capability.clone()),
+                    });
+                }
+                let agent = node.agent()?;
                 let session_creation = if let Some(capability_profiles) = capability_profiles {
                     let capability_profile = capability_profiles
-                        .get(&node.capability_profile_id)
+                        .get(&agent.capability_profile_id)
                         .ok_or_else(|| {
-                        format!(
-                            "Workflow node `{}` references unavailable Capability Profile `{}`",
-                            node.node_id, node.capability_profile_id
-                        )
-                    })?;
+                            format!(
+                                "Workflow node `{}` references unavailable Capability Profile `{}`",
+                                node.node_id, agent.capability_profile_id
+                            )
+                        })?;
                     validate_node_capabilities(node, capability_profile)?;
                     WorkflowSessionCreation::ResolvedInput(SessionCreationRequest {
                         contract_version: 1,
                         capability_profile: capability_profile.clone(),
-                        node_profile: node.node_profile.clone(),
+                        node_profile: agent.node_profile.clone(),
                         agent_mcp_configuration: Default::default(),
                         session_skill_inputs: Vec::new(),
                     })
                 } else {
                     WorkflowSessionCreation::AtBirth(
                         crate::execution_configuration::SessionCreationIntent {
-                            capability_profile_id: node.capability_profile_id.clone(),
-                            node_profile: node.node_profile.clone(),
+                            capability_profile_id: agent.capability_profile_id.clone(),
+                            node_profile: agent.node_profile.clone(),
                             agent_mcp_configuration: Default::default(),
                             working_directory: working_directory.into(),
                             title: node.name.clone(),
@@ -416,8 +284,8 @@ impl WorkflowRecipeDraft {
                 Ok(WorkflowCompiledNode {
                     reference: WorkflowNodeReference::new(node.node_id.clone())
                         .map_err(|error| error.to_string())?,
-                    initial_prompt: node.initial_prompt.clone(),
-                    assigned_identity: node
+                    initial_prompt: agent.initial_prompt.clone(),
+                    assigned_identity: agent
                         .agent_identity_id
                         .as_ref()
                         .map(|identity_id| {
@@ -484,13 +352,28 @@ impl WorkflowAuthoringNode {
                 self.node_id
             ));
         }
+        let agent = match &self.binding {
+            WorkflowNodeBinding::Capability(capability) => {
+                validate_identifier(
+                    "Workflow capability",
+                    "package",
+                    &capability.capability.package,
+                )?;
+                validate_identifier("Workflow capability", "tool", &capability.capability.tool)?;
+                if !capability.configuration.is_object() {
+                    return Err("Capability configuration must be an object".into());
+                }
+                return Ok(());
+            }
+            WorkflowNodeBinding::Agent(agent) => agent,
+        };
         validate_identifier(
             "Workflow node",
             "capabilityProfileId",
-            &self.capability_profile_id,
+            &agent.capability_profile_id,
         )?;
-        self.node_profile.validate()?;
-        if self
+        agent.node_profile.validate()?;
+        if agent
             .initial_prompt
             .as_ref()
             .is_some_and(|value| value.trim().is_empty())
@@ -500,7 +383,7 @@ impl WorkflowAuthoringNode {
                 self.node_id
             ));
         }
-        if let Some(identity_id) = &self.agent_identity_id {
+        if let Some(identity_id) = &agent.agent_identity_id {
             validate_identifier("Workflow node", "agentIdentityId", identity_id)?;
         }
         Ok(())
@@ -517,12 +400,6 @@ impl WorkflowAuthoringConnection {
             "destinationNodeId",
             &self.destination_node_id,
         )?;
-        if self.prompt_inputs.is_empty() && self.prompt_text.trim().is_empty() {
-            return Err(format!(
-                "Workflow connection `{}` requires at least one prompt source",
-                self.connection_id
-            ));
-        }
         Ok(())
     }
 }
@@ -531,8 +408,9 @@ fn validate_node_capabilities(
     node: &WorkflowAuthoringNode,
     capability_profile: &CapabilityProfile,
 ) -> Result<(), String> {
+    let agent = node.agent()?;
     capability_profile.validate()?;
-    if capability_profile.capability_profile_id != node.capability_profile_id {
+    if capability_profile.capability_profile_id != agent.capability_profile_id {
         return Err(format!(
             "Workflow node `{}` loaded a Capability Profile with a different identity",
             node.node_id
@@ -543,18 +421,18 @@ fn validate_node_capabilities(
     if !capability_profile.route_policies.is_empty() {
         return Ok(());
     }
-    if let Some(capability) = node
+    if let Some(capability) = agent
         .node_profile
         .allowed_capabilities
         .first_capability_outside(&capability_profile.allowed_capabilities)
     {
         return Err(format!(
             "Workflow node `{}` exposes {capability} outside Capability Profile `{}`",
-            node.node_id, node.capability_profile_id
+            node.node_id, agent.capability_profile_id
         ));
     }
-    let defaults = &node.node_profile.pinned_defaults;
-    let allowed = &node.node_profile.allowed_capabilities;
+    let defaults = &agent.node_profile.pinned_defaults;
+    let allowed = &agent.node_profile.allowed_capabilities;
     if let Some(model) = &defaults.model {
         if !allowed.models.contains(model) {
             return Err(format!(
@@ -638,19 +516,24 @@ mod tests {
                 name: "Planner".into(),
                 position_x: 10.0,
                 position_y: 20.0,
-                capability_profile_id: "capability-default".into(),
-                node_profile: NodeProfile {
-                    contract_version: crate::execution_configuration::NODE_PROFILE_CONTRACT_VERSION,
-                    allowed_capabilities: capabilities(),
-                    pinned_defaults: RuntimeSelections {
-                        model: Some("codex-a".into()),
-                        reasoning_mode: Some("high".into()),
-                        sandbox_mode: Some(SandboxMode::WorkspaceWrite),
+                binding: crate::workflows::authoring::WorkflowNodeBinding::Agent(
+                    crate::workflows::authoring::WorkflowAgentNode {
+                        capability_profile_id: "capability-default".into(),
+                        node_profile: NodeProfile {
+                            contract_version:
+                                crate::execution_configuration::NODE_PROFILE_CONTRACT_VERSION,
+                            allowed_capabilities: capabilities(),
+                            pinned_defaults: RuntimeSelections {
+                                model: Some("codex-a".into()),
+                                reasoning_mode: Some("high".into()),
+                                sandbox_mode: Some(SandboxMode::WorkspaceWrite),
+                            },
+                        },
+                        initial_prompt: Some("Plan the work.".into()),
+                        agent_identity_id: Some("identity-avery".into()),
+                        notifications: Default::default(),
                     },
-                },
-                initial_prompt: Some("Plan the work.".into()),
-                agent_identity_id: Some("identity-avery".into()),
-                notifications: Default::default(),
+                ),
             }],
             connections: Vec::new(),
         }
@@ -735,6 +618,8 @@ mod tests {
     fn activation_rejects_node_that_widens_capability_profile() {
         let mut draft = draft();
         draft.nodes[0]
+            .agent_mut()
+            .unwrap()
             .node_profile
             .allowed_capabilities
             .models

@@ -33,7 +33,7 @@ pub(super) fn assign(
                 .ok_or("The parent assignment does not belong to the caller")?
                 .clone(),
         )
-    } else if c.role(caller) == Some("worker") {
+    } else if c.delegations.iter().any(|d| d.session_id == caller) {
         c.delegations
             .iter()
             .rev()
@@ -95,6 +95,8 @@ pub(super) fn assign(
         (id, 1)
     };
     let assignment = Delegation {
+        destination_node_id: String::new(),
+        request_key: String::new(),
         id: uuid::Uuid::new_v4().to_string(),
         task_id,
         revision,
@@ -135,6 +137,20 @@ impl VoiceSessionApplication {
         if input.summary.trim().is_empty() {
             return Err("summary is required".into());
         }
+        self.require_member(caller)?;
+        let (_, source) = self.workflows.otp_source(caller, invocation)?;
+        self.update(|s| {
+            let c = s.conversation.as_mut().ok_or("No conversation")?;
+            if let Some(d) = c.delegations.iter_mut().find(|d| {
+                d.id == input.assignment_id
+                    && d.session_id.is_empty()
+                    && d.destination_node_id == source.node_id
+            }) {
+                d.session_id = caller.into();
+                d.invocation_id = Some(invocation.into());
+            }
+            Ok(())
+        })?;
         let c = self.require_member(caller)?;
         let assignment = c
             .delegations
@@ -164,11 +180,10 @@ impl VoiceSessionApplication {
             a.outcome = Some(outcome.clone());
             Ok(())
         })?;
-        let mut targets = self.digest_targets();
-        targets.push(assignment.return_session_id.clone());
-        let activity = self.record_activity(caller, "assignment_outcome", outcome, &targets)?;
-        self.schedule_observations();
-        Ok(json!({"recorded":true,"activityId":activity.id,"assignmentId":input.assignment_id}))
+        let mut result = outcome;
+        result["requesterSessionId"] = assignment.return_session_id.clone().into();
+        self.record_activity(caller, "assignment_outcome", result.clone(), &[])?;
+        Ok(result)
     }
 }
 

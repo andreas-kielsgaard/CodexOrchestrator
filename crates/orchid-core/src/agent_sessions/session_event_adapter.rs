@@ -180,6 +180,39 @@ impl SessionDirectory for AgentSessionEventAdapter {
 }
 
 impl SessionInvocationDispatcher for AgentSessionEventAdapter {
+    fn steering_state(
+        &self,
+        session: &ReferenceIdentity,
+        invocation: &ReferenceIdentity,
+        input: &str,
+    ) -> Result<Option<String>, SessionInvocationError> {
+        let id = parse_session_reference(session)
+            .map_err(|e| SessionInvocationError::new(e.to_string()))?;
+        let interactions = self
+            .application
+            .session_interactions(&id)
+            .map_err(|e| SessionInvocationError::new(e.to_string()))?;
+        if let Some(item) = interactions
+            .iter()
+            .find(|i| i.id == input && i.invocation_id.as_str() == invocation.id())
+        {
+            if item.state != "queued" {
+                return Ok(Some(item.state.clone()));
+            }
+        }
+        let history = self
+            .application
+            .load_session(&id)
+            .map_err(|e| SessionInvocationError::new(e.to_string()))?;
+        Ok(history
+            .invocations
+            .iter()
+            .find(|i| {
+                i.invocation.id.as_str() == invocation.id() && i.invocation.status.is_terminal()
+            })
+            .map(|_| "expired".into()))
+    }
+
     fn dispatch(
         &self,
         request: SessionInvocationRequest,
@@ -202,6 +235,7 @@ impl SessionInvocationDispatcher for AgentSessionEventAdapter {
                 .map_err(|e| SessionInvocationError::new(e.to_string()));
         }
         let SessionInvocationRequest {
+            delivery_mode,
             event_group_id,
             delivery_id,
             target_session,
@@ -215,6 +249,18 @@ impl SessionInvocationDispatcher for AgentSessionEventAdapter {
         let invocation_id = invocation_id_for_delivery(&delivery_id)
             .map_err(|e| SessionInvocationError::new(e.to_string()))?;
         let content = invocation_content(&event_group_id, prompt_sources, initial_prompt_sources)?;
+        if delivery_mode == crate::session_events::SessionDeliveryMode::SteerActiveOtherwiseQueue {
+            let receipt = self
+                .application
+                .deliver_or_steer_product(session_id, invocation_id.to_string(), content)
+                .map_err(|error| SessionInvocationError::new(error.to_string()))?;
+            return Ok(SessionInvocationReceipt {
+                invocation: session_invocation_reference(&receipt.invocation_id)
+                    .map_err(|error| SessionInvocationError::new(error.to_string()))?,
+                input_id: receipt.input_id,
+                state: Some(receipt.state),
+            });
+        }
         let launched = self.application.deliver_profiled_message(
             session_id,
             invocation_id,
@@ -230,7 +276,11 @@ impl SessionInvocationDispatcher for AgentSessionEventAdapter {
         let invocation =
             session_invocation_reference(launched.acknowledgement.invocation_id.as_str())
                 .map_err(|error| SessionInvocationError::new(error.to_string()))?;
-        Ok(SessionInvocationReceipt { invocation })
+        Ok(SessionInvocationReceipt {
+            invocation,
+            input_id: None,
+            state: Some("accepted".into()),
+        })
     }
 }
 

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 /// A fresh baseline; the incompatible active-v2 file is intentionally never opened or migrated.
 pub(crate) const ACTIVE_DATABASE_FILE_NAME: &str = "codex-orchestrator-active-v3.sqlite";
-pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 66;
+pub(crate) const ACTIVE_SCHEMA_VERSION: i64 = 67;
 pub(crate) const HARNESS_REVISION_REPOSITORY_DIRECTORY_NAME: &str = "harness-revisions";
 
 #[cfg(test)]
@@ -510,7 +510,9 @@ pub(crate) fn initialize_active_database(connection: &Connection) -> Result<(), 
 }
 
 fn initialize_session_navigation_schema(connection: &Connection) -> Result<(), String> {
-    connection.execute_batch(crate::voice_sessions::repository::SCHEMA).map_err(|e|e.to_string())?;
+    connection
+        .execute_batch(crate::voice_sessions::repository::SCHEMA)
+        .map_err(|e| e.to_string())?;
     connection
         .execute_batch(crate::agent_sessions::repository::PREPARATION_SCHEMA)
         .map_err(|e| e.to_string())?;
@@ -754,6 +756,24 @@ pub(crate) fn configure_sqlite_connection(connection: &Connection) -> rusqlite::
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn v66_upgrade_adds_instance_voice_storage_without_rewriting_legacy_history() {
+        let connection = Connection::open_in_memory().unwrap();
+        initialize_active_database(&connection).unwrap();
+        connection.execute_batch("DROP TABLE voice_workflow_state; DROP TABLE voice_connection_state; INSERT INTO voice_session_state VALUES(1,'{\"history\":\"keep\"}'); PRAGMA user_version=66;").unwrap();
+        initialize_active_database(&connection).unwrap();
+        assert!(table_exists(&connection, "voice_workflow_state"));
+        assert!(table_exists(&connection, "voice_connection_state"));
+        let retained: String = connection
+            .query_row(
+                "SELECT state_json FROM voice_session_state WHERE id=1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retained, "{\"history\":\"keep\"}");
+    }
 
     fn table_exists(connection: &Connection, name: &str) -> bool {
         connection

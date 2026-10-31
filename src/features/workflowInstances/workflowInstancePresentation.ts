@@ -89,6 +89,7 @@ export function connectionById(
 
 export function attemptStatus(attempt: WorkflowEventAttempt): string {
   if (attempt.error) return 'Failed';
+  if (attempt.completedAt && !attempt.eventGroups.length) return 'Completed';
   if (attempt.eventGroups.length) return 'Delivered';
   return 'Preparing';
 }

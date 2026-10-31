@@ -20,6 +20,14 @@ pub struct NodeSession {
 
 /// The only product operations available to an OTP invocation.
 pub trait OtpHost {
+    fn invoke_service(
+        &self,
+        _context: &InvocationContext,
+        _payload: Value,
+    ) -> Result<super::ToolResult, String> {
+        Err("Capability services are unavailable".into())
+    }
+
     fn node(&self, context: &InvocationContext, node_id: &str) -> Result<NodeDefinition, String>;
     fn sessions(
         &self,

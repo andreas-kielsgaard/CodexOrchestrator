@@ -31,6 +31,7 @@ sha2 = "0.10"
 pathdiff = "0.2"
 globset = "0.4"
 regex = "1"
+jsonschema = { version = "0.59.0", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

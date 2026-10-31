@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type {
   OtpPackageDto,
   WorkflowAuthoringConnectionDto,
+  WorkflowAuthoringNodeDto,
 } from '../../application/workflowAuthoring';
 import { GroupedElementPicker } from '../../components/otp/GroupedElementPicker';
 import { OtpElementDetails } from '../otp/otpElements';
@@ -10,14 +11,16 @@ import { offeredOutputs, outputKey } from './otpPresentation';
 export function WorkflowTriggerPicker({
   connection,
   packages,
+  node,
   onChange,
 }: {
   readonly connection: WorkflowAuthoringConnectionDto;
   readonly packages: readonly OtpPackageDto[];
+  readonly node?: WorkflowAuthoringNodeDto;
   readonly onChange: (connection: WorkflowAuthoringConnectionDto) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const outputs = offeredOutputs(packages);
+  const outputs = offeredOutputs(packages, node);
   const selected = outputs.find((item) => outputKey(item.ref) === outputKey(connection.trigger));
   return (
     <>

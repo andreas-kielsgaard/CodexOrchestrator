@@ -1,7 +1,4 @@
-import type {
-  ExtensionWorkflowDefinition,
-  ExtensionRouteEvidence,
-} from '../extensionWorkflows/contracts';
+import type { ExtensionRouteEvidence } from '../extensionWorkflows/contracts';
 
 export interface VoicePrompts {
   relevance: string;
@@ -30,7 +27,8 @@ export interface VoiceSettings {
   workflow?: { directReactions: boolean; notificationSounds?: Record<string, boolean> };
 }
 export interface VoiceView {
-  workflow?: ExtensionWorkflowDefinition;
+  recipeId?: string | null;
+  instances?: { id: string; name: string }[];
   diagnostics?: {
     updatedAt: string;
     phoneConnected: boolean;
@@ -96,6 +94,8 @@ export interface VoiceView {
     conversation: {
       jevApplications?: import('../agentSessions/jevQueries').AppliedJevQuery[];
       id: string;
+      evaluationSessions?: Record<string, string>;
+      workflowInstanceId?: string | null;
       mainSessionId: string;
       pipeline?: { filter: string; summary: string; digest: string; output: string } | null;
       inputBuffer?: { blocks: { id: string; text: string }[]; complete: boolean };
@@ -145,7 +145,7 @@ export interface VoiceView {
 export interface VoiceSessionClient {
   read(): Promise<VoiceView>;
   configure(settings: VoiceSettings): Promise<VoiceView>;
-  start(fresh: boolean): Promise<VoiceView>;
+  start(fresh: boolean, instanceId?: string): Promise<VoiceView>;
   stop(): Promise<VoiceView>;
   sendText(text: string): Promise<unknown>;
 }

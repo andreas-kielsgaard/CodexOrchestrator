@@ -3,6 +3,7 @@ mod domain;
 mod materialization;
 mod ports;
 mod queries;
+mod reconciliation;
 mod repository;
 use sha2::{Digest, Sha256};
 use std::{error::Error, fmt, sync::Arc};
@@ -10,10 +11,10 @@ use std::{error::Error, fmt, sync::Arc};
 pub use domain::{
     DeliveryOutcome, DirectUserInvocationOptions, EventDeliveryRecord, EventGroupOutcome,
     EventGroupRecord, MissingTargetPolicy, PromptSource, PromptSourceDefinition, ReferenceIdentity,
-    RunningFilter, SessionCreationConfiguration, SessionCreationFilter, SessionDirectoryEntry,
-    SessionEventCommand, SessionEventDefinition, SessionEventDomainError, SessionEventResult,
-    SessionEventSource, SessionEventTrigger, SessionEventTriggerBinding, SessionLogicalAddress,
-    SessionTarget, TargetCardinality, TargetOrdering, TargetSelection,
+    RunningFilter, SessionCreationConfiguration, SessionCreationFilter, SessionDeliveryMode,
+    SessionDirectoryEntry, SessionEventCommand, SessionEventDefinition, SessionEventDomainError,
+    SessionEventResult, SessionEventSource, SessionEventTrigger, SessionEventTriggerBinding,
+    SessionLogicalAddress, SessionTarget, TargetCardinality, TargetOrdering, TargetSelection,
 };
 pub use materialization::{
     SessionEventMaterializationError, SessionEventMaterializer, SessionEventOccurrence,
@@ -30,6 +31,7 @@ pub use repository::InMemorySessionEventStore;
 pub use repository::{initialize_session_event_storage, SqliteSessionEventStore};
 
 pub struct SessionEventApplication {
+    retry_lane: std::sync::Mutex<()>,
     directory: Arc<dyn SessionDirectory>,
     dispatcher: Arc<dyn SessionInvocationDispatcher>,
     store: Arc<dyn SessionEventStore>,
@@ -43,6 +45,7 @@ impl SessionEventApplication {
         store: Arc<dyn SessionEventStore>,
     ) -> Self {
         Self {
+            retry_lane: std::sync::Mutex::new(()),
             directory,
             dispatcher,
             store,
@@ -120,6 +123,7 @@ impl SessionEventApplication {
                 Vec::new()
             };
             let request = SessionInvocationRequest {
+                delivery_mode: command.delivery_mode,
                 event_group_id: command.event_group_id.clone(),
                 delivery_id: delivery_id.clone(),
                 target_session: target.session.clone(),
@@ -151,6 +155,8 @@ impl SessionEventApplication {
             let outcome = match dispatch_outcome {
                 Ok(receipt) => DeliveryOutcome::Dispatched {
                     invocation: receipt.invocation,
+                    input_id: receipt.input_id,
+                    state: receipt.state,
                 },
                 Err(error) => DeliveryOutcome::Failed {
                     message: error.to_string(),

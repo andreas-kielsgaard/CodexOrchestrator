@@ -22,6 +22,7 @@ class SpeechPlayer(private val context: Context, private val report: (JSONObject
     private val settings = ConnectionSettings(context)
     private val focus = SpeechAudioFocus(context) { interrupt() }
     private var current: String? = null
+    private var currentText: String? = null
     private var started = 0L
     private var playbackError: String? = null
     private var media: AudioTrack? = null
@@ -69,6 +70,7 @@ class SpeechPlayer(private val context: Context, private val report: (JSONObject
         if (current != null) return
         if (queue.isEmpty()) { focus.release(); idle(); return }
         val utterance = queue.removeFirst(); val id = utterance.getString("id")
+        currentText = utterance.getString("text")
         if (muted()) { progress(id, "muted"); status("Media volume is muted"); next(); return }
         current = id; started = 0; playbackError = null; status("Preparing speech")
         pcm.reset()
@@ -107,11 +109,12 @@ class SpeechPlayer(private val context: Context, private val report: (JSONObject
         if (media?.setPreferredDevice(inventory.output(settings.audioOutput)) == false) status("Unable to select audio output")
         outputStatus(if (started == 0L) "idle" else "playing")
     }
-    private fun outputStatus(state: String) {
+    private fun outputStatus(state: String, utteranceId: String? = current) {
         val requested = settings.audioOutput
         val routed = media?.routedDevice
         val previous = runCatching { JSONObject(settings.playbackStatus) }.getOrDefault(JSONObject())
         settings.playbackStatus = JSONObject().put("state", state).put("requestedOutput", AudioDevices.label(requested))
+            .put("utteranceId", utteranceId ?: JSONObject.NULL).put("text", currentText ?: JSONObject.NULL)
             .put("error", playbackError ?: JSONObject.NULL)
             .put("routeActive", routed != null && started != 0L && state == "playing")
             .put("preferredDeviceKey", media?.preferredDevice?.let { AudioDevices.key(it) } ?: JSONObject.NULL)
@@ -121,11 +124,11 @@ class SpeechPlayer(private val context: Context, private val report: (JSONObject
             .put("updatedAt", java.time.Instant.now().toString()).toString()
     }
     private fun progress(id: String, state: String) {
-        outputStatus(state)
+        outputStatus(state, id)
         report(JSONObject().put("type", if (state == "interrupted") "interrupt" else "playback").put("playback", JSONObject()
             .put("utteranceId", id).put("playedMs", if (started == 0L) 0 else SystemClock.elapsedRealtime() - started).put("state", state)))
     }
-    private fun cleanup() { media?.release(); media = null; file?.delete(); file = null; pcm.reset(); current = null; started = 0 }
+    private fun cleanup() { media?.release(); media = null; file?.delete(); file = null; pcm.reset(); current = null; currentText = null; started = 0 }
     private fun finish(id: String, state: String) {
         progress(id, state); cleanup()
         if (state == "failed") status("Phone speech failed")

@@ -19,18 +19,19 @@ fn worktree_review_root(app_data_dir: &std::path::Path) -> std::path::PathBuf {
 pub(crate) fn run() {
     let builder = tauri::Builder::default();
     // CLI review launches use isolated data and must not redirect to the primary app.
-    let builder = if std::env::var_os(
-        crate::worktree_review::review_runtime::REVIEW_INSTANCE_LABEL_ENV,
-    ).is_none() {
-        builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
-        }))
-    } else {
-        builder
-    };
+    let builder =
+        if std::env::var_os(crate::worktree_review::review_runtime::REVIEW_INSTANCE_LABEL_ENV)
+            .is_none()
+        {
+            builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }))
+        } else {
+            builder
+        };
     let app = builder
         .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
@@ -99,7 +100,7 @@ pub(crate) fn run() {
             let managed_mcp_upstreams = Arc::new(
                 crate::harness_engine::ManagedMcpUpstreamRegistry::default(),
             );
-            let otp_registry = crate::otp_host::OtpRegistry::import(&["workflow", "job_agent"])?;
+            let otp_registry = crate::otp_host::OtpRegistry::import(&["workflow", "job_agent", "voice"])?;
             let otp_installations =
                 crate::otp_host::installations::OtpInstallationService::from_database(
                     database.clone(),
@@ -159,10 +160,6 @@ pub(crate) fn run() {
             let sessions::SessionServices { application, imports, capability_profiles, execution_targets } = sessions::compose(
                 database.clone(), crate::agent_sessions::workspace::SessionWorkspaces::system(database_path.to_string_lossy().into_owned())?, native_profiles.clone(), claude_setups.clone(), repository.clone(), harness_catalog.clone(), harness_engine.clone(), notifier, product_tools, otp_registry.catalogue().into_iter().filter(|package| !package.skill_roots.is_empty()).map(|package| (package.id, package.skill_roots)).collect(), cli_updates.clone(),
             )?;
-            let voice = voice_sessions::compose(database.clone(), application.clone(), capability_profiles.clone(), repository_catalog.clone(), managed_mcp_upstreams.clone())?;
-            *voice_notification.lock().map_err(|_| "Voice notifications unavailable")? = Some(Arc::downgrade(&voice));
-            voice.restore_connection();
-            app.manage(crate::voice_sessions::transport::VoiceSessionTauriState(voice));
             // Resolve runtime executable identity first, then update it off the UI thread. Sends
             // wait at the durable preparation boundary while this work is active. Review builds
             // leave machine-global CLI maintenance to the controller that launched them.
@@ -221,7 +218,7 @@ pub(crate) fn run() {
                             database.clone(),
                         ),
                     ),
-                    capability_profiles,
+                    capability_profiles.clone(),
                     otp_registry.clone(),
                 ),
             );
@@ -245,6 +242,10 @@ pub(crate) fn run() {
             .with_record_observer(Arc::new(move |instance_id| {
                 let _ = instance_app_handle.emit("workflow-instance-updated", instance_id);
             })));
+            let voice = voice_sessions::compose(database.clone(), application.clone(), capability_profiles.clone(), repository_catalog.clone(), managed_mcp_upstreams.clone(), workflow_execution.clone())?;
+            *voice_notification.lock().map_err(|_| "Voice notifications unavailable")? = Some(Arc::downgrade(&voice));
+            voice.restore_connection();
+            app.manage(crate::voice_sessions::transport::VoiceSessionTauriState(voice));
             *workflow_execution_notification.lock().map_err(|_| "Workflow notification registry is unavailable")? = Some(Arc::downgrade(&workflow_execution));
             app.manage(crate::session_navigation::transport::SessionNavigationTauriState(Arc::new(
                 crate::session_navigation::application::SessionNavigationService::new(repository_catalog.clone(), workflow_execution.instances.clone(), repository.clone(), application.clone(), crate::session_navigation::order_repository::NavigationOrderRepository::new(database.clone()), execution_targets.clone())
@@ -590,8 +591,10 @@ pub(crate) fn run() {
 
     app.run(|app_handle, event| {
         if let tauri::RunEvent::ExitRequested { api, .. } = event {
-            if let Some(voice)=app_handle.try_state::<crate::voice_sessions::transport::VoiceSessionTauriState>() {
-                let _=voice.0.shutdown();
+            if let Some(voice) =
+                app_handle.try_state::<crate::voice_sessions::transport::VoiceSessionTauriState>()
+            {
+                let _ = voice.0.shutdown();
             }
             if let Some(state) =
                 app_handle.try_state::<crate::agent_sessions::transport::AgentSessionTauriState>()

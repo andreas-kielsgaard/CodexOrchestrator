@@ -68,6 +68,7 @@ impl SessionEventMaterializer {
         )?;
         let (trigger, source) = runtime_trigger_and_source(&occurrence.trigger);
         let command = SessionEventCommand {
+            delivery_mode: Default::default(),
             event_group_id: occurrence.event_group_id,
             definition_ref: definition.definition_ref.clone(),
             trigger,

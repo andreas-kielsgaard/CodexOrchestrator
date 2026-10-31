@@ -64,6 +64,22 @@ impl SqliteSessionEventStore {
 }
 
 impl SessionEventStore for SqliteSessionEventStore {
+    fn update_delivery(
+        &self,
+        delivery: &EventDeliveryRecord,
+    ) -> Result<(), SessionEventStoreError> {
+        let json = serde_json::to_string(delivery)
+            .map_err(|e| SessionEventStoreError::new(e.to_string()))?;
+        self.write("update Session Event delivery", |tx| {
+            tx.execute(
+                "UPDATE session_event_deliveries SET record_json=?2 WHERE id=?1",
+                params![persistence_key(&delivery.delivery_id)?, json],
+            )
+            .map_err(|e| SessionEventStoreError::new(e.to_string()))?;
+            Ok(())
+        })
+    }
+
     fn record(
         &self,
         group: EventGroupRecord,
@@ -267,6 +283,23 @@ impl InMemorySessionEventStore {
 }
 
 impl SessionEventStore for InMemorySessionEventStore {
+    fn update_delivery(
+        &self,
+        delivery: &EventDeliveryRecord,
+    ) -> Result<(), SessionEventStoreError> {
+        let mut records = self
+            .records
+            .lock()
+            .map_err(|_| SessionEventStoreError::new("Store unavailable"))?;
+        let existing = records
+            .iter_mut()
+            .flat_map(|(_, items)| items)
+            .find(|item| item.delivery_id == delivery.delivery_id)
+            .ok_or_else(|| SessionEventStoreError::new("Delivery missing"))?;
+        *existing = delivery.clone();
+        Ok(())
+    }
+
     fn record(
         &self,
         group: EventGroupRecord,

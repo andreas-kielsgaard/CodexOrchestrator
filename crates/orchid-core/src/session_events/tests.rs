@@ -94,11 +94,20 @@ impl SessionDirectory for FakeDirectory {
 
 #[derive(Default)]
 struct FakeDispatcher {
+    steering: Mutex<Option<String>>,
     requests: Mutex<Vec<SessionInvocationRequest>>,
     failing: Mutex<HashSet<ReferenceIdentity>>,
 }
 
 impl SessionInvocationDispatcher for FakeDispatcher {
+    fn steering_state(
+        &self,
+        _session: &ReferenceIdentity,
+        _invocation: &ReferenceIdentity,
+        _input: &str,
+    ) -> Result<Option<String>, SessionInvocationError> {
+        Ok(self.steering.lock().unwrap().clone())
+    }
     fn dispatch(
         &self,
         request: SessionInvocationRequest,
@@ -113,6 +122,8 @@ impl SessionInvocationDispatcher for FakeDispatcher {
             Err(SessionInvocationError::new("planned invocation failure"))
         } else {
             Ok(SessionInvocationReceipt {
+                input_id: None,
+                state: None,
                 invocation: reference("invocation", request.delivery_id.id()),
             })
         }
@@ -167,6 +178,7 @@ fn command(
     missing: MissingTargetPolicy,
 ) -> SessionEventCommand {
     SessionEventCommand {
+        delivery_mode: Default::default(),
         event_group_id: reference("event_group", group_id),
         definition_ref: reference("event_definition", "definition-1"),
         trigger: SessionEventTrigger::ApplicationEvent {
@@ -663,4 +675,66 @@ fn delivery_identity_preserves_the_complete_group_identity_without_delimiter_col
         delivery_identity(&maximal, u32::MAX).unwrap().id().len(),
         64
     );
+}
+
+#[test]
+fn steering_reconciliation_retries_expired_once_and_preserves_acceptance_and_supersession() {
+    for (state, allow, retries) in [
+        ("accepted", true, 0),
+        ("expired", true, 1),
+        ("rejected", false, 0),
+    ] {
+        let directory = Arc::new(FakeDirectory::with_entries(vec![entry(
+            "existing", 1, None, true,
+        )]));
+        let dispatcher = Arc::new(FakeDispatcher::default());
+        let store = Arc::new(InMemorySessionEventStore::default());
+        let app = application(directory, dispatcher.clone(), store.clone());
+        let mut result = app
+            .dispatch(command(
+                "steering",
+                SessionTarget::Exact {
+                    session: reference("session", "existing"),
+                },
+                MissingTargetPolicy::Fail,
+            ))
+            .unwrap();
+        if let DeliveryOutcome::Dispatched {
+            input_id, state, ..
+        } = &mut result.deliveries[0].outcome
+        {
+            *input_id = Some("input-1".into());
+            *state = Some("queued".into());
+        }
+        store.update_delivery(&result.deliveries[0]).unwrap();
+        *dispatcher.steering.lock().unwrap() = Some(state.into());
+        app.reconcile_steering(&reference("session", "existing"))
+            .unwrap();
+        app.retry_expired_delivery(&result.group.event_group_id, allow)
+            .unwrap();
+        app.retry_expired_delivery(&result.group.event_group_id, allow)
+            .unwrap();
+        assert_eq!(dispatcher.requests.lock().unwrap().len(), 1 + retries);
+        let saved = app
+            .recorded_result(&result.group.event_group_id)
+            .unwrap()
+            .unwrap();
+        if let DeliveryOutcome::Dispatched {
+            input_id,
+            state: saved_state,
+            ..
+        } = &saved.deliveries[0].outcome
+        {
+            if retries == 1 {
+                assert!(input_id.is_none());
+            } else {
+                assert_eq!(
+                    saved_state.as_deref(),
+                    Some(if allow { state } else { "superseded" })
+                );
+            }
+        } else {
+            panic!("delivery missing");
+        }
+    }
 }

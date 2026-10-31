@@ -41,6 +41,7 @@ class MainActivity : Activity() {
     private var draft = ""
     private var tab = 0
     private var transcript: ListeningTranscriptView? = null
+    private var workflow: WorkflowView? = null
     private var selectedSession: String? = null
     private var selectedTitle = "Session"
     private var pending: Call? = null
@@ -73,6 +74,7 @@ class MainActivity : Activity() {
                 "Media volume is muted" else "Speech follows your media volume"
             if (tab == 3) { renderLive(); loadLive() }
             if (tab == 1 && pending == null) loadHistory()
+            if (tab == 4) workflow?.refresh()
             handler.postDelayed(this, 3000)
         }
     }
@@ -106,7 +108,7 @@ class MainActivity : Activity() {
         page = FrameLayout(this)
         root.addView(page, LinearLayout.LayoutParams(-1, 0, 1f))
         navigation = PhoneTheme.column(this).apply { setPadding(dp(16), dp(32), dp(16), dp(16)); setBackgroundColor(PhoneTheme.surface); fitsSystemWindows = true }
-        listOf("Listen", "Sessions", "Settings", "Status").forEachIndexed { index, label ->
+        listOf("Listen", "Sessions", "Settings", "Status", "Workflow").forEachIndexed { index, label ->
             navigation.addView(PhoneTheme.button(this, label) { switchTab(index); drawer.closeDrawer(GravityCompat.START) }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
         }
         drawer = DrawerLayout(this).apply {
@@ -142,6 +144,7 @@ class MainActivity : Activity() {
         if (tab == 1) loadHistory()
     }
     private fun showTab() {
+        workflow?.cancel(); workflow = null
         content.removeAllViews(); exchange = null; volume = null; composer = null; live = null; liveDetails = null; levelMeter = null; transcript = null; rendered = ""
         (content.parent as? android.view.ViewGroup)?.removeView(content)
         page.removeAllViews()
@@ -151,13 +154,13 @@ class MainActivity : Activity() {
             page.addView(scroll, FrameLayout.LayoutParams(-1, -1))
             scroll.scrollTo(0, 0)
         }
-        title.text = listOf("Orchid", "Sessions", "Settings", "Status")[tab]
+        title.text = listOf("Orchid", "Sessions", "Settings", "Status", "Workflow")[tab]
         for (index in 0 until navigation.childCount) {
             val button = navigation.getChildAt(index) as Button
             button.background = PhoneTheme.background(this, if (index == tab) PhoneTheme.selected else PhoneTheme.surface)
             button.isSelected = index == tab
         }
-        when (tab) { 0 -> listening(); 1 -> renderHistory(); 2 -> setup(); 3 -> conversation() }
+        when (tab) { 0 -> listening(); 1 -> renderHistory(); 2 -> setup(); 3 -> conversation(); 4 -> { workflow = WorkflowView(this, client, scroll) { id, name -> selectedSession = id; selectedTitle = name; turns.clear(); nextBefore = null; switchTab(1) }; content.addView(workflow) } }
     }
     private fun listening() {
         val actions = LinearLayout(this)
@@ -499,7 +502,7 @@ class MainActivity : Activity() {
     override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) { super.onRequestPermissionsResult(code, permissions, results); if (results.isNotEmpty() && results[0] == PackageManager.PERMISSION_GRANTED) begin() }
     override fun onActivityResult(code: Int, result: Int, data: Intent?) { super.onActivityResult(code, result, data); if (code == 3 && tab == 2) showTab() }
     override fun onResume() { super.onResume(); handler.post(refresh); handler.post(transcriptRefresh) }
-    override fun onPause() { handler.removeCallbacks(refresh); handler.removeCallbacks(transcriptRefresh); pending?.cancel(); pending = null; liveCall?.cancel(); liveCall = null; generation++; super.onPause() }
+    override fun onPause() { workflow?.cancel(); handler.removeCallbacks(refresh); handler.removeCallbacks(transcriptRefresh); pending?.cancel(); pending = null; liveCall?.cancel(); liveCall = null; generation++; super.onPause() }
     override fun onDestroy() { client.close(); super.onDestroy() }
     override fun onSaveInstanceState(state: Bundle) { super.onSaveInstanceState(state); state.putInt("tab", tab); state.putString("session", selectedSession); state.putString("title", selectedTitle); state.putString("draft", composer?.text?.toString() ?: draft); state.putStringArrayList("expanded", ArrayList(expanded)); state.putStringArrayList("collapsed", ArrayList(collapsed)) }
     @Deprecated("Activity back navigation") override fun onBackPressed() { if (drawer.isDrawerOpen(GravityCompat.START)) drawer.closeDrawer(GravityCompat.START) else if (tab == 1 && selectedSession != null) { selectedSession = null; switchTab(1) } else if (tab != 0) switchTab(0) else super.onBackPressed() }

@@ -42,6 +42,8 @@ pub trait SessionDirectory: Send + Sync {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionInvocationRequest {
+    #[serde(default)]
+    pub delivery_mode: super::SessionDeliveryMode,
     pub event_group_id: ReferenceIdentity,
     pub delivery_id: ReferenceIdentity,
     pub target_session: ReferenceIdentity,
@@ -55,9 +57,22 @@ pub struct SessionInvocationRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionInvocationReceipt {
     pub invocation: ReferenceIdentity,
+    #[serde(default)]
+    pub input_id: Option<String>,
+    #[serde(default)]
+    pub state: Option<String>,
 }
 
 pub trait SessionInvocationDispatcher: Send + Sync {
+    fn steering_state(
+        &self,
+        _session: &ReferenceIdentity,
+        _invocation: &ReferenceIdentity,
+        _input: &str,
+    ) -> Result<Option<String>, SessionInvocationError> {
+        Ok(None)
+    }
+
     fn dispatch(
         &self,
         request: SessionInvocationRequest,
@@ -65,6 +80,9 @@ pub trait SessionInvocationDispatcher: Send + Sync {
 }
 
 pub trait SessionEventStore: Send + Sync {
+    fn update_delivery(&self, delivery: &EventDeliveryRecord)
+        -> Result<(), SessionEventStoreError>;
+
     /// Persists one event group and all of its delivery outcomes as one store operation.
     fn record(
         &self,

@@ -214,6 +214,7 @@ impl OtpPackage for JobAgentPackage {
                 tools: endpoints(), grants: vec![], configuration: vec![],
             }],
             skill_roots: vec![],
+            node_capabilities: vec![],
         }
     }
     fn validate_configuration(&self, tool: &str, _: &Value) -> Result<(), String> {

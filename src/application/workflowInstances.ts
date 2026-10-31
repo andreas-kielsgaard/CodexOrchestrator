@@ -23,6 +23,8 @@ export interface WorkflowInstanceSession {
   readonly running: boolean;
 }
 export interface WorkflowEventAttempt {
+  readonly completedAt?: string | null;
+  readonly emittedOutputs?: readonly { readonly output: string; readonly payload: unknown }[];
   readonly id: string;
   readonly instanceId: string;
   readonly definitionRef: ReferenceIdentityDto;
@@ -33,8 +35,8 @@ export interface WorkflowEventAttempt {
     readonly source: {
       readonly nodeId: string;
       readonly nodeName: string;
-      readonly sessionId: string;
-      readonly invocationId: string;
+      readonly sessionId: string | null;
+      readonly invocationId: string | null;
     } | null;
     readonly connectionId: string | null;
     readonly outputNodeId: string | null;
@@ -42,6 +44,7 @@ export interface WorkflowEventAttempt {
   readonly output: OtpOutputRefDto | null;
   readonly payload: unknown;
   readonly sessionRequests: readonly {
+    readonly deliveryMode?: 'queue' | 'steer_active_otherwise_queue';
     readonly nodeId: string;
     readonly target:
       { readonly kind: 'new' } | { readonly kind: 'exact'; readonly sessionId: string };

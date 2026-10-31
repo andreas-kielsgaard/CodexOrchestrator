@@ -5,6 +5,7 @@ pub(super) fn compose(
     profiles: Arc<crate::execution_configuration::CapabilityProfileService>,
     repositories: Arc<crate::repository_catalog::RepositoryCatalog>,
     upstreams: Arc<crate::harness_engine::ManagedMcpUpstreamRegistry>,
+    workflows: Arc<crate::workflows::execution::WorkflowExecutionService>,
 ) -> Result<Arc<crate::voice_sessions::VoiceSessionApplication>, String> {
     let speech_root = std::env::var_os("LOCALAPPDATA")
         .map(std::path::PathBuf::from)
@@ -15,7 +16,9 @@ pub(super) fn compose(
         agents.clone(),
         profiles.clone(),
         speech_root,
+        workflows.clone(),
     )?;
+    voice.register_workflow_runtime()?;
     let control = Arc::new(crate::orchid_control::OrchidControl {
         agents,
         profiles,

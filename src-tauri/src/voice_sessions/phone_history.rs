@@ -39,20 +39,8 @@ impl VoiceSessionApplication {
             .snapshot()?
             .conversation
             .ok_or("No voice conversation")?;
-        let mut ids = vec![conversation.main_session_id.clone()];
-        if let Some(p) = &conversation.pipeline {
-            ids.extend([
-                p.filter.clone(),
-                p.summary.clone(),
-                p.digest.clone(),
-                p.output.clone(),
-            ]);
-        }
-        for delegation in &conversation.delegations {
-            if !ids.contains(&delegation.session_id) {
-                ids.push(delegation.session_id.clone());
-            }
-        }
+        let labels = self.workflow_session_labels(&conversation)?;
+        let ids = labels.iter().map(|(_, id)| id.clone()).collect::<Vec<_>>();
         let sessions = ids
             .iter()
             .map(|id| {
@@ -87,7 +75,13 @@ impl VoiceSessionApplication {
             .snapshot()?
             .conversation
             .ok_or("No voice conversation")?;
-        if !is_member(&conversation, id) {
+        if !(conversation.workflow_instance_id.is_none() && is_member(&conversation, id))
+            && self.require_member(id).is_err()
+            && !conversation
+                .evaluation_sessions
+                .values()
+                .any(|session| session == id)
+        {
             return Err("Session is outside this voice conversation".into());
         }
         let history = self

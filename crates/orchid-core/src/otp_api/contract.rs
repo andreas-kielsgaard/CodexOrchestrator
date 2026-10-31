@@ -29,6 +29,17 @@ pub struct PackageDescriptor {
     pub agent_mcp_servers: Vec<AgentMcpServerDescriptor>,
     /// Registered skill roots; an OTP with none cannot expose a skill bucket.
     pub skill_roots: Vec<String>,
+    pub node_capabilities: Vec<NodeCapabilityDescriptor>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeCapabilityDescriptor {
+    pub id: String,
+    pub name: String,
+    pub configuration_schema: Value,
+    pub actions: Vec<CapabilityRef>,
+    pub outputs: Vec<OutputRef>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -123,6 +134,7 @@ pub fn tool_annotations(
     rename_all_fields = "camelCase"
 )]
 pub enum Entrypoint {
+    ServiceEvent,
     Mcp { input_schema: Value },
     SessionEvent { event: SessionEventKind },
     Action { uses_prompt: bool },
@@ -166,8 +178,8 @@ pub struct ConfigurationField {
 pub struct SourceContext {
     pub node_id: String,
     pub node_name: String,
-    pub session_id: String,
-    pub invocation_id: String,
+    pub session_id: Option<String>,
+    pub invocation_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -190,6 +202,7 @@ pub enum ToolInput {
     },
     Action {
         configuration: Value,
+        payload: Value,
         inputs: Vec<ResolvedInput>,
     },
 }
@@ -222,6 +235,8 @@ pub enum SessionRequestTarget {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionRequest {
+    #[serde(default)]
+    pub delivery_mode: crate::session_events::SessionDeliveryMode,
     pub node_id: String,
     pub target: SessionRequestTarget,
     pub prompt: Vec<PromptPart>,
@@ -234,8 +249,16 @@ pub struct SessionStopRequest {
     pub session_id: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapabilityEmission {
+    pub output: String,
+    pub payload: Value,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ToolResult {
+    pub emitted_outputs: Vec<CapabilityEmission>,
     pub stop_requests: Vec<SessionStopRequest>,
     pub text: String,
     pub session_requests: Vec<SessionRequest>,
@@ -259,35 +282,32 @@ pub trait OtpPackage: Send + Sync {
 }
 
 pub fn validate_json(schema: &Value, value: &Value) -> Result<(), String> {
-    match schema.get("type").and_then(Value::as_str) {
-        Some("object") => {
-            let object = value.as_object().ok_or("Expected an object")?;
-            let fields = schema.get("properties").and_then(Value::as_object);
-            if let Some(required) = schema.get("required").and_then(Value::as_array) {
-                for key in required.iter().filter_map(Value::as_str) {
-                    if !object.contains_key(key) {
-                        return Err(format!("Missing field {key}"));
-                    }
-                }
-            }
-            for (key, value) in object {
-                if let Some(field) = fields.and_then(|fields| fields.get(key)) {
-                    validate_json(field, value)?;
-                } else if schema.get("additionalProperties") == Some(&Value::Bool(false)) {
-                    return Err(format!("Unknown field {key}"));
-                }
-            }
+    jsonschema::validator_for(schema)
+        .map_err(|error| format!("Invalid OTP schema: {error}"))?
+        .validate(value)
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn capability_settings_enforce_types_ranges_and_choices() {
+        let schema = json!({"type":"object", "required":["enabled","seconds","mode"],
+        "additionalProperties":false, "properties": {
+            "enabled":{"type":"boolean"}, "seconds":{"type":"integer","minimum":1},
+            "mode":{"type":"string","enum":["work","reaction"]}
+        }});
+        assert!(validate_json(&schema, &json!({"enabled":true,"seconds":2,"mode":"work"})).is_ok());
+        for invalid in [
+            json!({"enabled":"true","seconds":2,"mode":"work"}),
+            json!({"enabled":true,"seconds":0,"mode":"work"}),
+            json!({"enabled":true,"seconds":2,"mode":"unknown"}),
+            json!({"enabled":true,"seconds":2}),
+        ] {
+            assert!(validate_json(&schema, &invalid).is_err());
         }
-        Some("array") => {
-            let items = value.as_array().ok_or("Expected an array")?;
-            if let Some(item) = schema.get("items") {
-                for value in items {
-                    validate_json(item, value)?;
-                }
-            }
-        }
-        Some("string") if !value.is_string() => return Err("Expected a string".into()),
-        _ => {}
     }
-    Ok(())
 }

@@ -41,8 +41,8 @@ fn context(tool: &str) -> InvocationContext {
         source: Some(SourceContext {
             node_id: "source".into(),
             node_name: "Source".into(),
-            session_id: "sender".into(),
-            invocation_id: "turn".into(),
+            session_id: Some("sender".into()),
+            invocation_id: Some("turn".into()),
         }),
         connection_id: Some("edge".into()),
         output_node_id: Some("destination".into()),
@@ -139,6 +139,7 @@ fn prompt_policy_requests_exact_and_fresh_sessions_from_available_population() {
             .invoke(
                 &context("prompt_agent"),
                 ToolInput::Action {
+                    payload: json!({}),
                     configuration,
                     inputs: vec![ResolvedInput {
                         reference: "input".into(),
@@ -217,6 +218,7 @@ fn prompt_policy_combines_unique_include_and_exclude_filters() {
         .invoke(
             &context("prompt_agent"),
             ToolInput::Action {
+                payload: json!({}),
                 configuration,
                 inputs: vec![ResolvedInput {
                     reference: "input".into(),
@@ -346,6 +348,7 @@ fn stop_selects_one_running_session_with_configured_ordering() {
             .invoke(
                 &context("stop_session"),
                 ToolInput::Action {
+                    payload: json!({}),
                     configuration: value,
                     inputs: vec![],
                 },

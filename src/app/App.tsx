@@ -126,10 +126,7 @@ import type { WorkUnitActivitySessionTarget } from '../features/orchestrations/c
 
 import { ProductCommandBar } from './ProductCommandBar';
 import { useHistoryMouseButtons } from './useHistoryMouseButtons';
-import {
-  useProductNavigation,
-  type ApplicationSurface,
-} from './useProductNavigation';
+import { useProductNavigation, type ApplicationSurface } from './useProductNavigation';
 
 import {
   contextualOriginDestination,
@@ -517,23 +514,23 @@ export function App({
     initialApplicationSurface === 'voice-sessions'
       ? { kind: 'voice_sessions' }
       : initialApplicationSurface === 'agent-sessions'
-      ? { kind: 'agent_sessions', selection: { kind: 'initial' }, focusedInvocationId: null }
-      : initialApplicationSurface === 'workflows'
-        ? { kind: 'workflow', workflowTypeId: null, workflowInstanceId: null }
-        : initialApplicationSurface === 'file-review'
-          ? { kind: 'file_review', target: { kind: 'direct' } }
-          : initialApplicationSurface === 'harness-inspector'
-            ? { kind: 'harness_inspector' }
-        : initialApplicationSurface === 'worktree-review'
-              ? { kind: 'worktree_review' }
-              : initialApplicationSurface === 'capability-profiles'
-                ? { kind: 'capability_profiles', profileId: null, newProfile: false }
-                : initialApplicationSurface === 'native-settings'
-                  ? {
-                      kind: 'technical_settings',
-                      section: executionConfigurationClient ? 'devices' : 'native',
-                    }
-              : { kind: 'orchestration', location: null };
+        ? { kind: 'agent_sessions', selection: { kind: 'initial' }, focusedInvocationId: null }
+        : initialApplicationSurface === 'workflows'
+          ? { kind: 'workflow', workflowTypeId: null, workflowInstanceId: null }
+          : initialApplicationSurface === 'file-review'
+            ? { kind: 'file_review', target: { kind: 'direct' } }
+            : initialApplicationSurface === 'harness-inspector'
+              ? { kind: 'harness_inspector' }
+              : initialApplicationSurface === 'worktree-review'
+                ? { kind: 'worktree_review' }
+                : initialApplicationSurface === 'capability-profiles'
+                  ? { kind: 'capability_profiles', profileId: null, newProfile: false }
+                  : initialApplicationSurface === 'native-settings'
+                    ? {
+                        kind: 'technical_settings',
+                        section: executionConfigurationClient ? 'devices' : 'native',
+                      }
+                    : { kind: 'orchestration', location: null };
 
   const {
     state: productNavigation,
@@ -688,9 +685,7 @@ export function App({
     );
 
   const requestedProductLocation =
-    currentProductDestination.kind === 'orchestration'
-      ? currentProductDestination.location
-      : null;
+    currentProductDestination.kind === 'orchestration' ? currentProductDestination.location : null;
 
   const orchestrationRoute =
     currentProductDestination.kind === 'plan_builder' ? 'plan-builder' : 'overview';
@@ -997,23 +992,26 @@ export function App({
     [epicPlanningDraftLifecycleClient, refreshDrafts],
   );
 
-  const openProductAgentSession = useCallback((origin: AgentSessionProductOrigin) => {
-    dispatchProductNavigation({
-      type: 'navigate',
+  const openProductAgentSession = useCallback(
+    (origin: AgentSessionProductOrigin) => {
+      dispatchProductNavigation({
+        type: 'navigate',
 
-      intent: 'replace',
+        intent: 'replace',
 
-      destination: { kind: 'orchestration', location: origin.location },
-    });
+        destination: { kind: 'orchestration', location: origin.location },
+      });
 
-    dispatchProductNavigation({
-      type: 'open_contextual_agent_session',
+      dispatchProductNavigation({
+        type: 'open_contextual_agent_session',
 
-      origin,
+        origin,
 
-      focusedInvocationId: null,
-    });
-  }, [dispatchProductNavigation]);
+        focusedInvocationId: null,
+      });
+    },
+    [dispatchProductNavigation],
+  );
 
   const openWorkUnitActivitySession = useCallback(
     (target: WorkUnitActivitySessionTarget, origin: AgentSessionProductOrigin) => {
@@ -1373,7 +1371,22 @@ export function App({
             </button>
           ) : null}
 
-          {voiceSessionClient && <button type="button" className={surface === 'voice-sessions' ? 'active' : undefined} aria-current={surface === 'voice-sessions' ? 'page' : undefined} onClick={() => dispatchProductNavigation({ type: 'navigate', intent: 'push', destination: { kind: 'voice_sessions' } })}>Voice Sessions</button>}
+          {voiceSessionClient && (
+            <button
+              type="button"
+              className={surface === 'voice-sessions' ? 'active' : undefined}
+              aria-current={surface === 'voice-sessions' ? 'page' : undefined}
+              onClick={() =>
+                dispatchProductNavigation({
+                  type: 'navigate',
+                  intent: 'push',
+                  destination: { kind: 'voice_sessions' },
+                })
+              }
+            >
+              Voice Sessions
+            </button>
+          )}
           {executionConfigurationClient ? (
             <button
               className={surface === 'capability-profiles' ? 'active' : undefined}
@@ -1383,16 +1396,21 @@ export function App({
               aria-current={surface === 'capability-profiles' ? 'page' : undefined}
 
               onClick={() => {
-                const remembered = productNavigation.current.destination.kind === 'capability_profiles'
-                  ? productNavigation.current.destination
-                  : productNavigation.history.slice().reverse().find((entry) =>
-                    entry.destination.kind === 'capability_profiles')?.destination;
+                const remembered =
+                  productNavigation.current.destination.kind === 'capability_profiles'
+                    ? productNavigation.current.destination
+                    : productNavigation.history
+                        .slice()
+                        .reverse()
+                        .find((entry) => entry.destination.kind === 'capability_profiles')
+                        ?.destination;
                 dispatchProductNavigation({
                   type: 'navigate',
                   intent: 'push',
-                  destination: remembered?.kind === 'capability_profiles'
-                    ? remembered
-                    : { kind: 'capability_profiles', profileId: null, newProfile: false },
+                  destination:
+                    remembered?.kind === 'capability_profiles'
+                      ? remembered
+                      : { kind: 'capability_profiles', profileId: null, newProfile: false },
                 });
               }}
             >
@@ -1494,19 +1512,24 @@ export function App({
               aria-current={surface === 'native-settings' ? 'page' : undefined}
 
               onClick={() => {
-                const remembered = productNavigation.current.destination.kind === 'technical_settings'
-                  ? productNavigation.current.destination
-                  : productNavigation.history.slice().reverse().find((entry) =>
-                    entry.destination.kind === 'technical_settings')?.destination;
+                const remembered =
+                  productNavigation.current.destination.kind === 'technical_settings'
+                    ? productNavigation.current.destination
+                    : productNavigation.history
+                        .slice()
+                        .reverse()
+                        .find((entry) => entry.destination.kind === 'technical_settings')
+                        ?.destination;
                 dispatchProductNavigation({
                   type: 'navigate',
                   intent: 'push',
-                  destination: remembered?.kind === 'technical_settings'
-                    ? remembered
-                    : {
-                        kind: 'technical_settings',
-                        section: executionConfigurationClient ? 'devices' : 'native',
-                      },
+                  destination:
+                    remembered?.kind === 'technical_settings'
+                      ? remembered
+                      : {
+                          kind: 'technical_settings',
+                          section: executionConfigurationClient ? 'devices' : 'native',
+                        },
                 });
               }}
             >
@@ -1877,21 +1900,51 @@ export function App({
       ) : (
         harnessManagementPreviewSurface
       )}
-      {voiceVisited && voiceSessionClient && <div className="voice-workspace-host" hidden={surface !== 'voice-sessions'}>
-        <VoiceSessionsScreen
-          active={surface === 'voice-sessions'}
-          queryClient={agentSessionClient.jevQueries}
-          client={voiceSessionClient}
-          onOpenSession={(sessionId, invocationId) => dispatchProductNavigation({
-            type: 'navigate', intent: 'push', destination: {
-              kind: 'agent_sessions', selection: { kind: 'session', sessionId }, focusedInvocationId: invocationId ?? null,
-            },
-          })}
-          onOpenProfile={executionConfigurationClient ? profileId => dispatchProductNavigation({
-            type: 'navigate', intent: 'push', destination: { kind: 'capability_profiles', profileId, newProfile: false },
-          }) : undefined}
-        />
-      </div>}
+      {voiceVisited && voiceSessionClient && (
+        <div className="voice-workspace-host" hidden={surface !== 'voice-sessions'}>
+          <VoiceSessionsScreen
+            workflowEditor={
+              workflowAuthoringClient && executionConfigurationClient
+                ? {
+                    client: workflowAuthoringClient,
+                    executionConfigurationClient,
+                    identityClient: identityManagementClient,
+                    readOtpCatalogue: otpCatalogueReader,
+                    instanceClient: workflowInstanceClient,
+                    targetSelector: workflowTargetSelector,
+                    sessionClient: agentSessionClient,
+                    profileClient: agentSessionProfileClient,
+                    queryClient: sessionEventQueryClient,
+                  }
+                : undefined
+            }
+            active={surface === 'voice-sessions'}
+            queryClient={agentSessionClient.jevQueries}
+            client={voiceSessionClient}
+            onOpenSession={(sessionId, invocationId) =>
+              dispatchProductNavigation({
+                type: 'navigate',
+                intent: 'push',
+                destination: {
+                  kind: 'agent_sessions',
+                  selection: { kind: 'session', sessionId },
+                  focusedInvocationId: invocationId ?? null,
+                },
+              })
+            }
+            onOpenProfile={
+              executionConfigurationClient
+                ? (profileId) =>
+                    dispatchProductNavigation({
+                      type: 'navigate',
+                      intent: 'push',
+                      destination: { kind: 'capability_profiles', profileId, newProfile: false },
+                    })
+                : undefined
+            }
+          />
+        </div>
+      )}
     </div>
   );
 
@@ -1901,14 +1954,15 @@ export function App({
 
       onOpenTechnicalSettings={
         nativeProfileClient
-          ? () => dispatchProductNavigation({
-              type: 'navigate',
-              intent: 'push',
-              destination: {
-                kind: 'technical_settings',
-                section: executionConfigurationClient ? 'devices' : 'native',
-              },
-            })
+          ? () =>
+              dispatchProductNavigation({
+                type: 'navigate',
+                intent: 'push',
+                destination: {
+                  kind: 'technical_settings',
+                  section: executionConfigurationClient ? 'devices' : 'native',
+                },
+              })
           : undefined
       }
     >

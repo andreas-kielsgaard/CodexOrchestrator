@@ -1,11 +1,7 @@
 use super::{
     domain::*, gateway::GatewayOwner, repository::VoiceSessionRepository, speech::SpeechSession,
 };
-use crate::agent_sessions::{
-    application::AgentSessionApplication,
-    domain::AgentSessionId,
-    ports::{InvocationContent, InvocationContextPart},
-};
+use crate::agent_sessions::application::AgentSessionApplication;
 use serde_json::{json, Value};
 use std::{
     path::PathBuf,
@@ -15,14 +11,18 @@ use tokio::sync::broadcast;
 
 pub(crate) struct VoiceSessionApplication {
     pub(crate) agents: Arc<AgentSessionApplication>,
+    pub(crate) workflows: Arc<crate::workflows::execution::WorkflowExecutionService>,
     pub(crate) profiles: Arc<crate::execution_configuration::CapabilityProfileService>,
     pub(crate) state: Mutex<VoiceState>,
-    repository: VoiceSessionRepository,
+    pub(super) selected: Mutex<Option<Arc<Self>>>,
+    pub(super) instances: Mutex<std::collections::BTreeMap<String, Arc<Self>>>,
+    pub(super) connected_instance: std::sync::atomic::AtomicBool,
+    pub(super) instance_only: bool,
+    pub(super) repository: VoiceSessionRepository,
     pub(crate) events: broadcast::Sender<Value>,
     gateway: Mutex<Option<GatewayOwner>>,
     lifecycle: Mutex<()>,
     pub(crate) speech: SpeechSession,
-    pub(crate) observer_dispatch: Mutex<()>,
     pub(crate) input_dispatch: Mutex<()>,
 }
 impl VoiceSessionApplication {
@@ -31,6 +31,7 @@ impl VoiceSessionApplication {
         agents: Arc<AgentSessionApplication>,
         profiles: Arc<crate::execution_configuration::CapabilityProfileService>,
         speech_root: PathBuf,
+        workflows: Arc<crate::workflows::execution::WorkflowExecutionService>,
     ) -> Result<Arc<Self>, String> {
         let mut state = repository.load()?;
         state.enabled = false;
@@ -46,40 +47,112 @@ impl VoiceSessionApplication {
         state.speech_configured = speech.configured();
         Ok(Arc::new(Self {
             agents,
+            workflows,
             profiles,
             state: Mutex::new(state),
+            selected: Mutex::new(None),
+            instances: Mutex::new(Default::default()),
+            connected_instance: std::sync::atomic::AtomicBool::new(true),
+            instance_only: false,
             repository,
             events: broadcast::channel(128).0,
             gateway: Mutex::new(None),
             lifecycle: Mutex::new(()),
             speech,
-            observer_dispatch: Mutex::new(()),
             input_dispatch: Mutex::new(()),
         }))
     }
+    pub(super) fn scoped(&self, state: VoiceState) -> Arc<Self> {
+        Arc::new(Self {
+            agents: self.agents.clone(),
+            workflows: self.workflows.clone(),
+            profiles: self.profiles.clone(),
+            state: Mutex::new(state),
+            repository: VoiceSessionRepository(self.repository.0.clone()),
+            events: self.events.clone(),
+            gateway: Mutex::new(None),
+            lifecycle: Mutex::new(()),
+            speech: SpeechSession::new(
+                std::env::var_os("LOCALAPPDATA")
+                    .map(PathBuf::from)
+                    .unwrap_or_default()
+                    .join("Orchid/voice-speech"),
+            ),
+            input_dispatch: Mutex::new(()),
+            selected: Mutex::new(None),
+            instances: Mutex::new(Default::default()),
+            connected_instance: std::sync::atomic::AtomicBool::new(false),
+            instance_only: true,
+        })
+    }
+    pub(super) fn transient<T>(
+        &self,
+        change: impl FnOnce(&mut VoiceState) -> T,
+    ) -> Result<T, String> {
+        let selected = self
+            .selected
+            .lock()
+            .map_err(|_| "Voice selection unavailable")?
+            .clone();
+        if let Some(selected) = selected {
+            return selected.transient(change);
+        }
+        let mut state = self.state.lock().map_err(|_| "Voice state unavailable")?;
+        Ok(change(&mut state))
+    }
     pub(crate) fn snapshot(&self) -> Result<VoiceState, String> {
+        if let Some(selected) = self
+            .selected
+            .lock()
+            .map_err(|_| "Voice selection unavailable")?
+            .clone()
+        {
+            return selected.snapshot();
+        }
+
         let mut state = self
             .state
             .lock()
             .map_err(|_| "Voice state unavailable")?
             .clone();
         state.speech_configured = self.speech.configured();
+        if !self
+            .connected_instance
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            state.enabled = false;
+            state.phone_connected = false;
+        }
         Ok(state)
     }
     pub(crate) fn view(&self) -> Result<Value, String> {
         let state = self.snapshot()?;
         Ok(
-            json!({"workflow":super::workflow::view(&state),"state":state,"diagnostics":self.diagnostics()?,"defaultPrompts":VoicePrompts::default(),"profiles":self.profiles.list().map_err(|e|e.to_string())?.iter().map(|p|json!({"id":p.capability_profile_id,"name":p.name})).collect::<Vec<_>>() }),
+            json!({"recipeId":state.default_design_id,"instances":self.workflows.instances.list()?.into_iter().filter(|i|i.recipe.nodes.iter().any(|n|matches!(&n.binding,crate::workflows::authoring::WorkflowNodeBinding::Capability(b) if b.capability.package=="voice" && b.capability.tool=="transcript"))).map(|i|json!({"id":i.id,"name":i.name})).collect::<Vec<_>>(),"state":state,"diagnostics":self.diagnostics()?,"defaultPrompts":VoicePrompts::default(),"profiles":self.profiles.list().map_err(|e|e.to_string())?.iter().map(|p|json!({"id":p.capability_profile_id,"name":p.name})).collect::<Vec<_>>() }),
         )
     }
     pub(crate) fn update<T>(
         &self,
         change: impl FnOnce(&mut VoiceState) -> Result<T, String>,
     ) -> Result<T, String> {
+        let selected = self
+            .selected
+            .lock()
+            .map_err(|_| "Voice selection unavailable")?
+            .clone();
+        if let Some(selected) = selected {
+            return selected.update(change);
+        }
         let mut state = self.state.lock().map_err(|_| "Voice state unavailable")?;
         let mut next = state.clone();
         let result = change(&mut next)?;
-        self.repository.save(&next)?;
+        self.repository.save_scoped(
+            &next,
+            !self.instance_only
+                || self
+                    .connected_instance
+                    .load(std::sync::atomic::Ordering::Acquire),
+        )?;
         *state = next;
         let _ = self.events.send(json!({"type":"changed"}));
         Ok(result)
@@ -102,7 +175,9 @@ impl VoiceSessionApplication {
             }
             state.settings = settings;
             Ok(())
-        })
+        })?;
+        self.ensure_default_design()?;
+        Ok(())
     }
     pub(crate) fn start(self: &Arc<Self>, fresh: bool) -> Result<Value, String> {
         let _lane = self
@@ -113,31 +188,15 @@ impl VoiceSessionApplication {
         if state.enabled {
             return self.view();
         }
-        if fresh || state.conversation.is_none() {
-            let main = self.agents.create_product_session_configured(
-                "Voice conversation".into(),
-                state.settings.working_directory.clone(),
-                &state.settings.profile_id,
-                crate::orchid_control::tool_map(),
-                state.settings.models.routing.options(),
-            )?;
-            self.update(|state| {
-                state.conversation = Some(Conversation {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    main_session_id: main.id.to_string(),
-                    delegations: vec![],
-                    observed_sessions: vec![],
-                    observations: vec![],
-                    pending_topics: vec![],
-                    utterances: vec![],
-                    inputs: vec![],
-                    playback: None,
-                    ..Default::default()
-                });
-                Ok(())
-            })?;
+        if fresh
+            || state
+                .conversation
+                .as_ref()
+                .and_then(|c| c.workflow_instance_id.as_ref())
+                .is_none()
+        {
+            return Err("Select a Voice Workflow instance before starting the connection".into());
         }
-        self.ensure_pipeline()?;
         let owner = super::gateway::start(self.clone(), &state.settings)?;
         *self
             .gateway
@@ -149,7 +208,6 @@ impl VoiceSessionApplication {
             state.error = None;
             Ok(())
         })?;
-        self.schedule_observations();
         self.view()
     }
     pub(crate) fn stop(&self) -> Result<(), String> {
@@ -159,10 +217,13 @@ impl VoiceSessionApplication {
         self.close_gateway(false)
     }
     pub(crate) fn restore_connection(self: &Arc<Self>) {
-        if self
-            .snapshot()
-            .is_ok_and(|state| state.connection_requested)
-        {
+        if self.snapshot().is_ok_and(|state| {
+            state.connection_requested
+                && state
+                    .conversation
+                    .as_ref()
+                    .is_some_and(|c| c.workflow_instance_id.is_some())
+        }) {
             if let Err(error) = self.start(false) {
                 self.set_error(format!("Unable to restore phone connection: {error}"));
             }
@@ -195,126 +256,21 @@ impl VoiceSessionApplication {
             .snapshot()?
             .conversation
             .ok_or("Start a voice conversation first")?;
-        if conversation.role(caller).is_none() {
+        if !self
+            .workflows
+            .instance_sessions(
+                &self.workflows.instances.load(
+                    conversation
+                        .workflow_instance_id
+                        .as_deref()
+                        .ok_or("Legacy Voice history is read-only")?,
+                )?,
+            )?
+            .iter()
+            .any(|entry| entry.session.id() == caller)
+        {
             return Err("Caller does not belong to this voice conversation".into());
         }
         Ok(conversation)
-    }
-    pub(crate) fn context(&self, conversation: &Conversation) -> Value {
-        json!({"conversationId":conversation.id,"mainSessionId":conversation.main_session_id,"pipeline":conversation.pipeline,
-            "tasks":conversation.tasks,"assignments":conversation.delegations.iter().rev().take(20).map(|d|json!({"id":d.id,"taskId":d.task_id,"revision":d.revision,"sessionId":d.session_id,"invocationId":d.invocation_id,"delivery":d.delivery,"status":d.runtime_status,"outcome":d.outcome})).collect::<Vec<_>>(),
-            "pendingTopics":conversation.pending_topics.iter().map(|t|json!({"id":t.id,"title":t.title})).collect::<Vec<_>>(),"recentOutput":conversation.utterances.iter().rev().take(5).collect::<Vec<_>>(),"playback":conversation.playback,
-            "utterance":conversation.playback.as_ref().and_then(|p| conversation.utterances.iter().find(|u|u.id==p.utterance_id))})
-    }
-    pub(crate) fn delivery_content(
-        &self,
-        target: &AgentSessionId,
-        text: String,
-        conversation: &Conversation,
-    ) -> Result<InvocationContent, String> {
-        let state = self.snapshot()?;
-        let mut content = InvocationContent::query(text);
-        content
-            .context
-            .push(InvocationContextPart::InitialInstructions {
-                source: "voice_tool_access".into(),
-                version: 1,
-                content: state.settings.prompts.tools.clone(),
-            });
-        if let Some(instructions) =
-            self.role_instructions(conversation, target.as_str(), &state.settings.prompts)
-        {
-            content
-                .context
-                .push(InvocationContextPart::InitialInstructions {
-                    source: "voice_stage".into(),
-                    version: 2,
-                    content: instructions.into(),
-                });
-        }
-        if target.as_str() == conversation.main_session_id {
-            content
-                .context
-                .push(InvocationContextPart::ReferencedProductContent {
-                    source: "voice_preferences".into(),
-                    content: state.settings.instructions,
-                });
-        }
-        content
-            .context
-            .push(InvocationContextPart::ReferencedProductContent {
-                source: "voice_session_state".into(),
-                content: self.context(conversation).to_string(),
-            });
-        Ok(content)
-    }
-    pub(crate) fn publish(
-        self: &Arc<Self>,
-        caller: &str,
-        arguments: Value,
-    ) -> Result<Value, String> {
-        let conversation = self.require_member(caller)?;
-        let text = crate::orchid_control::required(&arguments, "text")?.to_string();
-        if text.len() > 8000 {
-            return Err("Split long explanations into concise spoken passages".into());
-        }
-        let kind = crate::orchid_control::required(&arguments, "kind")?.to_string();
-        if !["acknowledgement", "announcement", "explanation"].contains(&kind.as_str()) {
-            return Err("Invalid publication kind".into());
-        }
-        if !super::pipeline::may_publish(conversation.role(caller), &kind) {
-            return Err(
-                "Only output publishes speech; the summarizer may acknowledge receipt".into(),
-            );
-        }
-        let utterance = Utterance {
-            id: uuid::Uuid::new_v4().to_string(),
-            kind,
-            text,
-            topic_id: arguments["topicId"].as_str().map(str::to_owned),
-            created_at: chrono::Utc::now().to_rfc3339(),
-        };
-        self.update(|state| {
-            let conversation = state.conversation.as_mut().ok_or("Conversation ended")?;
-            if let Some(topic) = arguments.get("pendingTopic") {
-                let topic: Topic =
-                    serde_json::from_value(topic.clone()).map_err(|e| e.to_string())?;
-                conversation.pending_topics.retain(|t| t.id != topic.id);
-                conversation.pending_topics.push(topic);
-            }
-            if let Some(id) = arguments["completedTopicId"].as_str() {
-                conversation.pending_topics.retain(|t| t.id != id);
-            }
-            conversation.utterances.push(utterance.clone());
-            Ok(())
-        })?;
-        self.record_activity(
-            caller,
-            "publication",
-            json!({"utterance":utterance}),
-            &self.digest_targets(),
-        )?;
-        self.schedule_observations();
-        let sent = self
-            .events
-            .send(json!({"type":"speak","utterance":utterance}))
-            .is_ok();
-        Ok(
-            json!({"utteranceId":utterance.id,"published":true,"phoneConnected":self.snapshot()?.phone_connected,"sent":sent,"played":false}),
-        )
-    }
-    pub(crate) fn playback(&self, playback: Playback) -> Result<(), String> {
-        self.update(|state| {
-            let conversation = state.conversation.as_mut().ok_or("No conversation")?;
-            if !conversation
-                .utterances
-                .iter()
-                .any(|u| u.id == playback.utterance_id)
-            {
-                return Err("Unknown utterance".into());
-            }
-            conversation.playback = Some(playback);
-            Ok(())
-        })
     }
 }

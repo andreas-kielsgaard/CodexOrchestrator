@@ -37,17 +37,27 @@ export interface WorkflowCompiledPlanDto {
   }[];
 }
 
-export interface WorkflowAuthoringNodeDto {
+interface WorkflowNodeIdentity {
   readonly nodeId: string;
   readonly name: string;
   readonly positionX: number;
   readonly positionY: number;
+}
+export interface WorkflowAgentNodeDto extends WorkflowNodeIdentity {
+  readonly kind?: 'agent';
   readonly capabilityProfileId: string;
   readonly nodeProfile: NodeProfileDto;
   readonly initialPrompt: string | null;
   readonly agentIdentityId: string | null;
   readonly notifications?: NodeNotifications;
 }
+
+export interface WorkflowCapabilityNodeDto extends WorkflowNodeIdentity {
+  readonly kind: 'capability';
+  readonly capability: OtpCapabilityRefDto;
+  readonly configuration: Readonly<Record<string, unknown>>;
+}
+export type WorkflowAuthoringNodeDto = WorkflowAgentNodeDto | WorkflowCapabilityNodeDto;
 
 export interface WorkflowAuthoringConnectionDto {
   readonly connectionId: string;
@@ -62,7 +72,7 @@ export interface WorkflowAuthoringConnectionDto {
 }
 
 export interface WorkflowRecipeDraftDto {
-  readonly contractVersion: 3;
+  readonly contractVersion: 3 | 4;
   readonly recipeId: string;
   readonly name: string;
   readonly revision: number;

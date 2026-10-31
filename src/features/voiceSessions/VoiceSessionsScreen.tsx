@@ -2,15 +2,22 @@ import { useEffect, useRef, useState } from 'react';
 import type { VoiceSessionClient, VoiceSettings, VoiceView } from '../../application/voiceSessions';
 import type { JevQueryClient } from '../../application/agentSessions/jevQueries';
 import { VoiceSetupPanel } from './VoiceSetupPanel';
-import { VoiceWorkflowPanel } from './VoiceWorkflowPanel';
+import {
+  WorkflowDesignEditor,
+  type WorkflowDesignEditorProps,
+} from '../workflowAuthoring/WorkflowDesignEditor';
 import { VoiceActivityPanel } from './VoiceActivityPanel';
 import { VoiceDraftBar } from './VoiceDraftBar';
 import './voiceSessions.css';
+import './voiceWorkflow.css';
+import { JevQueryInspector } from '../agentProviders/jev/JevQueryInspector';
+import { voiceQuestionSubject } from './voiceJevQueryPresentation';
 
 export function VoiceSessionsScreen({
   client,
   onOpenSession,
   onOpenProfile,
+  workflowEditor,
   queryClient,
   active = true,
 }: {
@@ -18,14 +25,17 @@ export function VoiceSessionsScreen({
   onOpenSession(id: string, invocationId?: string): void;
   onOpenProfile?(id: string): void;
   queryClient?: JevQueryClient;
+  workflowEditor?: WorkflowDesignEditorProps;
   active?: boolean;
 }) {
   const [view, setView] = useState<VoiceView>();
   const [settings, setSettings] = useState<VoiceSettings>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<'workflow' | 'activity' | 'connection'>('workflow');
-  const [routeRequest, setRouteRequest] = useState(0);
+  const [tab, setTab] = useState<'workflow' | 'activity' | 'connection' | 'evaluations'>(
+    'workflow',
+  );
+  const [instanceId, setInstanceId] = useState<string>();
   const lastSavedSettings = useRef<VoiceSettings | undefined>(undefined);
   useEffect(() => {
     if (!active) return;
@@ -105,8 +115,8 @@ export function VoiceSessionsScreen({
             </button>
           ) : (
             <button
-              disabled={busy || !settings.profileId || !saved}
-              onClick={() => void run(() => client.start(false))}
+              disabled={busy || !(instanceId || state.conversation?.workflowInstanceId) || !saved}
+              onClick={() => void run(() => client.start(false, instanceId))}
             >
               Start connection
             </button>
@@ -118,44 +128,56 @@ export function VoiceSessionsScreen({
           {error || state.error}
         </p>
       )}
-      {!settings.profileId && (
-        <p>
-          Choose a Capability Profile in{' '}
-          <button onClick={() => setTab('connection')}>Connection setup</button> to start Voice.
-        </p>
-      )}
+      <label>
+        Voice instance
+        <select
+          disabled={busy || state.enabled}
+          value={instanceId ?? state.conversation?.workflowInstanceId ?? ''}
+          onChange={(e) => setInstanceId(e.target.value)}
+        >
+          <option value="">Create or choose an instance</option>
+          {view.instances?.map((instance) => (
+            <option key={instance.id} value={instance.id}>
+              {instance.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p>
+        Activate your design and create an instance with a worktree below. Design edits apply to new
+        instances; reconnecting resumes the selected instance.
+      </p>
       {!saved && !state.enabled && (
         <p className="voice-muted">Save or discard your draft before starting the connection.</p>
       )}
       <div className="voice-navigation">
         <nav className="voice-tabs" aria-label="Voice views">
-          {(['workflow', 'activity', 'connection'] as const).map((item) => (
+          {(['workflow', 'activity', 'evaluations', 'connection'] as const).map((item) => (
             <button key={item} aria-pressed={tab === item} onClick={() => setTab(item)}>
               {item[0].toUpperCase() + item.slice(1)}
             </button>
           ))}
         </nav>
-        <VoiceDraftBar
-          settings={settings}
-          saved={state.settings}
-          locked={busy || state.enabled}
-          onSave={() => void run(saveSettings)}
-          onDiscard={() => setSettings(state.settings)}
-        />
+        {tab === 'connection' && (
+          <VoiceDraftBar
+            settings={settings}
+            saved={state.settings}
+            locked={busy || state.enabled}
+            onSave={() => void run(saveSettings)}
+            onDiscard={() => setSettings(state.settings)}
+          />
+        )}
       </div>
       <div hidden={tab !== 'workflow'}>
-        <VoiceWorkflowPanel
-          view={view}
-          settings={settings}
-          busy={busy}
-          onEdit={edit}
-          onOpenSession={onOpenSession}
-          onOpenProfile={onOpenProfile}
-          queryClient={queryClient}
-          active={active && tab === 'workflow'}
-          routeRequest={routeRequest}
-          onShowActivity={() => setTab('activity')}
-        />
+        {workflowEditor ? (
+          <WorkflowDesignEditor
+            {...workflowEditor}
+            recipeId={view.recipeId}
+            onOpenInstance={setInstanceId}
+          />
+        ) : (
+          <p>Workflow editing is unavailable.</p>
+        )}
       </div>
       <div hidden={tab !== 'activity'}>
         <VoiceActivityPanel
@@ -164,11 +186,23 @@ export function VoiceSessionsScreen({
           onOpenSession={onOpenSession}
           onSend={(text) => run(() => client.sendText(text))}
           onShowRoutes={() => {
-            setRouteRequest((value) => value + 1);
             setTab('workflow');
           }}
         />
       </div>
+      {queryClient &&
+        Object.entries(state.conversation?.evaluationSessions ?? {}).map(([nodeId, sessionId]) => (
+          <div key={nodeId} hidden={tab !== 'evaluations'}>
+            <h2>{nodeId}</h2>
+            <JevQueryInspector
+              client={queryClient}
+              sessionId={sessionId}
+              active={active && tab === 'evaluations'}
+              applications={state.conversation?.jevApplications}
+              questionSubject={voiceQuestionSubject}
+            />
+          </div>
+        ))}
       <div hidden={tab !== 'connection'}>
         <VoiceSetupPanel
           view={view}
@@ -176,7 +210,6 @@ export function VoiceSessionsScreen({
           busy={busy}
           onEdit={edit}
           onOpenProfile={onOpenProfile}
-          onNewConversation={() => void run(() => client.start(true))}
         />
       </div>
     </main>

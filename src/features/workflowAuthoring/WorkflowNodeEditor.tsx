@@ -5,6 +5,8 @@ import {
   type ProfileModelCatalogueDto,
 } from '../../application/executionConfiguration';
 import { NodeNotificationEditor } from '../workflowGraph/NodeNotificationEditor';
+import { WorkflowCapabilityEditor } from './WorkflowCapabilityEditor';
+import type { OtpPackageDto } from '../../application/otp';
 import type {
   WorkflowAuthoringNodeDto,
   WorkflowRecipeDraftDto,
@@ -56,6 +58,7 @@ export function WorkflowNodeEditor({
   node,
   draft,
   runtime,
+  packages,
   profiles,
   profileValues,
   modelCatalogues,
@@ -65,7 +68,8 @@ export function WorkflowNodeEditor({
 }: {
   readonly node: WorkflowAuthoringNodeDto;
   readonly draft: WorkflowRecipeDraftDto;
-  readonly runtime: RuntimeProfileViewModel;
+  readonly runtime: RuntimeProfileViewModel | null;
+  readonly packages: readonly OtpPackageDto[];
   readonly profiles: readonly CapabilityProfileOption[];
   readonly profileValues: ReadonlyMap<
     string,
@@ -76,6 +80,10 @@ export function WorkflowNodeEditor({
   readonly onChange: (node: WorkflowAuthoringNodeDto) => void;
   readonly onCopy: (nodeId: string) => void;
 }) {
+  if (node.kind === 'capability') {
+    return <WorkflowCapabilityEditor node={node} packages={packages} onChange={onChange} />;
+  }
+  if (!runtime) return <p>Agent configuration is unavailable.</p>;
   const value: NodeProfileEditorValue = {
     nodeName: node.name,
     identityId: node.agentIdentityId,

@@ -31,6 +31,7 @@ impl OtpPackage for WorkflowPackage {
             requested_handles: vec![Handle::Definitions, Handle::NodeSessions, Handle::EmitOutput],
             agent_mcp_servers: vec![],
             skill_roots: vec![],
+            node_capabilities: vec![],
             tools: vec![
                 ToolDescriptor {
                     id:"trigger_workflow_continuation".into(), name:"Workflow continuation".into(),

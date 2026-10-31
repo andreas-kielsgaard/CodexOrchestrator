@@ -93,6 +93,18 @@ export function EventDeliveryList({
                   <dd>{referenceIdentityLabel(delivery.outcome.invocation)}</dd>
                 </div>
               )}
+              {delivery.outcome.kind === 'dispatched' && delivery.outcome.inputId && (
+                <div>
+                  <dt>Steering input</dt>
+                  <dd>{delivery.outcome.inputId}</dd>
+                </div>
+              )}
+              {delivery.outcome.kind === 'dispatched' && delivery.outcome.state && (
+                <div>
+                  <dt>Acceptance state</dt>
+                  <dd>{delivery.outcome.state}</dd>
+                </div>
+              )}
             </dl>
             {delivery.addressingError && (
               <p className="session-event-record__error" role="alert">

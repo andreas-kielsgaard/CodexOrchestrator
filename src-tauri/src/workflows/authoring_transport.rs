@@ -1,8 +1,6 @@
 use super::compiled_plan::WorkflowCompiledPlan;
 use super::{
-    authoring::{
-        WorkflowAuthoringWorkspace, WorkflowRecipeDraft, WorkflowRecipeState, WorkflowRecipeSummary,
-    },
+    authoring::{WorkflowAuthoringWorkspace, WorkflowRecipeState, WorkflowRecipeSummary},
     authoring_service::WorkflowAuthoringService,
 };
 use serde::Deserialize;
@@ -41,7 +39,7 @@ pub(crate) struct ActivateWorkflowRecipeInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct SaveWorkflowRecipeDraftInput {
-    draft: WorkflowRecipeDraft,
+    draft: serde_json::Value,
 }
 
 #[derive(Deserialize)]
@@ -98,8 +96,14 @@ pub(crate) fn save_workflow_recipe_draft(
     sync: State<'_, crate::device_connection::DefinitionSyncState>,
     input: SaveWorkflowRecipeDraftInput,
 ) -> Result<WorkflowRecipeState, String> {
-    let saved = state.service.save_draft(input.draft)?;
-    sync.changed("workflow", &saved.draft.recipe_id, serde_json::to_value(&saved).map_err(|e|e.to_string())?);
+    let saved = state
+        .service
+        .save_draft(super::authoring::decode_recipe_value(input.draft)?)?;
+    sync.changed(
+        "workflow",
+        &saved.draft.recipe_id,
+        serde_json::to_value(&saved).map_err(|e| e.to_string())?,
+    );
     Ok(saved)
 }
 
@@ -115,7 +119,11 @@ pub(crate) fn copy_workflow_node_configuration(
         &input.source_node_id,
         &input.destination_node_id,
     )?;
-    sync.changed("workflow", &saved.draft.recipe_id, serde_json::to_value(&saved).map_err(|e|e.to_string())?);
+    sync.changed(
+        "workflow",
+        &saved.draft.recipe_id,
+        serde_json::to_value(&saved).map_err(|e| e.to_string())?,
+    );
     Ok(saved)
 }
 
@@ -128,7 +136,11 @@ pub(crate) fn activate_workflow_recipe(
     let saved = state
         .service
         .activate_revision(&input.recipe_id, input.expected_revision)?;
-    sync.changed("workflow", &saved.draft.recipe_id, serde_json::to_value(&saved).map_err(|e|e.to_string())?);
+    sync.changed(
+        "workflow",
+        &saved.draft.recipe_id,
+        serde_json::to_value(&saved).map_err(|e| e.to_string())?,
+    );
     Ok(saved)
 }
 

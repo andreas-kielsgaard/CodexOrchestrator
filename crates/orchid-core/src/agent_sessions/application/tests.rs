@@ -250,6 +250,7 @@ fn pinned_profile_query_and_direct_user_message_preserve_session_configuration()
     let user_request = reference("user_request", "request-review");
     let created = events
         .dispatch(SessionEventCommand {
+            delivery_mode: Default::default(),
             event_group_id: event_group_id.clone(),
             definition_ref: reference("event_definition", "review-user-entry"),
             trigger: SessionEventTrigger::UserRequest {
@@ -327,6 +328,7 @@ fn pinned_profile_query_and_direct_user_message_preserve_session_configuration()
     let application_event = reference("application_event", "plan-ready");
     let follow_up = events
         .dispatch(SessionEventCommand {
+            delivery_mode: Default::default(),
             event_group_id: follow_up_group.clone(),
             definition_ref: reference("event_definition", "review-follow-up"),
             trigger: SessionEventTrigger::ApplicationEvent {

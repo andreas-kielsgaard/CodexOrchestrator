@@ -461,7 +461,7 @@ impl Fixture {
                 database.clone(),
             )),
             profiles.clone(),
-            crate::otp_host::OtpRegistry::import(&["workflow"]).unwrap(),
+            crate::otp_host::OtpRegistry::import(&["workflow", "voice"]).unwrap(),
         ));
         let execution = Arc::new(WorkflowExecutionService::new(
             authoring.clone(),
@@ -523,11 +523,15 @@ impl Fixture {
                 name: id.into(),
                 position_x: 50.0,
                 position_y: 50.0,
-                capability_profile_id: "test-capabilities".into(),
-                node_profile: test_session_creation_request().node_profile,
-                initial_prompt: Some(format!("Initial for {id}")),
-                agent_identity_id: None,
-                notifications: Default::default(),
+                binding: crate::workflows::authoring::WorkflowNodeBinding::Agent(
+                    crate::workflows::authoring::WorkflowAgentNode {
+                        capability_profile_id: "test-capabilities".into(),
+                        node_profile: test_session_creation_request().node_profile,
+                        initial_prompt: Some(format!("Initial for {id}")),
+                        agent_identity_id: None,
+                        notifications: Default::default(),
+                    },
+                ),
             })
             .collect();
         let mut prompt_inputs = vec![WorkflowConnectionPromptInput::OutputField {
@@ -745,3 +749,204 @@ fn invalid_standalone_override_leaves_no_session_or_launch() {
 }
 
 // Workflow routing is covered by otp_packages::workflow tests.
+
+#[test]
+fn capability_outputs_follow_saved_connections_without_agent_sources() {
+    use crate::otp_api::{CapabilityEmission, InvocationContext, ToolResult};
+    use crate::otp_packages::voice::{output, reference};
+    use crate::workflows::{
+        authoring::{WorkflowCapabilityNode, WorkflowNodeBinding},
+        capabilities::WorkflowCapabilityRuntime,
+    };
+    struct Service(Mutex<Vec<serde_json::Value>>);
+    impl WorkflowCapabilityRuntime for Service {
+        fn invoke(
+            &self,
+            context: &InvocationContext,
+            configuration: &serde_json::Value,
+            payload: serde_json::Value,
+        ) -> Result<ToolResult, String> {
+            assert_eq!(context.output_node_id.as_deref(), Some("evaluate"));
+            assert_eq!(configuration["model"], "fake");
+            self.0.lock().unwrap().push(payload.clone());
+            Ok(ToolResult {
+                emitted_outputs: vec![CapabilityEmission {
+                    output: "evaluated".into(),
+                    payload,
+                }],
+                ..Default::default()
+            })
+        }
+    }
+    let fixture = Fixture::with_runtime(RuntimeBehavior::StayRunning, false);
+    let base = fixture.instance(None);
+    let mut legacy = serde_json::to_value(&base.recipe).unwrap();
+    legacy["contractVersion"] = serde_json::json!(3);
+    for node in legacy["nodes"].as_array_mut().unwrap() {
+        node.as_object_mut().unwrap().remove("kind");
+    }
+    assert_eq!(
+        crate::workflows::authoring::decode_recipe_value(legacy).unwrap(),
+        base.recipe
+    );
+    let mut draft = base.recipe.clone();
+    draft.connections.clear();
+    draft.entry_node_ids = vec!["a".into(), "b".into()];
+    for (id, capability, configuration) in [
+        ("input", "transcript", serde_json::json!({})),
+        (
+            "evaluate",
+            "evaluation",
+            serde_json::json!({"model":"fake"}),
+        ),
+    ] {
+        draft.nodes.push(WorkflowAuthoringNode {
+            node_id: id.into(),
+            name: format!("Renamed {id}"),
+            position_x: 1.0,
+            position_y: 1.0,
+            binding: WorkflowNodeBinding::Capability(WorkflowCapabilityNode {
+                capability: reference(capability),
+                configuration,
+            }),
+        });
+    }
+    draft.connections.push(WorkflowAuthoringConnection {
+        connection_id: "evaluate-input".into(),
+        name: "Evaluate input".into(),
+        source_node_id: "input".into(),
+        destination_node_id: "evaluate".into(),
+        trigger: output("transcript", "window"),
+        action: reference("evaluate"),
+        configuration: serde_json::json!({}),
+        prompt_inputs: vec![],
+        prompt_text: String::new(),
+    });
+    draft.connections.push(WorkflowAuthoringConnection {
+        connection_id: "deliver-answer".into(),
+        name: "Deliver answer".into(),
+        source_node_id: "evaluate".into(),
+        destination_node_id: "b".into(),
+        trigger: output("evaluate", "evaluated"),
+        action: crate::otp_api::CapabilityRef {
+            package: "workflow".into(),
+            tool: "prompt_agent".into(),
+        },
+        configuration: serde_json::json!({"deliveryMode":"steer_active_otherwise_queue"}),
+        prompt_inputs: vec![],
+        prompt_text: "Use the evaluated input".into(),
+    });
+    let saved = fixture.authoring.save_draft(draft).unwrap();
+    fixture.authoring.activate(&saved.draft.recipe_id).unwrap();
+    let instance = fixture
+        .execution
+        .create_instance(
+            &saved.draft.recipe_id,
+            saved.draft.revision,
+            fixture.target(),
+        )
+        .unwrap();
+    let service = Arc::new(Service(Mutex::new(vec![])));
+    fixture
+        .execution
+        .capability_runtimes
+        .register("voice", service.clone())
+        .unwrap();
+    let payload = serde_json::json!({"text":"Keep this structured","revision":7});
+    fixture
+        .execution
+        .emit_capability_output(
+            &instance.id,
+            "input",
+            "speech-1",
+            &output("transcript", "window"),
+            payload.clone(),
+        )
+        .unwrap();
+    assert_eq!(*service.0.lock().unwrap(), vec![payload]);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while fixture.launches().is_empty() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(
+        fixture.launches().len(),
+        1,
+        "{:?}",
+        fixture.execution.instances.attempts(&instance.id).unwrap()
+    );
+    let sessions = fixture.execution.instance_sessions(&instance).unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(
+        sessions[0].logical_address.as_ref().unwrap().subject.id(),
+        "b"
+    );
+    fixture
+        .execution
+        .emit_capability_output(
+            &instance.id,
+            "input",
+            "speech-amendment",
+            &output("transcript", "window"),
+            serde_json::json!({"revision":8}),
+        )
+        .unwrap();
+    assert_eq!(
+        fixture.launches().len(),
+        1,
+        "Amendment should steer the running invocation"
+    );
+    let attempts = fixture.execution.instances.attempts(&instance.id).unwrap();
+    assert!(attempts
+        .iter()
+        .flat_map(|attempt| &attempt.event_groups)
+        .flat_map(|group| &group.deliveries)
+        .any(|delivery| matches!(
+            &delivery.outcome,
+            crate::session_events::DeliveryOutcome::Dispatched {
+                input_id: Some(_),
+                state: Some(_),
+                ..
+            }
+        )));
+    // Removing the connection changes a new instance without changing the service.
+    let mut draft = saved.draft;
+    draft
+        .connections
+        .retain(|connection| connection.connection_id != "deliver-answer");
+    let saved = fixture.authoring.save_draft(draft).unwrap();
+    fixture.authoring.activate(&saved.draft.recipe_id).unwrap();
+    let disconnected = fixture
+        .execution
+        .create_instance(
+            &saved.draft.recipe_id,
+            saved.draft.revision,
+            fixture.target(),
+        )
+        .unwrap();
+    fixture
+        .execution
+        .emit_capability_output(
+            &disconnected.id,
+            "input",
+            "speech-2",
+            &output("transcript", "window"),
+            serde_json::json!({}),
+        )
+        .unwrap();
+    assert!(fixture
+        .execution
+        .instance_sessions(&disconnected)
+        .unwrap()
+        .is_empty());
+    assert_eq!(fixture.launches().len(), 1);
+    assert!(fixture
+        .execution
+        .emit_capability_output(
+            &instance.id,
+            "a",
+            "forged",
+            &output("transcript", "window"),
+            serde_json::json!({})
+        )
+        .is_err());
+}

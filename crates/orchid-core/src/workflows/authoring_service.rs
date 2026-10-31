@@ -170,6 +170,7 @@ impl WorkflowAuthoringService {
     ) -> Result<BTreeMap<String, CapabilityProfile>, String> {
         let mut profiles = BTreeMap::new();
         for node in &recipe.nodes {
+            let Ok(node) = node.agent() else { continue };
             if profiles.contains_key(&node.capability_profile_id) {
                 continue;
             }
@@ -187,11 +188,7 @@ fn copy_configurable_node_state(
     source: &WorkflowAuthoringNode,
     destination: &mut WorkflowAuthoringNode,
 ) {
-    destination.capability_profile_id = source.capability_profile_id.clone();
-    destination.node_profile = source.node_profile.clone();
-    destination.initial_prompt = source.initial_prompt.clone();
-    destination.agent_identity_id = source.agent_identity_id.clone();
-    destination.notifications = source.notifications.clone();
+    destination.binding = source.binding.clone();
 }
 
 #[cfg(test)]
@@ -268,19 +265,23 @@ mod tests {
             name: name.into(),
             position_x: 0.0,
             position_y: 0.0,
-            capability_profile_id: "capability-default".into(),
-            node_profile: NodeProfile {
-                contract_version: 1,
-                allowed_capabilities: capabilities(),
-                pinned_defaults: RuntimeSelections {
-                    model: Some("codex-a".into()),
-                    reasoning_mode: Some("high".into()),
-                    sandbox_mode: Some(SandboxMode::WorkspaceWrite),
+            binding: crate::workflows::authoring::WorkflowNodeBinding::Agent(
+                crate::workflows::authoring::WorkflowAgentNode {
+                    capability_profile_id: "capability-default".into(),
+                    node_profile: NodeProfile {
+                        contract_version: 1,
+                        allowed_capabilities: capabilities(),
+                        pinned_defaults: RuntimeSelections {
+                            model: Some("codex-a".into()),
+                            reasoning_mode: Some("high".into()),
+                            sandbox_mode: Some(SandboxMode::WorkspaceWrite),
+                        },
+                    },
+                    initial_prompt: Some(format!("You are {name}.")),
+                    agent_identity_id: None,
+                    notifications: Default::default(),
                 },
-            },
-            initial_prompt: Some(format!("You are {name}.")),
-            agent_identity_id: None,
-            notifications: Default::default(),
+            ),
         }
     }
 
@@ -329,12 +330,16 @@ mod tests {
         let mut state = service.create().unwrap();
         state.draft.name = "Review".into();
         let mut source = node("planner", "Planner");
-        source.agent_identity_id = Some("identity-avery".into());
-        source.notifications.turn_completion_sound = false;
+        source.agent_mut().unwrap().agent_identity_id = Some("identity-avery".into());
+        source
+            .agent_mut()
+            .unwrap()
+            .notifications
+            .turn_completion_sound = false;
         source.position_x = 50.0;
         let mut destination = node("reviewer", "Reviewer");
         destination.position_x = 250.0;
-        destination.initial_prompt = Some("Old".into());
+        destination.agent_mut().unwrap().initial_prompt = Some("Old".into());
         state.draft.nodes = vec![source, destination];
         state = service.save_draft(state.draft).unwrap();
 
@@ -354,11 +359,20 @@ mod tests {
             .unwrap();
 
         assert_eq!(reviewer.name, "Reviewer");
-        assert!(!reviewer.notifications.turn_completion_sound);
+        assert!(
+            !reviewer
+                .agent()
+                .unwrap()
+                .notifications
+                .turn_completion_sound
+        );
         assert_eq!(reviewer.position_x, 250.0);
-        assert_eq!(reviewer.initial_prompt.as_deref(), Some("You are Planner."));
         assert_eq!(
-            reviewer.agent_identity_id.as_deref(),
+            reviewer.agent().unwrap().initial_prompt.as_deref(),
+            Some("You are Planner.")
+        );
+        assert_eq!(
+            reviewer.agent().unwrap().agent_identity_id.as_deref(),
             Some("identity-avery")
         );
     }
